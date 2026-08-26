@@ -2,17 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const nodemailer = require('nodemailer');
 const path = require('path');
 const crypto = require('crypto');
-
-// ========================================
-//  🔐 IDENTIFIANTS GMAIL EN DUR (fallback sécurisé)
-// ========================================
-// Si les variables d'environnement ne sont pas chargées sur Render,
-// ces valeurs seront utilisées automatiquement.
-const GMAIL_USER = process.env.GMAIL_USER || 'amadoudioplestha@gmail.com';
-const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD || 'vxfnjxwgwzqpescm';
 
 // ========================================
 //  INITIALISATION DU SERVEUR
@@ -25,20 +16,20 @@ const PORT = process.env.PORT || 3000;
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '10mb' }));
 
-// Évite les 404 fantômes (Cloudflare RUM, favicon)
+// Évite les 404 fantômes
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 app.all('/cdn-cgi/*', (req, res) => res.status(204).end());
 
 // ========================================
-//  ROUTE DE SANTÉ (pour vérifier que tout tourne)
+//  ROUTE DE SANTÉ
 // ========================================
 app.get('/health', (req, res) => {
     res.json({
         status: 'OK',
         timestamp: new Date().toISOString(),
         email: {
-            gmail_configured: !!GMAIL_USER && !!GMAIL_APP_PASSWORD,
-            gmail_user: GMAIL_USER
+            resend_configured: !!process.env.RESEND_API_KEY,
+            from_email: process.env.FROM_EMAIL || 'onboarding@resend.dev'
         },
         webrtc: true
     });
@@ -91,7 +82,8 @@ app.get('/api/ice-config', (req, res) => {
 });
 
 // ========================================
-//  📧 ENVOI D'EMAIL (Gmail avec identifiants en dur)
+//  📧 ENVOI D'EMAIL VIA RESEND (API HTTPS)
+//  Fonctionne sur Render (contrairement à SMTP/Gmail)
 // ========================================
 function escapeHtml(text) {
     if (text == null) return '';
@@ -102,57 +94,66 @@ function escapeHtml(text) {
         .replace(/"/g, '&quot;');
 }
 
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const FROM_EMAIL = process.env.FROM_EMAIL || 'onboarding@resend.dev';
+
 app.post('/api/send-email', async (req, res) => {
     const { to, link, fileName } = req.body;
 
     if (!to || !link) {
         return res.status(400).json({ error: 'Champs manquants (to, link).' });
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(to)) {
         return res.status(400).json({ error: 'Email invalide.' });
     }
 
-    // Vérifier que Gmail est configuré
-    if (!GMAIL_USER || !GMAIL_APP_PASSWORD) {
-        return res.status(503).json({ error: 'Service email non configuré.' });
+    if (!RESEND_API_KEY) {
+        return res.status(503).json({ 
+            error: 'Service email non configuré. Ajoutez RESEND_API_KEY dans Render.' 
+        });
     }
 
-    const htmlContent = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; background: #f9fafb; padding: 20px; border-radius: 8px;">
-            <h2 style="color: #1f2937;">📦 Fichier prêt à être récupéré</h2>
-            <p style="color: #374151;">Un fichier <strong>${escapeHtml(fileName) || 'sans nom'}</strong> vous a été envoyé de manière sécurisée via TransferX.</p>
-            <p style="margin: 24px 0; text-align: center;">
-                <a href="${escapeHtml(link)}" style="background: #2563eb; color: #fff; padding: 14px 28px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: bold; font-size: 16px;">
-                    ⬇️ Récupérer le fichier
-                </a>
-            </p>
-            <p style="color: #6b7280; font-size: 13px; border-top: 1px solid #e5e7eb; padding-top: 12px;">
-                ⚠️ Ce lien fonctionne uniquement pendant que l'expéditeur reste connecté.<br>
-                🔒 Transfert P2P direct et chiffré — aucun fichier stocké sur un serveur.
-            </p>
-        </div>
-    `;
-
     try {
-        const transporter = nodemailer.createTransport({
-            service: 'gmail',
-            auth: {
-                user: GMAIL_USER,
-                pass: GMAIL_APP_PASSWORD
-            }
+        const response = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${RESEND_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                from: `TransferX <${FROM_EMAIL}>`,
+                to: [to.trim()],
+                subject: `📦 Vous avez reçu un fichier : ${escapeHtml(fileName) || 'sans nom'}`,
+                html: `
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; background: #f9fafb; padding: 20px; border-radius: 8px;">
+                        <h2 style="color: #1f2937;">📦 Fichier prêt à être récupéré</h2>
+                        <p style="color: #374151;">Un fichier <strong>${escapeHtml(fileName) || 'sans nom'}</strong> vous a été envoyé de manière sécurisée via TransferX.</p>
+                        <p style="margin: 24px 0; text-align: center;">
+                            <a href="${escapeHtml(link)}" style="background: #2563eb; color: #fff; padding: 14px 28px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: bold; font-size: 16px;">
+                                ⬇️ Récupérer le fichier
+                            </a>
+                        </p>
+                        <p style="color: #6b7280; font-size: 13px; border-top: 1px solid #e5e7eb; padding-top: 12px;">
+                            ⚠️ Ce lien fonctionne uniquement pendant que l'expéditeur reste connecté.<br>
+                            🔒 Transfert P2P direct et chiffré — aucun fichier stocké sur un serveur.
+                        </p>
+                    </div>
+                `
+            })
         });
 
-        await transporter.sendMail({
-            from: `"TransferX" <${GMAIL_USER}>`,
-            to: to,
-            subject: `📦 Vous avez reçu un fichier : ${escapeHtml(fileName) || 'sans nom'}`,
-            html: htmlContent
-        });
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.message || 'Erreur API Resend');
+        }
 
-        console.log(`✅ Email envoyé via Gmail à ${to}`);
-        return res.json({ success: true, provider: 'gmail' });
+        const result = await response.json();
+        console.log(`✅ Email envoyé à ${to} via Resend (ID: ${result.id})`);
+        return res.json({ success: true, provider: 'resend' });
     } catch (error) {
-        console.error('❌ Erreur Gmail:', error.message);
+        console.error('❌ Erreur Resend:', error.message);
         return res.status(500).json({ 
             error: 'Échec envoi: ' + error.message 
         });
@@ -160,14 +161,14 @@ app.post('/api/send-email', async (req, res) => {
 });
 
 // ========================================
-//  SIGNALISATION WEBRTC (Rooms en mémoire)
+//  SIGNALISATION WEBRTC (Rooms)
 // ========================================
 const rooms = new Map();
 function generateRoomId() {
     return crypto.randomBytes(8).toString('hex');
 }
 
-// Nettoyage périodique des rooms expirées (> 1 heure)
+// Nettoyage périodique (> 1 heure)
 setInterval(() => {
     const now = Date.now();
     for (const [roomId, room] of rooms.entries()) {
@@ -204,7 +205,6 @@ io.on('connection', (socket) => {
         if (typeof callback === 'function') callback({ roomId, success: true });
     });
 
-    // --- Expéditeur envoie son offre SDP ---
     socket.on('send-offer', ({ roomId, offer }) => {
         const room = rooms.get(roomId);
         if (!room || room.senderSocketId !== socket.id) return;
@@ -214,7 +214,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- Destinataire rejoint ---
     socket.on('join-room', ({ roomId }, callback) => {
         const room = rooms.get(roomId);
         if (!room) return callback && callback({ success: false, error: 'Lien invalide ou expiré.' });
@@ -230,7 +229,6 @@ io.on('connection', (socket) => {
         if (room.offer) socket.emit('offer-received', { offer: room.offer });
     });
 
-    // --- Destinataire envoie sa réponse SDP ---
     socket.on('send-answer', ({ roomId, answer }) => {
         const room = rooms.get(roomId);
         if (!room || room.receiverSocketId !== socket.id) return;
@@ -238,7 +236,6 @@ io.on('connection', (socket) => {
         io.to(room.senderSocketId).emit('answer-received', { answer });
     });
 
-    // --- Échange candidats ICE ---
     socket.on('ice-candidate', ({ roomId, candidate }) => {
         const room = rooms.get(roomId);
         if (!room) return;
@@ -250,7 +247,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- Récupérer candidats en buffer ---
     socket.on('get-ice-candidates', ({ roomId }, callback) => {
         const room = rooms.get(roomId);
         if (!room) return callback && callback({ candidates: [] });
@@ -262,7 +258,6 @@ io.on('connection', (socket) => {
         if (typeof callback === 'function') callback({ candidates });
     });
 
-    // --- Annulation ---
     socket.on('cancel-transfer', ({ roomId }) => {
         const room = rooms.get(roomId);
         if (!room || room.senderSocketId !== socket.id) return;
@@ -270,7 +265,6 @@ io.on('connection', (socket) => {
         rooms.delete(roomId);
     });
 
-    // --- Destinataire quitte ---
     socket.on('leave-room', ({ roomId }) => {
         const room = rooms.get(roomId);
         if (!room) return;
@@ -280,7 +274,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- Déconnexion ---
     socket.on('disconnect', () => {
         const roomId = socket.roomId;
         if (!roomId) return;
@@ -293,7 +286,6 @@ io.on('connection', (socket) => {
         else room.receiverSocketId = null;
     });
 
-    // --- Keepalive ---
     socket.on('ping-keepalive', () => socket.emit('pong-keepalive'));
 });
 
@@ -302,6 +294,7 @@ io.on('connection', (socket) => {
 // ========================================
 server.listen(PORT, () => {
     console.log(`🚀 Serveur démarré sur le port ${PORT}`);
-    console.log(`📧 Gmail: ${GMAIL_USER ? '✅ Configuré' : '❌ Non configuré'}`);
+    console.log(`📧 Resend: ${RESEND_API_KEY ? '✅ Configuré' : '❌ Non configuré (ajoutez RESEND_API_KEY)'}`);
+    console.log(`📧 From: ${FROM_EMAIL}`);
     console.log(`🔄 TURN: ${process.env.TURN_URL ? '✅ Configuré' : '❌ STUN uniquement'}`);
 });
