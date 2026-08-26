@@ -2,31 +2,33 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="description" content="Transfert de fichiers P2P ultra-sécurisé. Aucun stockage, transfert direct et chiffré.">
     <meta name="theme-color" content="#0066FF">
-    <title>🚀 TransferX - Transfert Sécurisé P2P</title>
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
     
-    <!-- Google Fonts -->
+    <title>TransferX - Transfert Sécurisé P2P</title>
+    
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     
-    <!-- Favicon -->
+    <!-- Icons -->
     <link rel="icon" type="image/svg+xml" href="icon-192.svg">
+    <link rel="apple-touch-icon" href="icon-192.png">
     <link rel="manifest" href="manifest.json">
     
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
-        <!-- =========================================================
-             ÉTAPE 1 : SÉLECTION DU MODE
-             ========================================================= -->
+        <!-- ÉTAPE 1: SÉLECTION -->
         <div id="step-select" class="step active">
             <h1>🚀 TransferX</h1>
-            <p class="subtitle">Transfert P2P ultra-sécurisé, sans serveur, chiffré de bout en bout</p>
-
+            <p class="subtitle">Transfert P2P direct, chiffré, sans stockage serveur</p>
+            
             <div class="mode-choice">
                 <button id="btnModeFile" class="btn-mode">
                     <span class="btn-mode-icon">📄</span>
@@ -50,32 +52,29 @@
             <div class="error-box hidden" id="errorBox"></div>
         </div>
 
-        <!-- =========================================================
-             ÉTAPE 2 : EN ATTENTE DU DESTINATAIRE
-             ========================================================= -->
+        <!-- ÉTAPE 2: ATTENTE -->
         <div id="step-waiting" class="step">
             <h1>🔗 Lien de transfert</h1>
-            <p class="subtitle">Partagez ce lien avec le destinataire. Il doit l'ouvrir pendant que vous êtes connecté.</p>
-
+            <p class="subtitle">Partagez ce lien avec le destinataire</p>
+            
             <div class="link-box">
-                <input type="text" id="linkOutput" readonly placeholder="Génération du lien...">
+                <input type="text" id="linkOutput" readonly placeholder="Génération...">
                 <button id="btnCopyLink">📋 Copier</button>
             </div>
 
             <div class="email-box">
-                <input type="email" id="emailInput" placeholder="Envoyer par email (optionnel)">
+                <input type="email" id="emailInput" placeholder="Email du destinataire (optionnel)">
                 <button id="btnSendEmail">✉️ Envoyer</button>
             </div>
 
             <p id="waitingMsg">⏳ En attente du destinataire...</p>
 
-            <button id="btnCancelSend" class="btn-danger">❌ Annuler</button>
+            <button id="btnCancelSend" class="btn-danger">❌ Annuler le transfert</button>
+            
             <div class="error-box hidden" id="errorBox2"></div>
         </div>
 
-        <!-- =========================================================
-             ÉTAPE 3 : TRANSFERT EN COURS
-             ========================================================= -->
+        <!-- ÉTAPE 3: TRANSFERT -->
         <div id="step-transfer" class="step">
             <h1>📡 Transfert en cours</h1>
             <p id="transferTitle">Préparation...</p>
@@ -89,14 +88,13 @@
                     <span id="speedText"></span>
                 </div>
             </div>
-
-            <button id="btnCancelTransfer" class="btn-danger">⛔ Annuler le transfert</button>
+            
+            <button id="btnCancelTransfer" class="btn-danger">⛔ Annuler</button>
+            
             <div class="error-box hidden" id="errorBox3"></div>
         </div>
 
-        <!-- =========================================================
-             ÉTAPE 4 : TRANSFERT TERMINÉ
-             ========================================================= -->
+        <!-- ÉTAPE 4: TERMINÉ -->
         <div id="step-done" class="step">
             <div class="success-icon">✅</div>
             <h1>Transfert terminé !</h1>
@@ -117,15 +115,12 @@
         </div>
     </div>
 
-    <!-- Bibliothèques externes -->
+    <!-- Scripts -->
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-
-    <!-- StreamSaver : écrit directement sur le disque (comme Telegram) -->
-<script src="https://cdn.jsdelivr.net/npm/streamsaver@2.0.6/StreamSaver.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/web-streams-polyfill@3.2.1/dist/polyfill.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/streamsaver@2.0.6/StreamSaver.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/web-streams-polyfill@3.2.1/dist/polyfill.min.js"></script>
     
-    <!-- Application -->
     <script src="app.js"></script>
 </body>
 </html>
