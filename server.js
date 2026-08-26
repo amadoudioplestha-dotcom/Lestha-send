@@ -15,102 +15,151 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '10mb' }));
 
 // =========================================================
-//  EMAIL CONFIG - Gmail OU SendGrid
+//  CONFIGURATION EMAIL - SendGrid prioritaire sur Render
 // =========================================================
 
+const sgMail = require('@sendgrid/mail');
+
 function getEmailConfig() {
-    // SendGrid prioritaire (cloud-friendly)
-    if (process.env.SENDGRID_API_KEY) {
-        return { type: 'sendgrid', apiKey: process.env.SENDGRID_API_KEY };
+    const sendgridKey = process.env.SENDGRID_API_KEY;
+    const gmailUser = process.env.GMAIL_USER;
+    const gmailPass = process.env.GMAIL_APP_PASSWORD || process.env.GMAIL_PASS;
+    
+    // Priorité SendGrid si clé présente (fonctionne sur Render)
+    if (sendgridKey) {
+        sgMail.setApiKey(sendgridKey);
+        console.log('📧 Config: SendGrid activé');
+        return { type: 'SENDGRID', keyPreview: sendgridKey.slice(0, 8) + '...' };
     }
     
-    // Gmail fallback
-    const user = process.env.GMAIL_USER;
-    const pass = process.env.GMAIL_APP_PASSWORD;
-    
-    if (!user || !pass) {
-        return { type: null, error: 'Email non configuré. Utilisez SENDGRID_API_KEY ou GMAIL_USER+GMAIL_APP_PASSWORD' };
+    // Fallback Gmail (local uniquement, timeout sur Render)
+    if (gmailUser && gmailPass && !process.env.RENDER) {
+        console.log('📧 Config: Gmail (local)');
+        return {
+            type: 'GMAIL',
+            transporter: nodemailer.createTransport({
+                service: 'gmail',
+                auth: { user: gmailUser, pass: gmailPass }
+            })
+        };
     }
     
-    // Validation format
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user)) {
-        return { type: null, error: 'GMAIL_USER invalide' };
-    }
-    
-    return { type: 'gmail', user, pass };
+    console.warn('⚠️ Aucun service email configuré');
+    return { type: null, error: 'Ajoutez SENDGRID_API_KEY dans les variables d\'env Render' };
 }
 
-async function sendEmail({ to, from, subject, html }) {
-    const config = getEmailConfig();
-    
-    if (!config.type) {
-        throw new Error(config.error);
-    }
-    
-    // SendGrid
-    if (config.type === 'sendgrid') {
-        const sgMail = require('@sendgrid/mail');
-        sgMail.setApiKey(config.apiKey);
-        
-        await sgMail.send({
-            to: to.trim(),
-            from: from || 'transfer@transferx.app',
-            subject,
-            html,
-        });
-        return { provider: 'sendgrid' };
-    }
-    
-    // Gmail
-    const nodemailer = require('nodemailer');
-    const transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: {
-            user: config.user,
-            pass: config.pass
-        },
-        // Important pour Render et autres clouds
-        tls: {
-            rejectUnauthorized: false
-        },
-        // Timeout court
-        connectionTimeout: 10000,
-        greetingTimeout: 10000,
-        socketTimeout: 10000
-    });
-    
-    await transporter.sendMail({
-        from: `"TransferX" <${config.user}>`,
-        to: to.trim(),
-        subject,
-        html,
-    });
-    
-    return { provider: 'gmail' };
-}
+const emailConfig = getEmailConfig();
 
-// Debug endpoint
+// =========================================================
+//  ROUTE DEBUG
+// =========================================================
+
 app.get('/api/debug/email', (req, res) => {
-    const config = getEmailConfig();
     res.json({
-        configured: !!config.type,
-        provider: config.type,
-        error: config.error || null,
-        fromEmail: config.type === 'gmail' ? config.user : 'transfer@transferx.app'
+        provider: emailConfig.type,
+        configOK: !!emailConfig.type,
+        isRender: !!process.env.RENDER,
+        envVars: {
+            hasSendGrid: !!process.env.SENDGRID_API_KEY,
+            sendGridLength: process.env.SENDGRID_API_KEY ? process.env.SENDGRID_API_KEY.length : 0,
+            hasGmail: !!process.env.GMAIL_USER,
+            emailFrom: process.env.EMAIL_FROM || process.env.GMAIL_USER || 'non défini'
+        }
     });
 });
 
-// Test email endpoint
-app.post('/api/test-email', async (req, res) => {
+// =========================================================
+//  ROUTE ENVOI EMAIL
+// =========================================================
+
+app.post('/api/send-email', async (req, res) => {
+    console.log('📧 Requête email reçue:', { to: req.body?.to, hasLink: !!req.body?.link });
+    
     try {
-        await sendEmail({
-            to: req.body.to || process.env.GMAIL_USER,
-            subject: 'Test TransferX',
-            html: '<p>✅ Configuration email OK</p>'
+        const { to, link, fileName } = req.body;
+        
+        if (!to || !link) {
+            return res.status(400).json({ error: 'Email destinataire et lien requis' });
+        }
+
+        const displayName = fileName || 'fichier';
+        const fromEmail = process.env.EMAIL_FROM || process.env.GMAIL_USER || 'noreply@filetransfer.app';
+        
+        const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:40px auto;padding:20px;">
+    <div style="background:#f0f7ff;border-radius:16px;padding:32px;text-align:center;">
+        <div style="font-size:48px;margin-bottom:16px;">📎</div>
+        <h2 style="color:#0066FF;margin:0 0 16px;">Fichier partagé avec vous</h2>
+        <p style="color:#444;font-size:16px;line-height:1.6;">
+            <strong style="color:#0066FF;">${displayName}</strong> vous a été envoyé.
+        </p>
+        <a href="${link}" style="display:inline-block;margin:20px 0;padding:14px 32px;background:#0066FF;color:#fff;text-decoration:none;border-radius:12px;font-weight:600;">
+            📥 Télécharger
+        </a>
+        <p style="color:#888;font-size:13px;margin-top:24px;">
+            Ce lien est sécurisé et expire après utilisation.<br>
+            <span style="font-family:monospace;background:#e0ecff;padding:4px 8px;border-radius:6px;">${link}</span>
+        </p>
+    </div>
+</body>
+</html>`;
+
+        let result;
+
+        // === SENDGRID ===
+        if (emailConfig.type === 'SENDGRID') {
+            const msg = {
+                to,
+                from: { 
+                    email: fromEmail, 
+                    name: 'FileTransfer' 
+                },
+                subject: `📎 ${displayName} - Fichier partagé`,
+                html: htmlContent,
+                trackingSettings: { clickTracking: { enable: false } }
+            };
+            
+            const [response] = await sgMail.send(msg);
+            console.log('✅ SendGrid OK - Status:', response.statusCode);
+            result = { provider: 'SENDGRID', statusCode: response.statusCode };
+        }
+        
+        // === GMAIL (local uniquement) ===
+        else if (emailConfig.type === 'GMAIL' && emailConfig.transporter) {
+            const info = await emailConfig.transporter.sendMail({
+                from: `"FileTransfer" <${fromEmail}>`,
+                to,
+                subject: `Fichier partagé : ${displayName}`,
+                html: htmlContent
+            });
+            console.log('✅ Gmail OK - MessageId:', info.messageId);
+            result = { provider: 'GMAIL', messageId: info.messageId };
+        }
+        
+        else {
+            console.error('❌ Aucun provider email configuré');
+            return res.status(503).json({ 
+                error: 'Service email non configuré',
+                solution: 'Ajoutez SENDGRID_API_KEY dans les variables d\'environnement Render'
+            });
+        }
+
+        res.json({ success: true, ...result });
+
+    } catch (err) {
+        console.error('❌ ERREUR EMAIL:', err.message);
+        if (err.response?.body?.errors) {
+            console.error('SendGrid errors:', JSON.stringify(err.response.body.errors, null, 2));
+        }
+        res.status(500).json({ 
+            error: 'Échec envoi email',
+            provider: emailConfig.type,
+            detail: err.message,
+            sendgridDetail: err.response?.body?.errors?.[0]?.message || null
         });
-        res.json({ success: true });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
     }
 });
 
