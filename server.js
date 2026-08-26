@@ -109,25 +109,7 @@ app.post('/api/send-email', async (req, res) => {
         </div>
     `;
 
-    // 1. Essayer SendGrid (Recommandé pour Render/Production)
-    if (sgMail && process.env.SENDGRID_API_KEY) {
-        try {
-            sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-            await sgMail.send({
-                to: to,
-                from: process.env.SENDGRID_FROM_EMAIL || 'no-reply@transferx.app', // ⚠️ Changez par votre email vérifié SendGrid
-                subject: 'Vous avez reçu un fichier sécurisé',
-                html: htmlContent
-            });
-            console.log(`✅ Email envoyé via SendGrid à ${to}`);
-            return res.json({ success: true, provider: 'sendgrid' });
-        } catch (error) {
-            console.error('❌ Erreur SendGrid:', error.response?.body || error.message);
-            // On continue vers le fallback Nodemailer si SendGrid échoue
-        }
-    }
-
-    // 2. Fallback Nodemailer (Gmail)
+    // ✅ 1. ESSAYER GMAIL EN PREMIER (plus simple, déjà configuré)
     if (nodemailer && process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
         try {
             const transporter = nodemailer.createTransport({
@@ -143,12 +125,29 @@ app.post('/api/send-email', async (req, res) => {
             console.log(`✅ Email envoyé via Gmail à ${to}`);
             return res.json({ success: true, provider: 'gmail' });
         } catch (error) {
-            console.error('❌ Erreur Gmail:', error.message);
-            return res.status(500).json({ error: 'Échec Gmail: ' + error.message });
+            console.error('⚠️ Erreur Gmail:', error.message);
+            // On continue vers SendGrid si Gmail échoue
         }
     }
 
-    return res.status(503).json({ error: 'Aucun service email configuré (SendGrid ou Gmail).' });
+    // 2. FALLBACK SENDGRID
+    if (sgMail && process.env.SENDGRID_API_KEY) {
+        try {
+            sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+            await sgMail.send({
+                to: to,
+                from: process.env.SENDGRID_FROM_EMAIL || process.env.GMAIL_USER,
+                subject: 'Vous avez reçu un fichier sécurisé',
+                html: htmlContent
+            });
+            console.log(`✅ Email envoyé via SendGrid à ${to}`);
+            return res.json({ success: true, provider: 'sendgrid' });
+        } catch (error) {
+            console.error('❌ Erreur SendGrid:', error.response?.body || error.message);
+        }
+    }
+
+    return res.status(503).json({ error: 'Aucun service email disponible.' });
 });
 
 // ========================================
