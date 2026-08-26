@@ -7,6 +7,7 @@ let dataChannel;
 let role = null;
 let roomId = '';
 let selectedFile = null;
+let selectedFiles = [];
 let transferAborted = false;
 let iceServersConfig = null;
 let receivedChunks = [];
@@ -18,16 +19,27 @@ let pendingIceCandidates = [];
 let isRemoteDescriptionSet = false;
 let wakeLock = null;
 
-// ✅ CHUNK SIZE adaptatif selon la RAM
-const DEVICE_RAM = navigator.deviceMemory || 4;
-const CHUNK_SIZE = DEVICE_RAM <= 2 
-    ? 16 * 1024        // 16 Ko téléphones faibles
-    : DEVICE_RAM <= 4 
-        ? 32 * 1024    // 32 Ko moyen
-        : 64 * 1024;   // 64 Ko appareils puissants
+// ✅ DÉTECTION RAM ET CHUNK ADAPTATIF
+const DEVICE_RAM = navigator.deviceMemory || 4; // en Go
+const IS_LOW_MEMORY = DEVICE_RAM <= 2;
+const IS_MEDIUM_MEMORY = DEVICE_RAM <= 4;
 
-const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024;
-console.log(`💾 RAM: ${DEVICE_RAM}Go → chunk: ${CHUNK_SIZE/1024}Ko`);
+const CHUNK_SIZE = IS_LOW_MEMORY 
+    ? 4 * 1024         // 4 Ko pour téléphones très faibles
+    : IS_MEDIUM_MEMORY 
+        ? 8 * 1024     // 8 Ko moyen
+        : 16 * 1024;   // 16 Ko appareils puissants
+
+const BUFFER_LIMIT = IS_LOW_MEMORY 
+    ? 512 * 1024       // 512 Ko buffer max
+    : 1024 * 1024 * 2; // 2 Mo buffer max
+
+const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2 Go
+const MAX_FOLDER_SIZE = IS_LOW_MEMORY 
+    ? 50 * 1024 * 1024   // 50 Mo sur téléphones faibles
+    : 200 * 1024 * 1024; // 200 Mo sur autres
+
+console.log(`💾 RAM: ${DEVICE_RAM}Go | Chunk: ${CHUNK_SIZE/1024}Ko | Buffer: ${BUFFER_LIMIT/1024}Ko`);
 
 // --- Éléments DOM ---
 const stepSelect = document.getElementById('step-select');
@@ -107,7 +119,7 @@ function cleanup() {
 }
 
 // =========================================================
-//  Wake Lock (empêche l'écran de s'éteindre)
+//  Wake Lock
 // =========================================================
 async function requestWakeLock() {
     try {
@@ -225,7 +237,6 @@ function setupDataChannelReceiver() {
         channel.onmessage = (event) => {
             if (transferAborted) return;
             
-            // Métadonnées (premier message)
             if (!metadataReceived) {
                 try {
                     const strData = typeof event.data === 'string' 
@@ -251,17 +262,13 @@ function setupDataChannelReceiver() {
                         }
                         return;
                     }
-                } catch (e) {
-                    // Pas JSON, continuer
-                }
+                } catch (e) {}
             }
             
-            // Chunk de données
             const chunk = event.data;
             receivedChunks.push(chunk);
             receivedSize += chunk.byteLength || chunk.length || 0;
             
-            // Progression
             if (expectedSize > 0) {
                 const percent = Math.min(100, Math.round((receivedSize / expectedSize) * 100));
                 progressFill.style.width = percent + '%';
@@ -273,18 +280,14 @@ function setupDataChannelReceiver() {
                 }
             }
             
-            // ACK périodique
             if (receivedChunks.length % 100 === 0) {
                 channel.send(JSON.stringify({ msgType: 'progress', received: receivedSize }));
             }
             
-            // Fin du transfert
             if (expectedSize > 0 && receivedSize >= expectedSize) {
                 console.log('✅ Tous les chunks reçus');
                 try {
                     const blob = new Blob(receivedChunks);
-                    console.log('📦 Blob:', blob.size, 'bytes');
-                    
                     const url = URL.createObjectURL(blob);
                     downloadLink.href = url;
                     downloadLink.download = expectedName;
@@ -292,7 +295,6 @@ function setupDataChannelReceiver() {
                     downloadLink.textContent = `⬇️ Télécharger ${expectedName} (${formatBytes(blob.size)})`;
                     
                     channel.send(JSON.stringify({ msgType: 'complete' }));
-                    
                     try { channel.close(); } catch(e) {}
                     dataChannel = null;
                     
@@ -309,18 +311,19 @@ function setupDataChannelReceiver() {
 }
 
 // =========================================================
-//  Envoi fichier (expéditeur) - avec BACKPRESSURE
+//  ✅ ENVOI FICHIER OPTIMISÉ MÉMOIRE
 // =========================================================
 function startFileTransfer() {
     if (!selectedFile || !dataChannel || dataChannel.readyState !== 'open') {
         showError('❌ Canal non prêt');
         return;
     }
+    
     console.log('🚀 Envoi:', selectedFile.name, selectedFile.size);
     transferStartTime = Date.now();
     let offset = 0;
+    let chunkCount = 0;
     
-    // ✅ CORRECTION CRITIQUE : msgType au lieu de type
     try {
         dataChannel.send(JSON.stringify({
             msgType: 'metadata',
@@ -344,9 +347,9 @@ function startFileTransfer() {
             return;
         }
         
-        // ⚠️ BACKPRESSURE : pause si buffer saturé (CRUCIAL pour téléphones faibles)
-        if (dataChannel.bufferedAmount > 1024 * 1024 * 4) {
-            setTimeout(sendNextChunk, 100);
+        // ⚠️ BACKPRESSURE AGRESSIF : pause si buffer saturé
+        if (dataChannel.bufferedAmount > BUFFER_LIMIT) {
+            setTimeout(sendNextChunk, 50);
             return;
         }
         
@@ -358,6 +361,7 @@ function startFileTransfer() {
             try {
                 dataChannel.send(reader.result);
                 offset = end;
+                chunkCount++;
                 
                 const percent = Math.round((offset / selectedFile.size) * 100);
                 progressFill.style.width = percent + '%';
@@ -368,11 +372,19 @@ function startFileTransfer() {
                     speedText.textContent = formatSpeed(offset / elapsed);
                 }
                 
-                // setTimeout(0) pour laisser respirer le navigateur
-                setTimeout(sendNextChunk, 0);
+                // ✅ PAUSE FRÉQUENTE pour laisser le GC respirer
+                // Sur téléphones faibles : pause tous les 5 chunks
+                // Sur autres : pause tous les 20 chunks
+                const pauseInterval = IS_LOW_MEMORY ? 5 : 20;
+                
+                if (chunkCount % pauseInterval === 0) {
+                    setTimeout(sendNextChunk, 10); // 10ms pause
+                } else {
+                    setTimeout(sendNextChunk, 0); // immédiat
+                }
             } catch (e) {
                 console.error('❌ Erreur chunk:', e);
-                showError('❌ Erreur envoi');
+                showError('❌ Erreur envoi: ' + e.message);
             }
         };
         
@@ -451,10 +463,20 @@ btnModeFolder.addEventListener('click', () => {
 fileInput.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    
     if (file.size > MAX_FILE_SIZE) {
         showError(`❌ Fichier trop volumineux (max ${formatBytes(MAX_FILE_SIZE)})`);
         return;
     }
+    
+    // ✅ ALERTE pour téléphones faibles
+    if (IS_LOW_MEMORY && file.size > 100 * 1024 * 1024) {
+        if (!confirm(`⚠️ Votre téléphone a peu de mémoire (${DEVICE_RAM} Go).\n\nUn fichier de ${formatBytes(file.size)} peut causer des problèmes.\n\nContinuer quand même ?`)) {
+            fileInput.value = '';
+            return;
+        }
+    }
+    
     selectedFile = file;
     showFilePreview(file.name, file.size);
 });
@@ -464,8 +486,9 @@ folderInput.addEventListener('change', async (e) => {
     if (files.length === 0) return;
     
     const totalSize = files.reduce((sum, f) => sum + f.size, 0);
-    if (totalSize > MAX_FILE_SIZE) {
-        showError('❌ Dossier trop volumineux');
+    
+    if (totalSize > MAX_FOLDER_SIZE) {
+        showError(`❌ Dossier trop volumineux (max ${formatBytes(MAX_FOLDER_SIZE)} sur cet appareil)`);
         return;
     }
     
@@ -474,18 +497,28 @@ folderInput.addEventListener('change', async (e) => {
     try {
         if (!window.JSZip) throw new Error('JSZip non chargé');
         const zip = new JSZip();
-        for (const f of files) {
+        
+        // ✅ Compression progressive (fichier par fichier)
+        for (let i = 0; i < files.length; i++) {
+            const f = files[i];
             const buf = await f.arrayBuffer();
             zip.file(f.webkitRelativePath || f.name, buf);
+            
+            // Pause tous les 5 fichiers pour laisser respirer
+            if (i % 5 === 0) {
+                fileInfo.textContent = `Compression... ${Math.round((i/files.length)*50)}% (${i+1}/${files.length})`;
+                await new Promise(r => setTimeout(r, 10));
+            }
         }
-        const blob = await zip.generateAsync(
-            { type: 'blob' },
-            (m) => { fileInfo.textContent = `Compression... ${Math.round(m.percent)} %`; }
-        );
+        
+        fileInfo.textContent = `Finalisation ZIP...`;
+        
+        const blob = await zip.generateAsync({ type: 'blob' });
         const folderName = files[0].webkitRelativePath?.split('/')[0] || 'dossier';
         selectedFile = new File([blob], `${folderName}.zip`, { type: 'application/zip' });
         showFilePreview(selectedFile.name, selectedFile.size);
     } catch (e) {
+        console.error('Erreur compression:', e);
         showError('❌ Erreur compression: ' + e.message);
         filePreview.classList.add('hidden');
     }
@@ -734,7 +767,7 @@ window.addEventListener('beforeunload', (e) => {
 //  Initialisation
 // =========================================================
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🚀 TransferX v3.1 (Wake Lock + Backpressure)');
+    console.log('🚀 TransferX v4.0 (Optimisé mémoire)');
     
     if (!window.RTCPeerConnection) {
         showError('❌ WebRTC non supporté.');
