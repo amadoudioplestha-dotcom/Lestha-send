@@ -4,15 +4,28 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const crypto = require('crypto');
-const nodemailer = require('nodemailer');          // ← AJOUTÉ
 
-// SendGrid - chargement sécurisé
+// =========================================================
+//  CHARGEMENT CONDITIONNEL DES MODULES EMAIL
+// =========================================================
+
 let sgMail = null;
+let nodemailer = null;
+
+// SendGrid - chargement sécurisé avec try/catch
 try {
     sgMail = require('@sendgrid/mail');
     console.log('✅ Module @sendgrid/mail chargé');
 } catch (e) {
-    console.warn('⚠️ @sendgrid/mail non installé: npm install @sendgrid/mail');
+    console.warn('⚠️ @sendgrid/mail non installé - npm install @sendgrid/mail');
+}
+
+// Nodemailer - chargement sécurisé
+try {
+    nodemailer = require('nodemailer');
+    console.log('✅ Module nodemailer chargé');
+} catch (e) {
+    console.warn('⚠️ nodemailer non installé');
 }
 
 const app = express();
@@ -33,12 +46,16 @@ function getEmailConfig() {
     const gmailUser = process.env.GMAIL_USER;
     const gmailPass = process.env.GMAIL_APP_PASSWORD || process.env.GMAIL_PASS;
     
+    // Priorité SendGrid
     if (sendgridKey && sgMail) {
         sgMail.setApiKey(sendgridKey);
-        return { type: 'SENDGRID', keyPreview: sendgridKey.slice(0, 6) + '...' };
+        console.log('📧 Config: SendGrid activé');
+        return { type: 'SENDGRID', keyPreview: sendgridKey.slice(0, 8) + '...' };
     }
     
-    if (gmailUser && gmailPass && !process.env.RENDER) {
+    // Fallback Gmail (local uniquement)
+    if (gmailUser && gmailPass && nodemailer && !process.env.RENDER) {
+        console.log('📧 Config: Gmail (local)');
         return {
             type: 'GMAIL',
             transporter: nodemailer.createTransport({
@@ -48,13 +65,14 @@ function getEmailConfig() {
         };
     }
     
-    return { type: null, error: 'Ajoutez SENDGRID_API_KEY' };
+    console.warn('⚠️ Aucun service email configuré - les transferts P2P fonctionnent sans email');
+    return { type: null, error: 'Ajoutez SENDGRID_API_KEY dans les variables d\'env Render' };
 }
 
-const emailConfig = getEmailConfig();  // ← Unique appel
+const emailConfig = getEmailConfig();
 
 // =========================================================
-//  DEBUG
+//  ROUTE DEBUG
 // =========================================================
 
 app.get('/api/debug/email', (req, res) => {
@@ -62,9 +80,13 @@ app.get('/api/debug/email', (req, res) => {
         provider: emailConfig.type,
         configOK: !!emailConfig.type,
         isRender: !!process.env.RENDER,
+        modules: {
+            sendgridLoaded: !!sgMail,
+            nodemailerLoaded: !!nodemailer
+        },
         envVars: {
             hasSendGrid: !!process.env.SENDGRID_API_KEY,
-            sendGridLength: process.env.SENDGRID_API_KEY?.length || 0,
+            sendGridLength: process.env.SENDGRID_API_KEY ? process.env.SENDGRID_API_KEY.length : 0,
             hasGmail: !!process.env.GMAIL_USER,
             emailFrom: process.env.EMAIL_FROM || process.env.GMAIL_USER || 'non défini'
         }
@@ -72,7 +94,46 @@ app.get('/api/debug/email', (req, res) => {
 });
 
 // =========================================================
-//  FONCTION AUXILIAIRE: escapeHtml
+//  FONCTION ENVOI EMAIL UNIFIÉE
+// =========================================================
+
+async function sendEmail({ to, subject, html, text }) {
+    const fromEmail = process.env.EMAIL_FROM || process.env.GMAIL_USER || 'noreply@filetransfer.app';
+    
+    // === SENDGRID ===
+    if (emailConfig.type === 'SENDGRID' && sgMail) {
+        const msg = {
+            to,
+            from: { email: fromEmail, name: 'FileTransfer' },
+            subject,
+            html,
+            text: text || subject,
+            trackingSettings: { clickTracking: { enable: false } }
+        };
+        
+        const [response] = await sgMail.send(msg);
+        console.log('✅ SendGrid OK - Status:', response.statusCode);
+        return { provider: 'SENDGRID', statusCode: response.statusCode };
+    }
+    
+    // === GMAIL ===
+    if (emailConfig.type === 'GMAIL' && emailConfig.transporter) {
+        const info = await emailConfig.transporter.sendMail({
+            from: `"FileTransfer" <${fromEmail}>`,
+            to,
+            subject,
+            html,
+            text: text || subject
+        });
+        console.log('✅ Gmail OK - MessageId:', info.messageId);
+        return { provider: 'GMAIL', messageId: info.messageId };
+    }
+    
+    throw new Error('Aucun provider email disponible');
+}
+
+// =========================================================
+//  ROUTE ENVOI EMAIL (UNIQUE)
 // =========================================================
 
 function escapeHtml(text) {
@@ -85,26 +146,26 @@ function escapeHtml(text) {
         .replace(/'/g, '&#039;');
 }
 
-// =========================================================
-//  ROUTE ENVOI EMAIL - UNIQUE VERSION
-// =========================================================
-
 app.post('/api/send-email', async (req, res) => {
-    console.log('📧 Requête:', { to: req.body?.to, hasLink: !!req.body?.link });
+    console.log('📧 Requête email reçue:', { to: req.body?.to, hasLink: !!req.body?.link });
     
     try {
         const { to, link, fileName } = req.body;
         
         // Validation
         if (!to || !link) {
-            return res.status(400).json({ error: 'Email et lien requis' });
-        }
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
-            return res.status(400).json({ error: 'Email invalide' });
+            return res.status(400).json({ error: 'Email destinataire et lien requis' });
         }
         
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+            return res.status(400).json({ error: 'Email destinataire invalide' });
+        }
+        
+        try { new URL(link); } catch(e) {
+            return res.status(400).json({ error: 'Lien invalide' });
+        }
+
         const displayName = fileName || 'fichier';
-        const fromEmail = process.env.EMAIL_FROM || process.env.GMAIL_USER || 'noreply@filetransfer.app';
         
         const htmlContent = `
 <!DOCTYPE html>
@@ -114,84 +175,58 @@ app.post('/api/send-email', async (req, res) => {
     <div style="background:#f0f7ff;border-radius:16px;padding:32px;text-align:center;">
         <div style="font-size:48px;margin-bottom:16px;">📎</div>
         <h2 style="color:#0066FF;margin:0 0 16px;">Fichier partagé avec vous</h2>
-        <p style="color:#444;font-size:16px;">
+        <p style="color:#444;font-size:16px;line-height:1.6;">
             <strong style="color:#0066FF;">${escapeHtml(displayName)}</strong> vous a été envoyé.
         </p>
         <a href="${escapeHtml(link)}" style="display:inline-block;margin:20px 0;padding:14px 32px;background:#0066FF;color:#fff;text-decoration:none;border-radius:12px;font-weight:600;">
             📥 Télécharger
         </a>
         <p style="color:#888;font-size:13px;margin-top:24px;">
-            Ce lien fonctionne tant que l'expéditeur reste connecté.
+            Ce lien est sécurisé et expire après utilisation.<br>
+            <span style="font-family:monospace;background:#e0ecff;padding:4px 8px;border-radius:6px;">${escapeHtml(link)}</span>
         </p>
     </div>
 </body>
 </html>`;
 
-        let result;
-
-        // === SENDGRID ===
-        if (emailConfig.type === 'SENDGRID') {
-            const [response] = await sgMail.send({
-                to,
-                from: { email: fromEmail, name: 'FileTransfer' },
-                subject: `📎 ${escapeHtml(displayName)} - Fichier partagé`,
-                html: htmlContent,
-                trackingSettings: { clickTracking: { enable: false } }
-            });
-            console.log('✅ SendGrid OK:', response.statusCode);
-            result = { provider: 'SENDGRID', statusCode: response.statusCode };
-        }
-        
-        // === GMAIL ===
-        else if (emailConfig.type === 'GMAIL' && emailConfig.transporter) {
-            const info = await emailConfig.transporter.sendMail({
-                from: `"FileTransfer" <${fromEmail}>`,
-                to,
-                subject: `Fichier partagé : ${escapeHtml(displayName)}`,
-                html: htmlContent
-            });
-            console.log('✅ Gmail OK:', info.messageId);
-            result = { provider: 'GMAIL', messageId: info.messageId };
-        }
-        
-        else {
-            console.error('❌ Aucun provider');
-            return res.status(503).json({ 
-                error: 'Service email non configuré',
-                solution: 'Ajoutez SENDGRID_API_KEY dans Render → Environment Variables'
-            });
-        }
+        const result = await sendEmail({
+            to,
+            subject: `📎 ${escapeHtml(displayName)} - Fichier partagé`,
+            html: htmlContent,
+            text: `Fichier partagé: ${displayName}\nLien: ${link}`
+        });
 
         res.json({ success: true, ...result });
 
     } catch (err) {
-        console.error('❌ ERREUR:', err.message);
-        
-        // Erreur SendGrid détaillée
+        console.error('❌ ERREUR EMAIL:', err.message);
         if (err.response?.body?.errors) {
-            console.error('SendGrid:', JSON.stringify(err.response.body.errors));
+            console.error('SendGrid errors:', JSON.stringify(err.response.body.errors, null, 2));
         }
         
+        let statusCode = 500;
         let userError = 'Échec envoi email';
-        if (err.code === 'EAUTH') userError = 'Authentification échouée';
-        else if (err.code === 'ECONNECTION') userError = 'Connexion échouée (timeout)';
-        else if (err.response?.statusCode === 403) userError = 'SendGrid: vérification sender requise';
-        else if (err.response?.body?.errors?.[0]?.message) {
-            userError = 'SendGrid: ' + err.response.body.errors[0].message;
+        
+        if (err.message.includes('Aucun provider')) {
+            statusCode = 503;
+            userError = 'Service email non configuré. Ajoutez SENDGRID_API_KEY sur Render.';
+        } else if (err.code === 'EAUTH') {
+            userError = 'Authentification échouée. Vérifiez votre clé API.';
+        } else if (err.code === 'ECONNECTION') {
+            userError = 'Connexion échouée. Réseau bloqué ?';
         }
         
-        res.status(500).json({ 
+        res.status(statusCode).json({ 
             error: userError,
             provider: emailConfig.type,
-            detail: err.message
+            detail: process.env.NODE_ENV === 'development' ? err.message : undefined,
+            sendgridDetail: err.response?.body?.errors?.[0]?.message || null
         });
     }
 });
 
-// [RESTE DU CODE : ICE CONFIG, SIGNING, ETC. → IDENTIQUE...]
-
 // =========================================================
-//  ICE CONFIG
+//  ICE CONFIG (conservé)
 // =========================================================
 
 function validateIceServer(url, username, credential) {
@@ -263,7 +298,7 @@ app.get('/api/ice-config', (req, res) => {
 });
 
 // =========================================================
-//  SIGNALING (identique à votre code)
+//  SIGNALING (conservé)
 // =========================================================
 
 const rooms = new Map();
@@ -398,11 +433,11 @@ io.on('connection', (socket) => {
 });
 
 // =========================================================
-//  DÉMARRAGE - getEmailConfig() SUPPRIMÉ (déjà appelé)
+//  DÉMARRAGE
 // =========================================================
 
 server.listen(PORT, () => {
     console.log(`🚀 Serveur démarré sur le port ${PORT}`);
-    console.log(`📧 Provider email: ${emailConfig.type || 'NON CONFIGURÉ'}`);
-    if (emailConfig.error) console.log(`⚠️ ${emailConfig.error}`);
+    console.log(`📧 Email: ${emailConfig.type || 'NON CONFIGURÉ'}${emailConfig.error ? ' (' + emailConfig.error + ')' : ''}`);
+    console.log(`   Modules: SendGrid=${!!sgMail}, Nodemailer=${!!nodemailer}`);
 });
