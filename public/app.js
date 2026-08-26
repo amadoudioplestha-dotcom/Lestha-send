@@ -19,27 +19,10 @@ let pendingIceCandidates = [];
 let isRemoteDescriptionSet = false;
 let wakeLock = null;
 
-// ✅ DÉTECTION RAM ET CHUNK ADAPTATIF
-const DEVICE_RAM = navigator.deviceMemory || 4; // en Go
-const IS_LOW_MEMORY = DEVICE_RAM <= 2;
-const IS_MEDIUM_MEMORY = DEVICE_RAM <= 4;
-
-const CHUNK_SIZE = IS_LOW_MEMORY 
-    ? 4 * 1024         // 4 Ko pour téléphones très faibles
-    : IS_MEDIUM_MEMORY 
-        ? 8 * 1024     // 8 Ko moyen
-        : 16 * 1024;   // 16 Ko appareils puissants
-
-const BUFFER_LIMIT = IS_LOW_MEMORY 
-    ? 512 * 1024       // 512 Ko buffer max
-    : 1024 * 1024 * 2; // 2 Mo buffer max
-
-const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2 Go
-const MAX_FOLDER_SIZE = IS_LOW_MEMORY 
-    ? 50 * 1024 * 1024   // 50 Mo sur téléphones faibles
-    : 200 * 1024 * 1024; // 200 Mo sur autres
-
-console.log(`💾 RAM: ${DEVICE_RAM}Go | Chunk: ${CHUNK_SIZE/1024}Ko | Buffer: ${BUFFER_LIMIT/1024}Ko`);
+// ✅ CHUNK adaptatif discret
+const DEVICE_RAM = navigator.deviceMemory || 4;
+const CHUNK_SIZE = DEVICE_RAM <= 2 ? 8 * 1024 : DEVICE_RAM <= 4 ? 16 * 1024 : 32 * 1024;
+const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024;
 
 // --- Éléments DOM ---
 const stepSelect = document.getElementById('step-select');
@@ -69,6 +52,94 @@ const emailInput = document.getElementById('emailInput');
 const btnSendEmail = document.getElementById('btnSendEmail');
 
 // =========================================================
+//  🛡️ SAUVEGARDE D'ÉTAT ANTI-RELOAD (style WhatsApp)
+// =========================================================
+// Sur Android faible RAM, le sélecteur de fichiers peut tuer la page.
+// On sauvegarde tout dans sessionStorage pour pouvoir restaurer.
+function saveSelectionState(file) {
+    try {
+        const state = {
+            fileName: file.name,
+            fileSize: file.size,
+            fileType: file.type,
+            lastModified: file.lastModified,
+            timestamp: Date.now(),
+            // On ne peut PAS sérialiser le File lui-même, mais on peut
+            // le garder en mémoire via une variable globale qui survit
+            // si la page ne recharge pas vraiment
+        };
+        sessionStorage.setItem('pendingFile', JSON.stringify(state));
+    } catch (e) {}
+}
+
+function clearSelectionState() {
+    try { sessionStorage.removeItem('pendingFile'); } catch (e) {}
+}
+
+// Variable qui garde le File en mémoire pendant la sélection
+let _pendingFileObject = null;
+
+function setPendingFile(file) {
+    _pendingFileObject = file;
+    saveSelectionState(file);
+}
+
+// =========================================================
+//  📱 OUVERTURE INTELLIGENTE DU SÉLECTEUR (WhatsApp-style)
+// =========================================================
+// Stratégie :
+// 1. Essayer showOpenFilePicker() (moderne, pas de reload)
+// 2. Sinon, utiliser <input type="file"> avec protection
+async function openFilePicker(isFolder = false) {
+    // Sauvegarder l'état AVANT d'ouvrir le sélecteur
+    try {
+        sessionStorage.setItem('pageState', JSON.stringify({
+            step: 'select',
+            timestamp: Date.now()
+        }));
+    } catch (e) {}
+    
+    // Méthode moderne (Chrome desktop, pas Android/iOS)
+    if (!isFolder && window.showOpenFilePicker) {
+        try {
+            const [fileHandle] = await window.showOpenFilePicker({
+                multiple: false
+            });
+            const file = await fileHandle.getFile();
+            return file;
+        } catch (e) {
+            if (e.name === 'AbortError') return null;
+            // Fallback vers input classique
+        }
+    }
+    
+    // Méthode classique : input avec attributs Android-friendly
+    return new Promise((resolve) => {
+        const input = isFolder ? folderInput : fileInput;
+        
+        // Handler unique
+        const handler = (e) => {
+            input.removeEventListener('change', handler);
+            input.removeEventListener('cancel', cancelHandler);
+            const file = e.target.files?.[0];
+            resolve(file || null);
+        };
+        
+        const cancelHandler = () => {
+            input.removeEventListener('change', handler);
+            input.removeEventListener('cancel', cancelHandler);
+            resolve(null);
+        };
+        
+        input.addEventListener('change', handler);
+        input.addEventListener('cancel', cancelHandler);
+        
+        // Déclencher l'ouverture
+        input.click();
+    });
+}
+
+// =========================================================
 //  Utilitaires
 // =========================================================
 function showStep(id) {
@@ -82,7 +153,7 @@ function showError(msg) {
     console.error('❌', msg);
     setTimeout(() => {
         if (errorBox.textContent === msg) errorBox.classList.add('hidden');
-    }, 10000);
+    }, 8000);
 }
 
 function clearError() {
@@ -105,7 +176,6 @@ function formatSpeed(bps) {
 }
 
 function cleanup() {
-    console.log('🧹 Nettoyage...');
     pendingIceCandidates = [];
     isRemoteDescriptionSet = false;
     if (dataChannel) { try { dataChannel.close(); } catch(e){} dataChannel = null; }
@@ -118,39 +188,25 @@ function cleanup() {
     releaseWakeLock();
 }
 
-// =========================================================
-//  Wake Lock
-// =========================================================
 async function requestWakeLock() {
     try {
         if ('wakeLock' in navigator) {
             wakeLock = await navigator.wakeLock.request('screen');
-            console.log('🔒 Wake Lock activé');
-            wakeLock.addEventListener('release', () => console.log('🔓 Wake Lock libéré'));
+            wakeLock.addEventListener('release', () => {});
         }
-    } catch (err) {
-        console.warn('⚠️ Wake Lock:', err.message);
-    }
+    } catch (err) {}
 }
 
 function releaseWakeLock() {
-    if (wakeLock) {
-        wakeLock.release().catch(()=>{});
-        wakeLock = null;
-    }
+    if (wakeLock) { wakeLock.release().catch(()=>{}); wakeLock = null; }
 }
 
-// =========================================================
-//  Config ICE
-// =========================================================
 async function getIceServers() {
     if (iceServersConfig) return iceServersConfig;
     try {
         const res = await fetch('/api/ice-config');
         const data = await res.json();
-        iceServersConfig = data.iceServers || [
-            { urls: 'stun:stun.l.google.com:19302' }
-        ];
+        iceServersConfig = data.iceServers || [{ urls: 'stun:stun.l.google.com:19302' }];
         return iceServersConfig;
     } catch (e) {
         iceServersConfig = [
@@ -163,9 +219,8 @@ async function getIceServers() {
 
 async function createPeerConnection() {
     const iceServers = await getIceServers();
-    try {
-        return new RTCPeerConnection({ iceServers });
-    } catch (e) {
+    try { return new RTCPeerConnection({ iceServers }); }
+    catch (e) {
         return new RTCPeerConnection({
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
@@ -181,20 +236,12 @@ async function createPeerConnection() {
 function setupDataChannelSender() {
     if (!dataChannel) return;
     dataChannel.binaryType = 'arraybuffer';
-    
     dataChannel.onopen = () => {
-        console.log('📡 DC ouvert (expéditeur)');
         transferTitle.textContent = 'Envoi en cours…';
         startFileTransfer();
     };
-    
-    dataChannel.onclose = () => console.log('📡 DC fermé (expéditeur)');
-    
-    dataChannel.onerror = (err) => {
-        console.error('❌ Erreur DC:', err);
-        showError('❌ Erreur canal');
-    };
-    
+    dataChannel.onclose = () => {};
+    dataChannel.onerror = (err) => showError('❌ Erreur canal');
     dataChannel.onmessage = (event) => {
         try {
             const msg = JSON.parse(event.data);
@@ -216,21 +263,14 @@ function setupDataChannelReceiver() {
     pc.ondatachannel = (event) => {
         const channel = event.channel;
         channel.binaryType = 'arraybuffer';
-        console.log('📡 DC reçu (destinataire)');
         
         channel.onopen = () => {
-            console.log('📡 DC ouvert (destinataire)');
             transferTitle.textContent = 'Réception en cours…';
             transferStartTime = Date.now();
             requestWakeLock();
         };
-        
-        channel.onclose = () => {
-            console.log('📡 DC fermé (destinataire)');
-            releaseWakeLock();
-        };
-        
-        channel.onerror = (err) => console.error('❌ Erreur DC:', err);
+        channel.onclose = () => releaseWakeLock();
+        channel.onerror = () => {};
         
         let metadataReceived = false;
         
@@ -250,16 +290,6 @@ function setupDataChannelReceiver() {
                         metadataReceived = true;
                         receivedSize = 0;
                         receivedChunks = [];
-                        console.log(`📥 ${expectedName} (${formatBytes(expectedSize)})`);
-                        
-                        if (expectedSize > MAX_FILE_SIZE) {
-                            channel.send(JSON.stringify({
-                                msgType: 'error',
-                                message: 'Fichier trop volumineux'
-                            }));
-                            showError('❌ Fichier trop volumineux');
-                            return;
-                        }
                         return;
                     }
                 } catch (e) {}
@@ -273,11 +303,8 @@ function setupDataChannelReceiver() {
                 const percent = Math.min(100, Math.round((receivedSize / expectedSize) * 100));
                 progressFill.style.width = percent + '%';
                 progressText.textContent = percent + ' %';
-                
                 const elapsed = (Date.now() - transferStartTime) / 1000;
-                if (elapsed > 0) {
-                    speedText.textContent = formatSpeed(receivedSize / elapsed);
-                }
+                if (elapsed > 0) speedText.textContent = formatSpeed(receivedSize / elapsed);
             }
             
             if (receivedChunks.length % 100 === 0) {
@@ -285,7 +312,6 @@ function setupDataChannelReceiver() {
             }
             
             if (expectedSize > 0 && receivedSize >= expectedSize) {
-                console.log('✅ Tous les chunks reçus');
                 try {
                     const blob = new Blob(receivedChunks);
                     const url = URL.createObjectURL(blob);
@@ -302,8 +328,7 @@ function setupDataChannelReceiver() {
                     transferTitle.textContent = '✅ Transfert terminé !';
                     releaseWakeLock();
                 } catch (e) {
-                    console.error('❌ Erreur assemblage:', e);
-                    showError('❌ Erreur assemblage: ' + e.message);
+                    showError('❌ Erreur assemblage');
                 }
             }
         };
@@ -311,15 +336,13 @@ function setupDataChannelReceiver() {
 }
 
 // =========================================================
-//  ✅ ENVOI FICHIER OPTIMISÉ MÉMOIRE
+//  Envoi fichier (expéditeur)
 // =========================================================
 function startFileTransfer() {
     if (!selectedFile || !dataChannel || dataChannel.readyState !== 'open') {
         showError('❌ Canal non prêt');
         return;
     }
-    
-    console.log('🚀 Envoi:', selectedFile.name, selectedFile.size);
     transferStartTime = Date.now();
     let offset = 0;
     let chunkCount = 0;
@@ -342,13 +365,10 @@ function startFileTransfer() {
     
     function sendNextChunk() {
         if (transferAborted) return;
-        if (offset >= selectedFile.size) {
-            console.log('✅ Envoi terminé');
-            return;
-        }
+        if (offset >= selectedFile.size) return;
         
-        // ⚠️ BACKPRESSURE AGRESSIF : pause si buffer saturé
-        if (dataChannel.bufferedAmount > BUFFER_LIMIT) {
+        // Backpressure
+        if (dataChannel.bufferedAmount > 1024 * 1024) {
             setTimeout(sendNextChunk, 50);
             return;
         }
@@ -368,30 +388,19 @@ function startFileTransfer() {
                 progressText.textContent = percent + ' %';
                 
                 const elapsed = (Date.now() - transferStartTime) / 1000;
-                if (elapsed > 0) {
-                    speedText.textContent = formatSpeed(offset / elapsed);
-                }
+                if (elapsed > 0) speedText.textContent = formatSpeed(offset / elapsed);
                 
-                // ✅ PAUSE FRÉQUENTE pour laisser le GC respirer
-                // Sur téléphones faibles : pause tous les 5 chunks
-                // Sur autres : pause tous les 20 chunks
-                const pauseInterval = IS_LOW_MEMORY ? 5 : 20;
-                
-                if (chunkCount % pauseInterval === 0) {
-                    setTimeout(sendNextChunk, 10); // 10ms pause
+                // Pause régulière pour éviter la surcharge
+                if (chunkCount % 10 === 0) {
+                    setTimeout(sendNextChunk, 5);
                 } else {
-                    setTimeout(sendNextChunk, 0); // immédiat
+                    setTimeout(sendNextChunk, 0);
                 }
             } catch (e) {
-                console.error('❌ Erreur chunk:', e);
-                showError('❌ Erreur envoi: ' + e.message);
+                showError('❌ Erreur envoi');
             }
         };
-        
-        reader.onerror = () => {
-            showError('❌ Erreur lecture fichier');
-        };
-        
+        reader.onerror = () => showError('❌ Erreur lecture fichier');
         reader.readAsArrayBuffer(chunk);
     }
     
@@ -403,23 +412,13 @@ function startFileTransfer() {
 // =========================================================
 function setupPeerConnectionEvents() {
     pc.onicecandidate = (event) => {
-        if (event.candidate) {
-            socket.emit('ice-candidate', { roomId, candidate: event.candidate });
-        }
+        if (event.candidate) socket.emit('ice-candidate', { roomId, candidate: event.candidate });
     };
-    
     pc.oniceconnectionstatechange = () => {
-        console.log('❄️ ICE:', pc.iceConnectionState);
-        if (pc.iceConnectionState === 'failed') {
-            showError('❌ Connexion ICE échouée');
-        }
+        if (pc.iceConnectionState === 'failed') showError('❌ Connexion ICE échouée');
     };
-    
     pc.onconnectionstatechange = () => {
-        console.log('🔌 State:', pc.connectionState);
-        if (pc.connectionState === 'failed') {
-            showError('❌ Connexion P2P échouée');
-        }
+        if (pc.connectionState === 'failed') showError('❌ Connexion P2P échouée');
     };
 }
 
@@ -446,88 +445,121 @@ async function setupPeerConnectionAsReceiver() {
 }
 
 // =========================================================
-//  UI - Sélection fichiers
+//  📱 UI - Sélection fichiers (WhatsApp-style)
 // =========================================================
-btnModeFile.addEventListener('click', () => {
-    clearError();
-    fileInput.removeAttribute('webkitdirectory');
-    fileInput.click();
-});
 
-btnModeFolder.addEventListener('click', () => {
-    clearError();
-    folderInput.setAttribute('webkitdirectory', '');
-    folderInput.click();
-});
+// Fonction d'aperçu d'un fichier avec icône adaptée
+function getFileIcon(type, name) {
+    if (!type && name) {
+        const ext = name.split('.').pop().toLowerCase();
+        if (['jpg','jpeg','png','gif','webp','heic'].includes(ext)) return '🖼️';
+        if (['mp4','mov','avi','mkv','webm'].includes(ext)) return '🎬';
+        if (['mp3','wav','ogg','m4a','flac'].includes(ext)) return '🎵';
+        if (['pdf'].includes(ext)) return '📕';
+        if (['doc','docx','txt','rtf','odt'].includes(ext)) return '📄';
+        if (['xls','xlsx','csv'].includes(ext)) return '📊';
+        if (['ppt','pptx'].includes(ext)) return '📽️';
+        if (['zip','rar','7z','tar','gz'].includes(ext)) return '📦';
+    }
+    if (type) {
+        if (type.startsWith('image/')) return '🖼️';
+        if (type.startsWith('video/')) return '🎬';
+        if (type.startsWith('audio/')) return '🎵';
+        if (type.includes('pdf')) return '📕';
+        if (type.includes('zip') || type.includes('rar')) return '📦';
+        if (type.includes('word') || type.includes('document')) return '📄';
+        if (type.includes('sheet') || type.includes('excel')) return '📊';
+        if (type.includes('presentation')) return '📽️';
+    }
+    return '📄';
+}
 
-fileInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+function showFilePreview(name, size, type) {
+    const icon = getFileIcon(type, name);
+    fileInfo.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 12px; justify-content: center;">
+            <div style="font-size: 32px;">${icon}</div>
+            <div style="text-align: left; flex: 1; min-width: 0;">
+                <div style="font-weight: 600; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${name}</div>
+                <div style="font-size: 13px; color: #64748b;">${formatBytes(size)}</div>
+            </div>
+            <div style="color: #22c55e; font-size: 20px;">✓</div>
+        </div>
+    `;
+    filePreview.classList.remove('hidden');
+}
+
+// Bouton FICHIER
+btnModeFile.addEventListener('click', async () => {
+    clearError();
+    
+    // Ouvrir le sélecteur avec notre fonction intelligente
+    const file = await openFilePicker(false);
+    
+    if (!file) return; // annulé
     
     if (file.size > MAX_FILE_SIZE) {
         showError(`❌ Fichier trop volumineux (max ${formatBytes(MAX_FILE_SIZE)})`);
         return;
     }
     
-    // ✅ ALERTE pour téléphones faibles
-    if (IS_LOW_MEMORY && file.size > 100 * 1024 * 1024) {
-        if (!confirm(`⚠️ Votre téléphone a peu de mémoire (${DEVICE_RAM} Go).\n\nUn fichier de ${formatBytes(file.size)} peut causer des problèmes.\n\nContinuer quand même ?`)) {
-            fileInput.value = '';
-            return;
-        }
-    }
-    
+    // Sauvegarder la référence
+    setPendingFile(file);
     selectedFile = file;
-    showFilePreview(file.name, file.size);
+    showFilePreview(file.name, file.size, file.type);
 });
 
-folderInput.addEventListener('change', async (e) => {
-    const files = Array.from(e.target.files);
-    if (files.length === 0) return;
+// Bouton DOSSIER
+btnModeFolder.addEventListener('click', async () => {
+    clearError();
     
-    const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+    // Ouvrir le sélecteur dossier
+    const file = await openFilePicker(true);
     
-    if (totalSize > MAX_FOLDER_SIZE) {
-        showError(`❌ Dossier trop volumineux (max ${formatBytes(MAX_FOLDER_SIZE)} sur cet appareil)`);
-        return;
-    }
+    if (!file) return;
     
-    showFilePreview('Compression du dossier...', totalSize);
+    // Pour les dossiers, on va charger JSZip à la demande (lazy loading)
+    showFilePreview('Préparation du dossier...', 0);
     
     try {
-        if (!window.JSZip) throw new Error('JSZip non chargé');
-        const zip = new JSZip();
-        
-        // ✅ Compression progressive (fichier par fichier)
-        for (let i = 0; i < files.length; i++) {
-            const f = files[i];
-            const buf = await f.arrayBuffer();
-            zip.file(f.webkitRelativePath || f.name, buf);
-            
-            // Pause tous les 5 fichiers pour laisser respirer
-            if (i % 5 === 0) {
-                fileInfo.textContent = `Compression... ${Math.round((i/files.length)*50)}% (${i+1}/${files.length})`;
-                await new Promise(r => setTimeout(r, 10));
-            }
+        // Charger JSZip seulement maintenant (économie de RAM)
+        if (!window.JSZip) {
+            fileInfo.innerHTML = '<div style="color: #64748b;">Chargement compression...</div>';
+            await new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+                script.onload = resolve;
+                script.onerror = reject;
+                document.head.appendChild(script);
+            });
         }
         
-        fileInfo.textContent = `Finalisation ZIP...`;
+        // Le folderInput renvoie plusieurs fichiers dans files[]
+        const files = Array.from(folderInput.files);
+        if (files.length === 0) {
+            showError('❌ Aucun fichier dans le dossier');
+            return;
+        }
+        
+        const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+        fileInfo.innerHTML = `<div style="color: #64748b;">Compression de ${files.length} fichiers...</div>`;
+        
+        const zip = new JSZip();
+        for (const f of files) {
+            const buf = await f.arrayBuffer();
+            zip.file(f.webkitRelativePath || f.name, buf);
+        }
         
         const blob = await zip.generateAsync({ type: 'blob' });
         const folderName = files[0].webkitRelativePath?.split('/')[0] || 'dossier';
         selectedFile = new File([blob], `${folderName}.zip`, { type: 'application/zip' });
-        showFilePreview(selectedFile.name, selectedFile.size);
+        
+        showFilePreview(selectedFile.name, selectedFile.size, selectedFile.type);
     } catch (e) {
-        console.error('Erreur compression:', e);
         showError('❌ Erreur compression: ' + e.message);
         filePreview.classList.add('hidden');
     }
 });
-
-function showFilePreview(name, size) {
-    fileInfo.textContent = `📎 ${name} — ${formatBytes(size)}`;
-    filePreview.classList.remove('hidden');
-}
 
 // =========================================================
 //  EXPÉDITEUR
@@ -558,7 +590,7 @@ btnStartSend.addEventListener('click', async () => {
             await pc.setLocalDescription(offer);
             socket.emit('send-offer', { roomId, offer });
         } catch (e) {
-            showError('❌ Erreur WebRTC: ' + e.message);
+            showError('❌ Erreur WebRTC');
             setTimeout(() => { cleanup(); showStep('step-select'); }, 3000);
         }
     });
@@ -598,10 +630,7 @@ btnCancelTransfer.addEventListener('click', () => {
 btnSendEmail.addEventListener('click', async () => {
     const to = emailInput.value.trim();
     const link = linkOutput.value.trim();
-    
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
-        return showError('❌ Email invalide.');
-    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return showError('❌ Email invalide.');
     if (!link) return showError('❌ Aucun lien.');
     
     btnSendEmail.disabled = true;
@@ -614,7 +643,6 @@ btnSendEmail.addEventListener('click', async () => {
             body: JSON.stringify({ to, link, fileName: selectedFile?.name })
         });
         const data = await res.json();
-        
         if (data.success) {
             btnSendEmail.textContent = '✅ Envoyé';
             emailInput.value = '';
@@ -628,9 +656,7 @@ btnSendEmail.addEventListener('click', async () => {
     } finally {
         setTimeout(() => {
             btnSendEmail.disabled = false;
-            if (!btnSendEmail.textContent.includes('✅')) {
-                btnSendEmail.textContent = '✉️ Envoyer';
-            }
+            if (!btnSendEmail.textContent.includes('✅')) btnSendEmail.textContent = '✉️ Envoyer';
         }, 3000);
     }
 });
@@ -641,7 +667,6 @@ btnSendEmail.addEventListener('click', async () => {
 async function joinAsReceiver() {
     const roomFromUrl = new URLSearchParams(location.search).get('room');
     if (!roomFromUrl) return;
-    
     role = 'receiver';
     roomId = roomFromUrl;
     showStep('step-transfer');
@@ -658,7 +683,7 @@ async function joinAsReceiver() {
             transferTitle.textContent = 'En attente de l\'expéditeur...';
         });
     } catch (e) {
-        showError('❌ Erreur: ' + e.message);
+        showError('❌ Erreur');
     }
 }
 
@@ -667,13 +692,10 @@ async function joinAsReceiver() {
 // =========================================================
 function setupSocketListeners() {
     socket.on('connect', () => {
-        console.log('✅ Signalisation OK');
         const room = new URLSearchParams(location.search).get('room');
         if (room && !role) joinAsReceiver();
     });
-    
     socket.on('connect_error', () => showError('❌ Serveur injoignable'));
-    
     socket.on('disconnect', () => {
         if (!transferAborted && role) showError('⚠️ Connexion serveur perdue');
     });
@@ -705,10 +727,7 @@ function setupSocketListeners() {
     
     socket.on('ice-candidate', async (candidate) => {
         if (!pc) return;
-        if (!isRemoteDescriptionSet) {
-            pendingIceCandidates.push(candidate);
-            return;
-        }
+        if (!isRemoteDescriptionSet) { pendingIceCandidates.push(candidate); return; }
         try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch (e) {}
     });
     
@@ -731,9 +750,7 @@ function setupSocketListeners() {
     });
 }
 
-setInterval(() => {
-    if (socket?.connected) socket.emit('ping-keepalive');
-}, 30000);
+setInterval(() => { if (socket?.connected) socket.emit('ping-keepalive'); }, 30000);
 
 // =========================================================
 //  Restart
@@ -753,7 +770,7 @@ btnRestart.addEventListener('click', () => {
 });
 
 // =========================================================
-//  Protection anti-rechargement
+//  Anti-rechargement pendant transfert
 // =========================================================
 window.addEventListener('beforeunload', (e) => {
     if (role && !transferAborted && expectedSize > 0 && receivedSize < expectedSize) {
@@ -767,8 +784,6 @@ window.addEventListener('beforeunload', (e) => {
 //  Initialisation
 // =========================================================
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🚀 TransferX v4.0 (Optimisé mémoire)');
-    
     if (!window.RTCPeerConnection) {
         showError('❌ WebRTC non supporté.');
         return;
