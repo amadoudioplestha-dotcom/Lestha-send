@@ -7,11 +7,8 @@ let dataChannel;
 let role = null;
 let roomId = '';
 let selectedFile = null;
-let selectedFiles = [];
 let transferAborted = false;
 let iceServersConfig = null;
-let receivedChunks = [];
-let receivedSize = 0;
 let expectedSize = 0;
 let expectedName = '';
 let transferStartTime = 0;
@@ -19,10 +16,21 @@ let pendingIceCandidates = [];
 let isRemoteDescriptionSet = false;
 let wakeLock = null;
 
-// ✅ CHUNK adaptatif discret
+// ✅ DÉTECTION MOBILE ET RAM
+const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 const DEVICE_RAM = navigator.deviceMemory || 4;
-const CHUNK_SIZE = DEVICE_RAM <= 2 ? 8 * 1024 : DEVICE_RAM <= 4 ? 16 * 1024 : 32 * 1024;
+const IS_LOW_MEMORY = IS_MOBILE && DEVICE_RAM <= 3;
+
+// ✅ CHUNK ultra-petits sur mobile faible
+const CHUNK_SIZE = IS_LOW_MEMORY ? 8 * 1024 : 16 * 1024;
 const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024;
+
+console.log(`📱 Mode: ${IS_MOBILE ? 'Mobile' : 'Desktop'} | RAM: ${DEVICE_RAM}Go | Chunk: ${CHUNK_SIZE/1024}Ko`);
+
+// ✅ ÉCRITURE DIRECTE SUR DISQUE (comme Telegram)
+let fileStream = null;
+let writer = null;
+let receivedSize = 0;
 
 // --- Éléments DOM ---
 const stepSelect = document.getElementById('step-select');
@@ -52,94 +60,6 @@ const emailInput = document.getElementById('emailInput');
 const btnSendEmail = document.getElementById('btnSendEmail');
 
 // =========================================================
-//  🛡️ SAUVEGARDE D'ÉTAT ANTI-RELOAD (style WhatsApp)
-// =========================================================
-// Sur Android faible RAM, le sélecteur de fichiers peut tuer la page.
-// On sauvegarde tout dans sessionStorage pour pouvoir restaurer.
-function saveSelectionState(file) {
-    try {
-        const state = {
-            fileName: file.name,
-            fileSize: file.size,
-            fileType: file.type,
-            lastModified: file.lastModified,
-            timestamp: Date.now(),
-            // On ne peut PAS sérialiser le File lui-même, mais on peut
-            // le garder en mémoire via une variable globale qui survit
-            // si la page ne recharge pas vraiment
-        };
-        sessionStorage.setItem('pendingFile', JSON.stringify(state));
-    } catch (e) {}
-}
-
-function clearSelectionState() {
-    try { sessionStorage.removeItem('pendingFile'); } catch (e) {}
-}
-
-// Variable qui garde le File en mémoire pendant la sélection
-let _pendingFileObject = null;
-
-function setPendingFile(file) {
-    _pendingFileObject = file;
-    saveSelectionState(file);
-}
-
-// =========================================================
-//  📱 OUVERTURE INTELLIGENTE DU SÉLECTEUR (WhatsApp-style)
-// =========================================================
-// Stratégie :
-// 1. Essayer showOpenFilePicker() (moderne, pas de reload)
-// 2. Sinon, utiliser <input type="file"> avec protection
-async function openFilePicker(isFolder = false) {
-    // Sauvegarder l'état AVANT d'ouvrir le sélecteur
-    try {
-        sessionStorage.setItem('pageState', JSON.stringify({
-            step: 'select',
-            timestamp: Date.now()
-        }));
-    } catch (e) {}
-    
-    // Méthode moderne (Chrome desktop, pas Android/iOS)
-    if (!isFolder && window.showOpenFilePicker) {
-        try {
-            const [fileHandle] = await window.showOpenFilePicker({
-                multiple: false
-            });
-            const file = await fileHandle.getFile();
-            return file;
-        } catch (e) {
-            if (e.name === 'AbortError') return null;
-            // Fallback vers input classique
-        }
-    }
-    
-    // Méthode classique : input avec attributs Android-friendly
-    return new Promise((resolve) => {
-        const input = isFolder ? folderInput : fileInput;
-        
-        // Handler unique
-        const handler = (e) => {
-            input.removeEventListener('change', handler);
-            input.removeEventListener('cancel', cancelHandler);
-            const file = e.target.files?.[0];
-            resolve(file || null);
-        };
-        
-        const cancelHandler = () => {
-            input.removeEventListener('change', handler);
-            input.removeEventListener('cancel', cancelHandler);
-            resolve(null);
-        };
-        
-        input.addEventListener('change', handler);
-        input.addEventListener('cancel', cancelHandler);
-        
-        // Déclencher l'ouverture
-        input.click();
-    });
-}
-
-// =========================================================
 //  Utilitaires
 // =========================================================
 function showStep(id) {
@@ -163,7 +83,7 @@ function clearError() {
 
 function formatBytes(bytes) {
     if (bytes === 0) return '0 o';
-    if (!bytes || isNaN(bytes) || bytes < 0) return '? o';
+    if (!bytes || isNaN(bytes)) return '? o';
     const k = 1024;
     const sizes = ['o', 'Ko', 'Mo', 'Go', 'To'];
     const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
@@ -178,14 +98,15 @@ function formatSpeed(bps) {
 function cleanup() {
     pendingIceCandidates = [];
     isRemoteDescriptionSet = false;
+    if (writer) { try { writer.close(); } catch(e){} writer = null; }
+    fileStream = null;
     if (dataChannel) { try { dataChannel.close(); } catch(e){} dataChannel = null; }
     if (pc) { try { pc.close(); } catch(e){} pc = null; }
-    receivedChunks = [];
     receivedSize = 0;
     expectedSize = 0;
     expectedName = '';
     transferStartTime = 0;
-    releaseWakeLock();
+    if (wakeLock) { wakeLock.release().catch(()=>{}); wakeLock = null; }
 }
 
 async function requestWakeLock() {
@@ -195,10 +116,6 @@ async function requestWakeLock() {
             wakeLock.addEventListener('release', () => {});
         }
     } catch (err) {}
-}
-
-function releaseWakeLock() {
-    if (wakeLock) { wakeLock.release().catch(()=>{}); wakeLock = null; }
 }
 
 async function getIceServers() {
@@ -248,7 +165,7 @@ function setupDataChannelSender() {
             if (msg.msgType === 'complete') {
                 showStep('step-done');
                 transferTitle.textContent = 'Transfert réussi !';
-                releaseWakeLock();
+                if (wakeLock) { wakeLock.release(); wakeLock = null; }
             } else if (msg.msgType === 'error') {
                 showError('❌ ' + msg.message);
             }
@@ -257,26 +174,31 @@ function setupDataChannelSender() {
 }
 
 // =========================================================
-//  Data Channel - DESTINATAIRE
+//  Data Channel - DESTINATAIRE (🎯 VERSION TELEGRAM)
+//  Écrit directement sur le disque SANS stocker en mémoire
 // =========================================================
 function setupDataChannelReceiver() {
     pc.ondatachannel = (event) => {
         const channel = event.channel;
         channel.binaryType = 'arraybuffer';
         
-        channel.onopen = () => {
+        channel.onopen = async () => {
             transferTitle.textContent = 'Réception en cours…';
             transferStartTime = Date.now();
-            requestWakeLock();
+            await requestWakeLock();
         };
-        channel.onclose = () => releaseWakeLock();
+        channel.onclose = () => {
+            if (wakeLock) { wakeLock.release().catch(()=>{}); wakeLock = null; }
+        };
         channel.onerror = () => {};
         
         let metadataReceived = false;
+        let downloadStarted = false;
         
-        channel.onmessage = (event) => {
+        channel.onmessage = async (event) => {
             if (transferAborted) return;
             
+            // Métadonnées
             if (!metadataReceived) {
                 try {
                     const strData = typeof event.data === 'string' 
@@ -289,36 +211,73 @@ function setupDataChannelReceiver() {
                         expectedSize = metadata.size || 0;
                         metadataReceived = true;
                         receivedSize = 0;
-                        receivedChunks = [];
+                        
+                        // ✅ DÉMARRER LE TÉLÉCHARGEMENT DIRECT (StreamSaver)
+                        try {
+                            if (window.streamSaver) {
+                                fileStream = streamSaver.createWriteStream(expectedName, {
+                                    size: expectedSize,
+                                    writableStrategy: new ByteLengthQueuingStrategy({ highWaterMark: 1024 * 1024 }),
+                                    readableStrategy: new ByteLengthQueuingStrategy({ highWaterMark: 1024 * 1024 })
+                                });
+                                writer = fileStream.getWriter();
+                                downloadStarted = true;
+                                console.log('💾 Écriture directe sur disque démarrée (mode Telegram)');
+                            }
+                        } catch (e) {
+                            console.warn('⚠️ StreamSaver non disponible, fallback mémoire');
+                        }
                         return;
                     }
                 } catch (e) {}
             }
             
+            // ✅ ÉCRIRE DIRECTEMENT SUR LE DISQUE
             const chunk = event.data;
-            receivedChunks.push(chunk);
-            receivedSize += chunk.byteLength || chunk.length || 0;
+            const chunkSize = chunk.byteLength || chunk.length || 0;
             
+            if (downloadStarted && writer) {
+                try {
+                    // Écrire le chunk directement sur le disque
+                    await writer.write(chunk);
+                    receivedSize += chunkSize;
+                } catch (e) {
+                    console.error('❌ Erreur écriture disque:', e);
+                    showError('❌ Erreur écriture disque');
+                    return;
+                }
+            } else {
+                // Fallback : garder en mémoire
+                if (!window._fallbackChunks) window._fallbackChunks = [];
+                window._fallbackChunks.push(chunk);
+                receivedSize += chunkSize;
+            }
+            
+            // Progression
             if (expectedSize > 0) {
                 const percent = Math.min(100, Math.round((receivedSize / expectedSize) * 100));
                 progressFill.style.width = percent + '%';
                 progressText.textContent = percent + ' %';
+                
                 const elapsed = (Date.now() - transferStartTime) / 1000;
                 if (elapsed > 0) speedText.textContent = formatSpeed(receivedSize / elapsed);
             }
             
-            if (receivedChunks.length % 100 === 0) {
+            // ACK périodique
+            if (Math.floor(receivedSize / (1024 * 1024)) !== Math.floor((receivedSize - chunkSize) / (1024 * 1024))) {
                 channel.send(JSON.stringify({ msgType: 'progress', received: receivedSize }));
             }
             
+            // ✅ FIN DU TRANSFERT - FERMER LE FICHIER
             if (expectedSize > 0 && receivedSize >= expectedSize) {
+                console.log('✅ Tous les chunks reçus - fermeture fichier');
+                
                 try {
-                    const blob = new Blob(receivedChunks);
-                    const url = URL.createObjectURL(blob);
-                    downloadLink.href = url;
-                    downloadLink.download = expectedName;
-                    downloadLink.classList.remove('hidden');
-                    downloadLink.textContent = `⬇️ Télécharger ${expectedName} (${formatBytes(blob.size)})`;
+                    if (writer) {
+                        await writer.close();
+                        writer = null;
+                        fileStream = null;
+                    }
                     
                     channel.send(JSON.stringify({ msgType: 'complete' }));
                     try { channel.close(); } catch(e) {}
@@ -326,9 +285,11 @@ function setupDataChannelReceiver() {
                     
                     showStep('step-done');
                     transferTitle.textContent = '✅ Transfert terminé !';
-                    releaseWakeLock();
+                    downloadLink.classList.add('hidden'); // Pas besoin avec StreamSaver
+                    
+                    if (wakeLock) { wakeLock.release().catch(()=>{}); wakeLock = null; }
                 } catch (e) {
-                    showError('❌ Erreur assemblage');
+                    showError('❌ Erreur finalisation: ' + e.message);
                 }
             }
         };
@@ -338,14 +299,13 @@ function setupDataChannelReceiver() {
 // =========================================================
 //  Envoi fichier (expéditeur)
 // =========================================================
-function startFileTransfer() {
+async function startFileTransfer() {
     if (!selectedFile || !dataChannel || dataChannel.readyState !== 'open') {
         showError('❌ Canal non prêt');
         return;
     }
     transferStartTime = Date.now();
     let offset = 0;
-    let chunkCount = 0;
     
     try {
         dataChannel.send(JSON.stringify({
@@ -359,17 +319,22 @@ function startFileTransfer() {
         return;
     }
     
-    requestWakeLock();
+    await requestWakeLock();
+    await new Promise(r => setTimeout(r, 100));
     
     const reader = new FileReader();
+    let chunkCount = 0;
     
     function sendNextChunk() {
         if (transferAborted) return;
-        if (offset >= selectedFile.size) return;
+        if (offset >= selectedFile.size) {
+            console.log('✅ Envoi terminé');
+            return;
+        }
         
-        // Backpressure
-        if (dataChannel.bufferedAmount > 1024 * 1024) {
-            setTimeout(sendNextChunk, 50);
+        // Backpressure agressif sur mobile faible
+        if (dataChannel.bufferedAmount > 512 * 1024) {
+            setTimeout(sendNextChunk, 100);
             return;
         }
         
@@ -390,9 +355,9 @@ function startFileTransfer() {
                 const elapsed = (Date.now() - transferStartTime) / 1000;
                 if (elapsed > 0) speedText.textContent = formatSpeed(offset / elapsed);
                 
-                // Pause régulière pour éviter la surcharge
-                if (chunkCount % 10 === 0) {
-                    setTimeout(sendNextChunk, 5);
+                // Pause régulière sur mobile faible
+                if (IS_LOW_MEMORY && chunkCount % 5 === 0) {
+                    setTimeout(sendNextChunk, 20);
                 } else {
                     setTimeout(sendNextChunk, 0);
                 }
@@ -400,7 +365,7 @@ function startFileTransfer() {
                 showError('❌ Erreur envoi');
             }
         };
-        reader.onerror = () => showError('❌ Erreur lecture fichier');
+        reader.onerror = () => showError('❌ Erreur lecture');
         reader.readAsArrayBuffer(chunk);
     }
     
@@ -445,32 +410,72 @@ async function setupPeerConnectionAsReceiver() {
 }
 
 // =========================================================
-//  📱 UI - Sélection fichiers (WhatsApp-style)
+//  🎯 UI - MODE TELEGRAM (Fichiers uniquement sur mobile)
 // =========================================================
 
-// Fonction d'aperçu d'un fichier avec icône adaptée
+// Bouton FICHIER - toujours disponible
+btnModeFile.addEventListener('click', () => {
+    clearError();
+    fileInput.removeAttribute('webkitdirectory');
+    fileInput.removeAttribute('directory');
+    fileInput.click();
+});
+
+// Bouton DOSSIER - désactivé sur mobile faible RAM
+btnModeFolder.addEventListener('click', () => {
+    clearError();
+    
+    if (IS_LOW_MEMORY) {
+        showError('📱 Sur mobile, envoyez les fichiers un par un. Les dossiers ne sont pas supportés pour économiser la mémoire.');
+        return;
+    }
+    
+    folderInput.setAttribute('webkitdirectory', '');
+    folderInput.setAttribute('directory', '');
+    folderInput.click();
+});
+
+fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > MAX_FILE_SIZE) {
+        showError(`❌ Fichier trop volumineux (max ${formatBytes(MAX_FILE_SIZE)})`);
+        return;
+    }
+    selectedFile = file;
+    showFilePreview(file.name, file.size, file.type);
+});
+
+folderInput.addEventListener('change', async (e) => {
+    const files = Array.from(e.target.files);
+    if (files.length === 0) return;
+    
+    showFilePreview('Compression du dossier...', 0);
+    
+    try {
+        if (!window.JSZip) throw new Error('JSZip non chargé');
+        const zip = new JSZip();
+        for (const f of files) {
+            const buf = await f.arrayBuffer();
+            zip.file(f.webkitRelativePath || f.name, buf);
+        }
+        const blob = await zip.generateAsync({ type: 'blob' });
+        const folderName = files[0].webkitRelativePath?.split('/')[0] || 'dossier';
+        selectedFile = new File([blob], `${folderName}.zip`, { type: 'application/zip' });
+        showFilePreview(selectedFile.name, selectedFile.size, selectedFile.type);
+    } catch (e) {
+        showError('❌ Erreur compression');
+        filePreview.classList.add('hidden');
+    }
+});
+
 function getFileIcon(type, name) {
-    if (!type && name) {
-        const ext = name.split('.').pop().toLowerCase();
-        if (['jpg','jpeg','png','gif','webp','heic'].includes(ext)) return '🖼️';
-        if (['mp4','mov','avi','mkv','webm'].includes(ext)) return '🎬';
-        if (['mp3','wav','ogg','m4a','flac'].includes(ext)) return '🎵';
-        if (['pdf'].includes(ext)) return '📕';
-        if (['doc','docx','txt','rtf','odt'].includes(ext)) return '📄';
-        if (['xls','xlsx','csv'].includes(ext)) return '📊';
-        if (['ppt','pptx'].includes(ext)) return '📽️';
-        if (['zip','rar','7z','tar','gz'].includes(ext)) return '📦';
-    }
-    if (type) {
-        if (type.startsWith('image/')) return '🖼️';
-        if (type.startsWith('video/')) return '🎬';
-        if (type.startsWith('audio/')) return '🎵';
-        if (type.includes('pdf')) return '📕';
-        if (type.includes('zip') || type.includes('rar')) return '📦';
-        if (type.includes('word') || type.includes('document')) return '📄';
-        if (type.includes('sheet') || type.includes('excel')) return '📊';
-        if (type.includes('presentation')) return '📽️';
-    }
+    const ext = name?.split('.').pop().toLowerCase() || '';
+    if (type?.startsWith('image/')) return '🖼️';
+    if (type?.startsWith('video/')) return '🎬';
+    if (type?.startsWith('audio/')) return '🎵';
+    if (ext === 'pdf') return '📕';
+    if (['zip','rar','7z'].includes(ext)) return '📦';
     return '📄';
 }
 
@@ -488,78 +493,6 @@ function showFilePreview(name, size, type) {
     `;
     filePreview.classList.remove('hidden');
 }
-
-// Bouton FICHIER
-btnModeFile.addEventListener('click', async () => {
-    clearError();
-    
-    // Ouvrir le sélecteur avec notre fonction intelligente
-    const file = await openFilePicker(false);
-    
-    if (!file) return; // annulé
-    
-    if (file.size > MAX_FILE_SIZE) {
-        showError(`❌ Fichier trop volumineux (max ${formatBytes(MAX_FILE_SIZE)})`);
-        return;
-    }
-    
-    // Sauvegarder la référence
-    setPendingFile(file);
-    selectedFile = file;
-    showFilePreview(file.name, file.size, file.type);
-});
-
-// Bouton DOSSIER
-btnModeFolder.addEventListener('click', async () => {
-    clearError();
-    
-    // Ouvrir le sélecteur dossier
-    const file = await openFilePicker(true);
-    
-    if (!file) return;
-    
-    // Pour les dossiers, on va charger JSZip à la demande (lazy loading)
-    showFilePreview('Préparation du dossier...', 0);
-    
-    try {
-        // Charger JSZip seulement maintenant (économie de RAM)
-        if (!window.JSZip) {
-            fileInfo.innerHTML = '<div style="color: #64748b;">Chargement compression...</div>';
-            await new Promise((resolve, reject) => {
-                const script = document.createElement('script');
-                script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
-                script.onload = resolve;
-                script.onerror = reject;
-                document.head.appendChild(script);
-            });
-        }
-        
-        // Le folderInput renvoie plusieurs fichiers dans files[]
-        const files = Array.from(folderInput.files);
-        if (files.length === 0) {
-            showError('❌ Aucun fichier dans le dossier');
-            return;
-        }
-        
-        const totalSize = files.reduce((sum, f) => sum + f.size, 0);
-        fileInfo.innerHTML = `<div style="color: #64748b;">Compression de ${files.length} fichiers...</div>`;
-        
-        const zip = new JSZip();
-        for (const f of files) {
-            const buf = await f.arrayBuffer();
-            zip.file(f.webkitRelativePath || f.name, buf);
-        }
-        
-        const blob = await zip.generateAsync({ type: 'blob' });
-        const folderName = files[0].webkitRelativePath?.split('/')[0] || 'dossier';
-        selectedFile = new File([blob], `${folderName}.zip`, { type: 'application/zip' });
-        
-        showFilePreview(selectedFile.name, selectedFile.size, selectedFile.type);
-    } catch (e) {
-        showError('❌ Erreur compression: ' + e.message);
-        filePreview.classList.add('hidden');
-    }
-});
 
 // =========================================================
 //  EXPÉDITEUR
@@ -770,7 +703,7 @@ btnRestart.addEventListener('click', () => {
 });
 
 // =========================================================
-//  Anti-rechargement pendant transfert
+//  Anti-rechargement
 // =========================================================
 window.addEventListener('beforeunload', (e) => {
     if (role && !transferAborted && expectedSize > 0 && receivedSize < expectedSize) {
