@@ -1,14 +1,22 @@
 {
   "name": "zero-stockage-transfer",
-  "version": "1.0.0",
-  "description": "Transfert de fichiers peer-to-peer sans stockage serveur",
+  "version": "2.0.0",
+  "description": "Transfert P2P sécurisé avec envoi de fichiers/dossiers et notification email",
   "main": "server.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "@sendgrid/mail": "^8.1.4",
+    "@sendgrid/mail": "^8.1.6",
+    "dotenv": "^16.4.5",
     "express": "^4.18.2",
+    "nodemailer": "^6.9.13",
     "socket.io": "^4.7.2"
+  },
+  "devDependencies": {
+    "sharp": "^0.35.4"
   }
 }

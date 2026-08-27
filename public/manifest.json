@@ -1,22 +1,37 @@
 {
-  "name": "Transfert Ultra Sécurisé",
-  "short_name": "TransfertSec",
-  "description": "Transfert de fichiers peer-to-peer sans stockage serveur",
+  "name": "TransferX - Transfert Sécurisé P2P",
+  "short_name": "TransferX",
+  "description": "Transfert de fichiers P2P direct, chiffré et sans stockage",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0f172a",
-  "theme_color": "#00b4d8",
+  "background_color": "#ffffff",
+  "theme_color": "#0066FF",
+  "orientation": "portrait",
+  "scope": "/",
+  "categories": ["productivity", "utilities"],
   "icons": [
     {
-      "src": "icon-192.png",
+      "src": "/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
       "purpose": "any"
     },
     {
-      "src": "icon-512.png",
+      "src": "/icon-512.svg",
       "sizes": "512x512",
-      "type": "image/png",
+      "type": "image/svg+xml",
       "purpose": "any"
     }
   ]
