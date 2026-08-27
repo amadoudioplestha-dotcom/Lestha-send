@@ -1,12 +1,13 @@
-/* TransferX — client final (OPFS envoi+réception + QR + JSZip à la demande) */
+/* TransferX — client final (unifié, WebRTC + QR + JSZip) */
 (() => {
 'use strict';
+
 const $ = (id) => document.getElementById(id);
 const safari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-const CHUNK_SIZE = 64 * 1024;
+const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 const MAX_FILE_SIZE = (isMobile ? 2 : 5) * 1024 * 1024 * 1024;
 const MEM_SINK_LIMIT = 400 * 1024 * 1024;
+const CHUNK_SIZE = 64 * 1024;
 
 let socket = null, pc = null, dc = null;
 let role = null, roomId = null;
@@ -16,17 +17,36 @@ let remoteDescriptionSet = false;
 let pendingIce = [];
 let iceServers = null;
 let expectedName = '', expectedSize = 0, receivedSize = 0, transferStart = 0;
-let receiveWritable = null, receiveHandle = null, fallbackChunks = [];
-let receiveSinkKind = null, downloadCleanup = null;
+let writer = null, fallbackChunks = [];
+let receiveHandle = null;
+let receiveObjectUrl = null;
+let pendingSendTmpHandle = null;
 let sendGeneration = 0;
 
-// ✅ Chargement à la demande (page légère)
+function cleanupSendTmp() {
+  if (pendingSendTmpHandle) {
+    pendingSendTmpHandle.remove().catch(() => {});
+    pendingSendTmpHandle = null;
+  }
+}
+
+function purgeTemporaryFiles() {
+  if (!window.isSecureContext || !navigator.storage?.getDirectory) return;
+  navigator.storage.getDirectory().then(root => {
+    root.removeEntry('transferx.tmp').catch(() => {});
+    root.removeEntry('transferx_send.tmp').catch(() => {});
+  }).catch(() => {});
+}
+
+// ✅ CHARGEMENT À LA DEMANDE (page légère au démarrage)
 const LIBS = {
   jszip: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
   qr: 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js',
 };
+
 function need(name) {
-  const has = (name === 'jszip' && window.JSZip) || (name === 'qr' && window.QRCode);
+  const has = (name === 'jszip' && window.JSZip)
+           || (name === 'qr' && window.QRCode);
   if (has) return Promise.resolve();
   return new Promise((resolve, reject) => {
     const s = document.createElement('script');
@@ -44,6 +64,7 @@ function showStep(id) {
   if (el) el.classList.add('active');
   window.scrollTo(0, 0);
 }
+
 function error(message, box) {
   const el = $(box || 'errorBox');
   if (!el) return;
@@ -52,20 +73,31 @@ function error(message, box) {
   console.error(message);
   setTimeout(() => { if (el.textContent === message) el.classList.add('hidden'); }, 8000);
 }
+
 function clearErrors() {
-  document.querySelectorAll('.error-box').forEach(el => { el.textContent = ''; el.classList.add('hidden'); });
+  document.querySelectorAll('.error-box').forEach(el => {
+    el.textContent = '';
+    el.classList.add('hidden');
+  });
 }
+
 function bytes(n) {
   if (!n || isNaN(n)) return '0 o';
   const units = ['o', 'Ko', 'Mo', 'Go', 'To'];
   const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), units.length - 1);
   return (n / Math.pow(1024, i)).toFixed(i < 2 ? 0 : 1) + ' ' + units[i];
 }
+
 function speed(n) { return n > 0 ? bytes(n) + '/s' : ''; }
+
 function setSocketReady(ready) {
   const btn = $('btnStartSend');
-  if (btn) { btn.disabled = !ready; btn.title = ready ? '' : 'Connexion au serveur en cours…'; }
+  if (btn) {
+    btn.disabled = !ready;
+    btn.title = ready ? '' : 'Connexion au serveur en cours…';
+  }
 }
+
 function updateProgress(current, total, started) {
   const start = started || transferStart;
   const pct = total ? Math.min(100, Math.round((current / total) * 100)) : 0;
@@ -73,6 +105,7 @@ function updateProgress(current, total, started) {
   const txt = $('progressText'); if (txt) txt.textContent = pct + ' %';
   const sp = $('speedText'); if (sp && start) sp.textContent = speed(current / Math.max((Date.now() - start) / 1000, 0.1));
 }
+
 function showPreview(file) {
   const info = $('fileInfo'), box = $('filePreview');
   if (!info || !box) return;
@@ -82,14 +115,24 @@ function showPreview(file) {
   box.classList.remove('hidden');
 }
 
+// ✅ QR CODE à la demande
 async function renderQR(text) {
   const box = $('qrBox');
   if (!box) return;
   box.innerHTML = '';
   try {
     await need('qr');
-    if (window.QRCode) new QRCode(box, { text, width: 168, height: 168, correctLevel: QRCode.CorrectLevel.M });
-  } catch (e) { console.warn('QR non généré :', e.message); }
+    if (window.QRCode) {
+      new QRCode(box, {
+        text: text,
+        width: 168,
+        height: 168,
+        correctLevel: QRCode.CorrectLevel.M
+      });
+    }
+  } catch (e) {
+    console.warn('QR non généré :', e.message);
+  }
 }
 
 /* ---------- ICE / PeerConnection ---------- */
@@ -99,24 +142,39 @@ async function getIceServers() {
     const res = await fetch('/api/ice-config', { cache: 'no-store' });
     iceServers = (await res.json()).iceServers;
   } catch (e) {
-    iceServers = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }];
+    iceServers = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' }
+    ];
   }
   return iceServers;
 }
-async function newPeerConnection() { return new RTCPeerConnection({ iceServers: await getIceServers() }); }
+
+async function newPeerConnection() {
+  return new RTCPeerConnection({ iceServers: await getIceServers() });
+}
+
 function wirePeer() {
   pc.onicecandidate = (event) => {
-    if (event.candidate && socket?.connected && roomId) socket.emit('ice-candidate', { roomId, candidate: event.candidate });
+    if (event.candidate && socket?.connected && roomId) {
+      socket.emit('ice-candidate', { roomId, candidate: event.candidate });
+    }
   };
   pc.oniceconnectionstatechange = () => {
-    if (['failed', 'closed'].includes(pc.iceConnectionState) && !transferAborted) error('❌ Connexion WebRTC interrompue', 'errorBox3');
+    if (['failed', 'closed'].includes(pc.iceConnectionState) && !transferAborted) {
+      error('❌ Connexion WebRTC interrompue', 'errorBox3');
+    }
   };
 }
+
 async function flushIce() {
   if (!pc || !remoteDescriptionSet) return;
   const queued = pendingIce.splice(0);
-  for (const c of queued) { try { await pc.addIceCandidate(c); } catch (e) {} }
+  for (const c of queued) {
+    try { await pc.addIceCandidate(c); } catch (e) {}
+  }
 }
+
 function requestQueuedIce() {
   if (!socket?.connected || !roomId) return;
   socket.emit('get-ice-candidates', { roomId }, (reply) => {
@@ -130,33 +188,63 @@ function requestQueuedIce() {
 /* ---------- Expéditeur ---------- */
 function setupSenderChannel() {
   dc.binaryType = 'arraybuffer';
-  dc.onopen = () => { const t = $('transferTitle'); if (t) t.textContent = 'Envoi en cours…'; sendFile(); };
+  dc.onopen = () => {
+    const t = $('transferTitle');
+    if (t) t.textContent = 'Envoi en cours…';
+    sendFile();
+  };
   dc.onmessage = (event) => {
     try {
       const msg = JSON.parse(event.data);
-      if (msg.msgType === 'complete') { showStep('step-done'); const t = $('transferTitle'); if (t) t.textContent = 'Transfert réussi !'; }
-      else if (msg.msgType === 'error') error('❌ ' + msg.message, 'errorBox3');
+      if (msg.msgType === 'complete') {
+        cleanupSendTmp();
+        showStep('step-done');
+        const t = $('transferTitle');
+        if (t) t.textContent = 'Transfert réussi !';
+      } else if (msg.msgType === 'error') {
+        error('❌ ' + msg.message, 'errorBox3');
+      }
     } catch (e) {}
   };
 }
+
 async function sendFile() {
   const generation = ++sendGeneration;
-  if (!selectedFile || dc?.readyState !== 'open') return error('❌ Canal de transfert non prêt', 'errorBox3');
+  if (!selectedFile || dc?.readyState !== 'open') {
+    return error('❌ Canal de transfert non prêt', 'errorBox3');
+  }
   transferStart = Date.now();
+
   dc.send(JSON.stringify({
-    msgType: 'metadata', name: selectedFile.name, size: selectedFile.size,
+    msgType: 'metadata',
+    name: selectedFile.name,
+    size: selectedFile.size,
     fileType: selectedFile.type || 'application/octet-stream'
   }));
+
   let offset = 0;
   const read = (blob) => safari
-    ? new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsArrayBuffer(blob); })
+    ? new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = reject;
+        r.readAsArrayBuffer(blob);
+      })
     : blob.arrayBuffer();
+
+  // ✅ MÊME BOUCLE pour TOUS les appareils (backpressure standard)
   while (offset < selectedFile.size && !transferAborted && generation === sendGeneration) {
     if (dc.readyState !== 'open') return;
-    if (dc.bufferedAmount > 1024 * 1024) { await new Promise((r) => setTimeout(r, 40)); continue; }
+    if (dc.bufferedAmount > 1024 * 1024) {
+      await new Promise((r) => setTimeout(r, 40));
+      continue;
+    }
     const end = Math.min(offset + CHUNK_SIZE, selectedFile.size);
-    try { dc.send(await read(selectedFile.slice(offset, end))); }
-    catch (e) { return error('❌ Erreur d\'envoi : ' + e.message, 'errorBox3'); }
+    try {
+      dc.send(await read(selectedFile.slice(offset, end)));
+    } catch (e) {
+      return error('❌ Erreur d\'envoi : ' + e.message, 'errorBox3');
+    }
     offset = end;
     updateProgress(offset, selectedFile.size);
   }
@@ -170,54 +258,76 @@ function setupReceiverChannel() {
     channel.binaryType = 'arraybuffer';
     let gotMetadata = false;
     let started = 0;
-    channel.onopen = () => { const t = $('transferTitle'); if (t) t.textContent = 'Réception en cours…'; started = Date.now(); };
+
+    channel.onopen = () => {
+      const t = $('transferTitle');
+      if (t) t.textContent = 'Réception en cours…';
+      started = Date.now();
+    };
+
     channel.onmessage = async (msgEvent) => {
       if (transferAborted) return;
+
       if (!gotMetadata) {
         try {
-          const raw = typeof msgEvent.data === 'string' ? msgEvent.data : new TextDecoder().decode(msgEvent.data);
+          const raw = typeof msgEvent.data === 'string'
+            ? msgEvent.data
+            : new TextDecoder().decode(msgEvent.data);
           const meta = JSON.parse(raw);
           if (meta.msgType === 'metadata') {
             gotMetadata = true;
             expectedName = meta.name || 'fichier';
-            expectedSize = Number(meta.size);
+            expectedSize = Number(meta.size) || 0;
             receivedSize = 0;
             fallbackChunks = [];
-            if (!Number.isFinite(expectedSize) || expectedSize < 0 || expectedSize > MAX_FILE_SIZE) {
-              return rejectReceive(channel, expectedSize > MAX_FILE_SIZE
-                ? `❌ Fichier trop volumineux (maximum ${isMobile ? '2' : '5'} Go)`
-                : '❌ Taille de fichier invalide');
+            if (expectedSize > MAX_FILE_SIZE) {
+              try { channel.send(JSON.stringify({ msgType: 'error', message: 'Fichier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')' })); } catch (e) {}
+              return error('❌ Fichier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')', 'errorBox3');
             }
-            if (!window.isSecureContext && expectedSize > MEM_SINK_LIMIT) {
-              return rejectReceive(channel, '❌ Fichier trop volumineux pour ce mode non sécurisé (maximum 400 Mo)');
+            const storage = navigator.storage;
+            let available = Infinity;
+            try {
+              if (storage?.estimate) {
+                const estimate = await storage.estimate();
+                if (Number.isFinite(estimate.quota)) available = Math.max(0, estimate.quota - (estimate.usage || 0));
+              }
+            } catch (e) {}
+            if (expectedSize > available * 0.9) {
+              const message = 'Espace de stockage insuffisant pour recevoir ce fichier.';
+              try { channel.send(JSON.stringify({ msgType: 'error', message })); } catch (e) {}
+              return error('❌ ' + message, 'errorBox3');
             }
-            if (window.isSecureContext && navigator.storage?.estimate) {
-              try {
-                const estimate = await navigator.storage.estimate();
-                const available = Math.max(0, (estimate.quota || 0) - (estimate.usage || 0));
-                if (estimate.quota && expectedSize > available * 0.9) {
-                  return rejectReceive(channel, '❌ Espace disque insuffisant pour recevoir ce fichier');
-                }
-              } catch (e) { console.warn('Estimation du stockage indisponible :', e); }
+            try {
+              writer = await createSink(expectedName, expectedSize);
+            } catch (e) {
+              writer = null;
+              if (expectedSize > MEM_SINK_LIMIT) {
+                const message = 'Réception impossible : stockage OPFS indisponible et la mémoire est limitée à ' + bytes(MEM_SINK_LIMIT) + '.';
+                try { channel.send(JSON.stringify({ msgType: 'error', message })); } catch (err) {}
+                return error('❌ ' + message, 'errorBox3');
+              }
             }
-            try { await createReceiveSink(expectedSize); }
-            catch (e) { return rejectReceive(channel, e.message || '❌ Impossible de préparer le stockage'); }
             if (expectedSize === 0) await finishReceive(channel);
             return;
           }
         } catch (e) {}
       }
+
       const part = new Uint8Array(msgEvent.data);
-      try {
-        if (receiveSinkKind === 'opfs') await receiveWritable.write(part);
-        else {
-          const current = fallbackChunks.reduce((total, chunk) => total + chunk.byteLength, 0);
-          if (current + part.byteLength > MEM_SINK_LIMIT) throw new Error('Fichier trop volumineux pour ce mode');
-          fallbackChunks.push(part);
+      if (writer) {
+        try {
+          await writer.write(part);
+        } catch (e) {
+          return error('❌ Erreur d\'écriture : ' + e.message, 'errorBox3');
         }
-      } catch (e) {
-        await abortReceiveSink();
-        return rejectReceive(channel, '❌ Erreur d\'écriture : ' + e.message);
+      } else {
+        const buffered = fallbackChunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+        if (buffered + part.byteLength > MEM_SINK_LIMIT) {
+          const message = 'Réception interrompue : la mémoire est limitée à ' + bytes(MEM_SINK_LIMIT) + '.';
+          try { channel.send(JSON.stringify({ msgType: 'error', message })); } catch (e) {}
+          return error('❌ ' + message, 'errorBox3');
+        }
+        fallbackChunks.push(part);
       }
       receivedSize += part.byteLength;
       updateProgress(receivedSize, expectedSize, started);
@@ -225,51 +335,60 @@ function setupReceiverChannel() {
     };
   };
 }
-async function createReceiveSink(size) {
-  fallbackChunks = []; receiveSinkKind = null;
+
+async function createSink() {
   if (window.isSecureContext && navigator.storage?.getDirectory) {
     const root = await navigator.storage.getDirectory();
-    receiveHandle = await root.getFileHandle('transferx.tmp', { create: true });
-    receiveWritable = await receiveHandle.createWritable();
-    receiveSinkKind = 'opfs';
-    try { await navigator.storage.persist?.(); } catch (e) { console.warn('Persistance refusée :', e); }
-    return;
-  }
-  receiveSinkKind = 'memory';
-  if (size > MEM_SINK_LIMIT) throw new Error('Fichier trop volumineux pour ce mode');
-}
-async function abortReceiveSink() {
-  const writable = receiveWritable, handle = receiveHandle;
-  receiveWritable = null; receiveHandle = null; receiveSinkKind = null; fallbackChunks = [];
-  if (writable) await writable.close().catch(() => {});
-  if (handle) await handle.remove().catch(() => {});
-}
-function rejectReceive(channel, message) {
-  try { channel.send(JSON.stringify({ msgType: 'error', message: message.replace(/^❌\s*/, '') })); } catch (e) {}
-  void abortReceiveSink(); error(message, 'errorBox3');
-}
-async function finishReceive(channel) {
-  let url = null;
-  try {
-    if (receiveSinkKind === 'opfs') {
-      await receiveWritable.close(); receiveWritable = null;
-      url = URL.createObjectURL(await receiveHandle.getFile());
-    } else { url = URL.createObjectURL(new Blob(fallbackChunks)); fallbackChunks = []; }
-    const handle = receiveHandle;
-    const cleanup = () => {
-      if (!url) return;
-      URL.revokeObjectURL(url); url = null;
-      if (downloadCleanup === cleanup) downloadCleanup = null;
-      if (handle) void handle.remove().catch(() => {});
+    const opfsHandle = await root.getFileHandle('transferx.tmp', { create: true });
+    receiveHandle = {
+      getFile: () => opfsHandle.getFile(),
+      remove: () => root.removeEntry('transferx.tmp').catch(() => {})
     };
-    downloadCleanup = cleanup;
-    const link = $('downloadLink');
-    if (link) { link.href = url; link.download = expectedName; link.classList.remove('hidden'); link.textContent = '⬇️ Télécharger ' + expectedName; link.onclick = cleanup; }
-    setTimeout(cleanup, 10 * 60 * 1000);
-    receiveHandle = null; receiveSinkKind = null;
-  } catch (e) { await abortReceiveSink(); return rejectReceive(channel, '❌ Erreur de finalisation : ' + e.message); }
+    try { await navigator.storage.persist?.(); } catch (e) {}
+    const writable = await opfsHandle.createWritable();
+    return {
+      write: chunk => writable.write(chunk),
+      close: () => writable.close(),
+      abort: async () => { await writable.close().catch(() => {}); await receiveHandle.remove().catch(() => {}); receiveHandle = null; }
+    };
+  }
+  return null;
+}
+
+async function finishReceive(channel) {
+  if (writer) {
+    await writer.close().catch(() => {});
+    writer = null;
+  }
+  const link = $('downloadLink');
+  if (link) {
+    let url = null;
+    if (receiveHandle) {
+      try { url = URL.createObjectURL(await receiveHandle.getFile()); } catch (e) {}
+    } else {
+      url = URL.createObjectURL(new Blob(fallbackChunks));
+    }
+    if (url) {
+      receiveObjectUrl = url;
+      link.href = url;
+      link.download = expectedName;
+      link.classList.remove('hidden');
+      link.textContent = '⬇️ Télécharger ' + expectedName;
+      const cleanup = () => {
+        if (!receiveObjectUrl) return;
+        URL.revokeObjectURL(receiveObjectUrl);
+        receiveObjectUrl = null;
+        if (receiveHandle) { receiveHandle.remove().catch(() => {}); receiveHandle = null; }
+        link.removeEventListener('click', cleanup);
+      };
+      link.addEventListener('click', cleanup, { once: true });
+      setTimeout(cleanup, 10 * 60 * 1000);
+    }
+  }
   try { channel.send(JSON.stringify({ msgType: 'complete' })); } catch (e) {}
-  showStep('step-done'); const sub = $('doneSubtitle'); if (sub) sub.textContent = expectedName + ' — transfert terminé';
+  showStep('step-done');
+  const sub = $('doneSubtitle');
+  if (sub) sub.textContent = expectedName + ' — transfert terminé';
 }
 
 /* ---------- Flux expéditeur ---------- */
@@ -277,13 +396,20 @@ async function startSender() {
   if (!selectedFile) return error('❌ Sélectionnez un fichier');
   if (!socket?.connected) return error('❌ Connexion au serveur en cours, réessayez dans un instant');
   clearErrors();
+
   const ttlSel = $('expirySelect');
   const ttl = ttlSel ? parseInt(ttlSel.value, 10) || 86400000 : 86400000;
   const pinRaw = $('pinInput') ? $('pinInput').value.trim() : '';
-  if (pinRaw && !/^\d{4,8}$/.test(pinRaw)) return error('❌ Le code PIN doit contenir 4 à 8 chiffres');
-  role = 'sender'; transferAborted = false;
+  if (pinRaw && !/^\d{4,8}$/.test(pinRaw)) {
+    return error('❌ Le code PIN doit contenir 4 à 8 chiffres');
+  }
+
+  role = 'sender';
+  transferAborted = false;
   showStep('step-waiting');
-  const wm = $('waitingMsg'); if (wm) wm.textContent = 'Connexion…';
+  const wm = $('waitingMsg');
+  if (wm) wm.textContent = 'Connexion…';
+
   socket.emit('create-room', { ttl, pin: pinRaw || null }, async (reply) => {
     if (!reply?.success || !reply.roomId) {
       showStep('step-select');
@@ -291,16 +417,28 @@ async function startSender() {
     }
     roomId = reply.roomId;
     const link = location.origin + '?room=' + encodeURIComponent(roomId);
-    const out = $('linkOutput'); if (out) out.value = link;
+    const out = $('linkOutput');
+    if (out) out.value = link;
+
+    // ✅ QR code à la demande
     await renderQR(link);
+
     const badge = $('pinBadge');
     if (badge) {
-      if (pinRaw) { badge.textContent = '🔢 PIN à communiquer séparément : ' + pinRaw; badge.classList.remove('hidden'); }
-      else badge.classList.add('hidden');
+      if (pinRaw) {
+        badge.textContent = '🔢 PIN à communiquer séparément : ' + pinRaw;
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
     }
-    const wm2 = $('waitingMsg'); if (wm2) wm2.textContent = '⏳ En attente du destinataire…';
+
+    const wm2 = $('waitingMsg');
+    if (wm2) wm2.textContent = '⏳ En attente du destinataire…';
+
     try {
-      pc = await newPeerConnection(); wirePeer();
+      pc = await newPeerConnection();
+      wirePeer();
       dc = pc.createDataChannel('file', { ordered: true });
       setupSenderChannel();
       const offer = await pc.createOffer();
@@ -309,7 +447,8 @@ async function startSender() {
       requestQueuedIce();
     } catch (e) {
       error('❌ Erreur WebRTC : ' + e.message, 'errorBox2');
-      resetConnection(); showStep('step-select');
+      resetConnection();
+      showStep('step-select');
     }
   });
 }
@@ -319,39 +458,49 @@ function joinRoom(pin) {
   if (!socket?.connected || !roomId) return;
   socket.emit('join-room', { roomId, pin: pin || null }, (reply) => {
     if (reply && reply.pinRequired) {
-      const t = $('transferTitle'); if (t) t.textContent = '🔒 Code PIN requis';
+      const t = $('transferTitle');
+      if (t) t.textContent = '🔒 Code PIN requis';
       if (reply.error) error('❌ ' + reply.error, 'errorBox3');
       return;
     }
     if (!reply?.success) {
       error('❌ ' + ((reply && reply.error) || 'Lien invalide ou expiré'), 'errorBox3');
-      showStep('step-select'); return;
+      showStep('step-select');
+      return;
     }
     requestQueuedIce();
   });
 }
+
 async function startReceiver() {
   role = 'receiver';
   showStep('step-transfer');
-  const t = $('transferTitle'); if (t) t.textContent = 'Connexion au pair…';
+  const t = $('transferTitle');
+  if (t) t.textContent = 'Connexion au pair…';
   try {
-    pc = await newPeerConnection(); wirePeer();
+    pc = await newPeerConnection();
+    wirePeer();
     setupReceiverChannel();
     joinRoom(null);
-  } catch (e) { error('❌ Erreur connexion : ' + e.message, 'errorBox3'); }
+  } catch (e) {
+    error('❌ Erreur connexion : ' + e.message, 'errorBox3');
+  }
 }
 
 /* ---------- Reset ---------- */
 function resetConnection() {
   sendGeneration += 1;
-  pendingIce = []; remoteDescriptionSet = false;
-  if (receiveWritable || receiveHandle) void abortReceiveSink();
-  if (downloadCleanup) downloadCleanup();
+  pendingIce = [];
+  remoteDescriptionSet = false;
+  if (writer) { writer.abort().catch(() => {}); writer = null; }
   try { if (dc) dc.close(); } catch (e) {}
   try { if (pc) pc.close(); } catch (e) {}
-  dc = null; pc = null;
+  dc = null;
+  pc = null;
 }
+
 function resetUI() {
+  cleanupSendTmp();
   selectedFile = null;
   const fi = $('fileInput'); if (fi) fi.value = '';
   const fo = $('folderInput'); if (fo) fo.value = '';
@@ -365,81 +514,147 @@ function resetUI() {
   const pb = $('pinBadge'); if (pb) pb.classList.add('hidden');
   const pi = $('pinInput'); if (pi) pi.value = '';
 }
+
 function cancelTransfer() {
+  cleanupSendTmp();
   transferAborted = true;
   if (roomId && socket?.connected) socket.emit('cancel-transfer', { roomId });
-  resetConnection(); roomId = null; role = null;
-  resetUI(); showStep('step-select');
+  resetConnection();
+  roomId = null;
+  role = null;
+  resetUI();
+  showStep('step-select');
 }
 
 /* ---------- Socket ---------- */
 function initSocket() {
-  socket = io({ transports: ['websocket', 'polling'], reconnection: true, reconnectionAttempts: Infinity, reconnectionDelay: 1000, reconnectionDelayMax: 10000 });
+  socket = io({
+    transports: ['websocket', 'polling'],
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 10000
+  });
+
   socket.on('connect', () => {
     setSocketReady(true);
     const urlRoom = new URLSearchParams(location.search).get('room');
-    if (!role && urlRoom) { roomId = urlRoom; startReceiver(); }
-    else if (role === 'receiver') joinRoom(null);
+    if (!role && urlRoom) {
+      roomId = urlRoom;
+      startReceiver();
+    } else if (role === 'receiver') {
+      joinRoom(null);
+    }
   });
+
   socket.on('disconnect', () => {
     setSocketReady(false);
-    if (role && !transferAborted) error('⚠️ Connexion signalisation perdue — reconnexion…', role === 'sender' ? 'errorBox2' : 'errorBox3');
+    if (role && !transferAborted) {
+      error('⚠️ Connexion signalisation perdue — reconnexion…', role === 'sender' ? 'errorBox2' : 'errorBox3');
+    }
   });
+
   socket.on('connect_error', () => setSocketReady(false));
+
   socket.on('offer-received', async ({ offer }) => {
     if (role !== 'receiver' || !pc) return;
     try {
-      await pc.setRemoteDescription(offer); remoteDescriptionSet = true; await flushIce();
+      await pc.setRemoteDescription(offer);
+      remoteDescriptionSet = true;
+      await flushIce();
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       socket.emit('send-answer', { roomId, answer: pc.localDescription });
       requestQueuedIce();
-    } catch (e) { error('❌ Offre invalide : ' + e.message, 'errorBox3'); }
+    } catch (e) {
+      error('❌ Offre invalide : ' + e.message, 'errorBox3');
+    }
   });
+
   socket.on('answer-received', async ({ answer }) => {
     if (!pc) return;
     try {
-      await pc.setRemoteDescription(answer); remoteDescriptionSet = true; await flushIce();
-      showStep('step-transfer'); requestQueuedIce();
-    } catch (e) { error('❌ Réponse invalide : ' + e.message, 'errorBox2'); }
+      await pc.setRemoteDescription(answer);
+      remoteDescriptionSet = true;
+      await flushIce();
+      showStep('step-transfer');
+      requestQueuedIce();
+    } catch (e) {
+      error('❌ Réponse invalide : ' + e.message, 'errorBox2');
+    }
   });
+
   socket.on('ice-candidate', (candidate) => {
     if (!pc) return;
     if (!remoteDescriptionSet) pendingIce.push(candidate);
     else pc.addIceCandidate(candidate).catch(() => {});
   });
-  socket.on('receiver-joined', () => { const wm = $('waitingMsg'); if (wm && role === 'sender') wm.textContent = '✅ Destinataire connecté !'; requestQueuedIce(); });
-  socket.on('receiver-left', () => { const wm = $('waitingMsg'); if (wm && role === 'sender' && !transferAborted) wm.textContent = '⏳ Destinataire déconnecté, en attente…'; });
-  socket.on('peer-disconnected', () => {
-    if (!transferAborted) { error('❌ Pair déconnecté', role === 'sender' ? 'errorBox2' : 'errorBox3'); resetConnection(); showStep('step-select'); }
+
+  socket.on('receiver-joined', () => {
+    const wm = $('waitingMsg');
+    if (wm && role === 'sender') wm.textContent = '✅ Destinataire connecté !';
+    requestQueuedIce();
   });
-  socket.on('peer-cancelled', () => { error('❌ Expéditeur annulé', 'errorBox3'); resetConnection(); showStep('step-select'); });
+
+  socket.on('receiver-left', () => {
+    const wm = $('waitingMsg');
+    if (wm && role === 'sender' && !transferAborted) {
+      wm.textContent = '⏳ Destinataire déconnecté, en attente…';
+    }
+  });
+
+  socket.on('peer-disconnected', () => {
+    if (!transferAborted) {
+      error('❌ Pair déconnecté', role === 'sender' ? 'errorBox2' : 'errorBox3');
+      resetConnection();
+      showStep('step-select');
+    }
+  });
+
+  socket.on('peer-cancelled', () => {
+    error('❌ Expéditeur annulé', 'errorBox3');
+    resetConnection();
+    showStep('step-select');
+  });
 }
 
 /* ---------- Email ---------- */
 async function sendEmail() {
-  const toEl = $('emailInput'); const to = toEl ? toEl.value.trim() : '';
-  const linkEl = $('linkOutput'); const link = linkEl ? linkEl.value : '';
+  const toEl = $('emailInput');
+  const to = toEl ? toEl.value.trim() : '';
+  const linkEl = $('linkOutput');
+  const link = linkEl ? linkEl.value : '';
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return error('❌ Email invalide', 'errorBox2');
   if (!link) return error('❌ Aucun lien à envoyer', 'errorBox2');
-  const btn = $('btnSendEmail'); if (btn) btn.disabled = true;
+  const btn = $('btnSendEmail');
+  if (btn) btn.disabled = true;
   try {
     const res = await fetch('/api/send-email', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ to, link, fileName: selectedFile ? selectedFile.name : '' })
     });
     const data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.error || 'Échec');
     if (btn) btn.textContent = '✅ Envoyé';
     if (toEl) toEl.value = '';
-  } catch (e) { error('❌ ' + e.message, 'errorBox2'); }
-  finally { setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = '✉️ Envoyer'; } }, 2500); }
+  } catch (e) {
+    error('❌ ' + e.message, 'errorBox2');
+  } finally {
+    setTimeout(() => {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '✉️ Envoyer';
+      }
+    }, 2500);
+  }
 }
 
 /* ---------- UI ---------- */
 function bindUI() {
   const bmf = $('btnModeFile');
   if (bmf) bmf.onclick = () => { clearErrors(); const i = $('fileInput'); if (i) i.click(); };
+
   const bmf2 = $('btnModeFolder');
   if (bmf2) bmf2.onclick = () => { clearErrors(); const i = $('folderInput'); if (i) i.click(); };
 
@@ -447,111 +662,118 @@ function bindUI() {
   if (fi) fi.onchange = (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
+    // ✅ Limite 5 Go
     if (file.size > MAX_FILE_SIZE) {
-      error(`❌ Fichier trop volumineux (maximum ${isMobile ? '2' : '5'} Go)`);
-      e.target.value = ''; return;
+      error('❌ Fichier trop volumineux (maximum 5 Go)');
+      e.target.value = '';
+      return;
     }
-    selectedFile = file; showPreview(file);
+    selectedFile = file;
+    showPreview(file);
   };
 
-  // ✅ Compression ZIP avec écriture OPFS (RAM quasi-nulle)
   const fo = $('folderInput');
   if (fo) fo.onchange = async (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
     const total = files.reduce((s, f) => s + (f.size || 0), 0);
     if (total > MAX_FILE_SIZE) {
-      error(`❌ Dossier trop volumineux (maximum ${isMobile ? '2' : '5'} Go)`);
-      e.target.value = ''; return;
+      error('❌ Dossier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')');
+      e.target.value = '';
+      return;
     }
     try {
       await need('jszip');
       const zip = new JSZip();
-      files.forEach(f => zip.file(f.webkitRelativePath || f.name, f, { compression: isMobile ? 'STORE' : 'DEFLATE' }));
-      const flux = zip.generateInternalStream({
-        type: 'uint8array',
-        compression: isMobile ? 'STORE' : 'DEFLATE',
-        compressionOptions: { level: 1 },
-        streamFiles: true
-      });
+      files.forEach(f => zip.file(f.webkitRelativePath || f.name, f));
       const rootName = ((files[0].webkitRelativePath || 'dossier').split('/')[0]) || 'dossier';
-
-      // ✅ OPFS : écriture directe sur disque, pause/resume pour ne pas saturer la RAM
+      const showZipProgress = (percent) => {
+        const el = document.querySelector('.file-preview-size');
+        if (el) el.textContent = 'Compression : ' + Math.round(percent) + ' %';
+      };
+      showZipProgress(0);
+      const stream = zip.generateInternalStream({ type: 'uint8array', compression: isMobile ? 'STORE' : 'DEFLATE', compressionOptions: { level: 1 }, streamFiles: true });
+      let zipHandle = null, diskFile = null, chunks = [], written = 0;
       if (window.isSecureContext && navigator.storage?.getDirectory) {
         const root = await navigator.storage.getDirectory();
-        const zipHandle = await root.getFileHandle('transferx_send.tmp', { create: true });
+        zipHandle = await root.getFileHandle('transferx_send.tmp', { create: true });
         const writable = await zipHandle.createWritable();
+        try { await navigator.storage.persist?.(); } catch (e) {}
         await new Promise((resolve, reject) => {
-          flux.on('data', async (chunk) => {
-            flux.pause();
-            try { await writable.write(chunk); flux.resume(); }
-            catch (err) { reject(err); }
-          });
-          flux.on('end', resolve);
-          flux.on('error', reject);
-          flux.on('progress', percent => error(`Création de l'archive : ${Math.round(percent)} %`, 'errorBox2'));
-          flux.resume();
+          stream.on('data', async chunk => {
+            stream.pause();
+            try { written += chunk.byteLength; await writable.write(chunk); showZipProgress(Math.min(99, (written / Math.max(total, 1)) * 100)); stream.resume(); } catch (err) { reject(err); }
+          }).on('end', async () => { try { await writable.close(); resolve(); } catch (err) { reject(err); } }).on('error', reject).resume();
         });
-        await writable.close();
-        const diskFile = await zipHandle.getFile();
+        diskFile = await zipHandle.getFile();
         selectedFile = new File([diskFile], rootName + '.zip', { type: 'application/zip' });
+        pendingSendTmpHandle = { remove: () => root.removeEntry('transferx_send.tmp').catch(() => {}) };
       } else {
-        // Fallback RAM pour les anciens navigateurs
-        const morceaux = [];
         await new Promise((resolve, reject) => {
-          flux.on('data', chunk => morceaux.push(chunk));
-          flux.on('end', resolve);
-          flux.on('error', reject);
-          flux.on('progress', percent => error(`Création de l'archive : ${Math.round(percent)} %`, 'errorBox2'));
-          flux.resume();
+          stream.on('data', chunk => { written += chunk.byteLength; if (written > MEM_SINK_LIMIT) { reject(new Error('La mémoire est limitée à ' + bytes(MEM_SINK_LIMIT) + '.')); return; } chunks.push(chunk); showZipProgress(Math.min(99, (written / Math.max(total, 1)) * 100)); }).on('end', resolve).on('error', reject).resume();
         });
-        const blob = new Blob(morceaux, { type: 'application/zip' });
-        selectedFile = new File([blob], rootName + '.zip', { type: 'application/zip' });
+        selectedFile = new File(chunks, rootName + '.zip', { type: 'application/zip' });
       }
+      showZipProgress(100);
       showPreview(selectedFile);
-    } catch (err) { error('❌ Erreur compression : ' + err.message); }
+    } catch (err) {
+      error('❌ Erreur compression : ' + err.message);
+    }
   };
 
   const bs = $('btnStartSend'); if (bs) bs.onclick = startSender;
   const bcs = $('btnCancelSend'); if (bcs) bcs.onclick = cancelTransfer;
   const bct = $('btnCancelTransfer'); if (bct) bct.onclick = cancelTransfer;
   const br = $('btnRestart'); if (br) br.onclick = () => { cancelTransfer(); history.replaceState({}, document.title, '/'); };
+
   const bcl = $('btnCopyLink');
   if (bcl) bcl.onclick = async () => {
-    const out = $('linkOutput'); if (!out) return;
-    try { await navigator.clipboard.writeText(out.value); }
-    catch (e) { out.select(); document.execCommand('copy'); }
+    const out = $('linkOutput');
+    if (!out) return;
+    try {
+      await navigator.clipboard.writeText(out.value);
+    } catch (e) {
+      out.select();
+      document.execCommand('copy');
+    }
     bcl.textContent = '✅ Copié';
     setTimeout(() => { bcl.textContent = '📋 Copier'; }, 2000);
   };
-  const bse = $('btnSendEmail'); if (bse) bse.onclick = sendEmail;
+
+  const bse = $('btnSendEmail');
+  if (bse) bse.onclick = sendEmail;
 }
 
 /* ---------- Cycle de vie ---------- */
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && socket && !socket.connected) socket.connect();
 });
-window.addEventListener('pageshow', () => { if (socket && !socket.connected) socket.connect(); });
+
+window.addEventListener('pageshow', () => {
+  if (socket && !socket.connected) socket.connect();
+});
+
 window.addEventListener('beforeunload', (e) => {
   if (role && !transferAborted && expectedSize && receivedSize < expectedSize) {
-    e.preventDefault(); e.returnValue = 'Transfert en cours. Quitter ?';
+    e.preventDefault();
+    e.returnValue = 'Transfert en cours. Quitter ?';
   }
 });
-setInterval(() => { if (socket?.connected) socket.emit('ping-keepalive'); }, 20000);
+
+setInterval(() => {
+  if (socket?.connected) socket.emit('ping-keepalive');
+}, 20000);
 
 document.addEventListener('DOMContentLoaded', () => {
-  // ✅ Nettoyage étendu : réception ET envoi
-  if (window.isSecureContext && navigator.storage?.getDirectory) {
-    navigator.storage.getDirectory().then(root => {
-      root.removeEntry('transferx.tmp').catch(() => {});
-      root.removeEntry('transferx_send.tmp').catch(() => {});
-    }).catch(() => {});
-  }
+  purgeTemporaryFiles();
   bindUI();
   setSocketReady(false);
   if (!window.RTCPeerConnection) return error('❌ WebRTC non supporté');
   const wait = setInterval(() => {
-    if (typeof io !== 'undefined') { clearInterval(wait); initSocket(); }
+    if (typeof io !== 'undefined') {
+      clearInterval(wait);
+      initSocket();
+    }
   }, 100);
   setTimeout(() => clearInterval(wait), 15000);
 });
