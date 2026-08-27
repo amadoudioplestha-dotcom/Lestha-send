@@ -192,19 +192,35 @@ async function sendFile(dc, receiverId) {
   if (!selectedFile || dc?.readyState !== 'open') return error('❌ Canal de transfert non prêt', 'errorBox2');
   const start = Date.now();
   dc.send(JSON.stringify({
-    msgType: 'metadata', name: selectedFile.name, size: selectedFile.size,
+    msgType: 'metadata', 
+    name: selectedFile.name, 
+    size: selectedFile.size,
     fileType: selectedFile.type || 'application/octet-stream'
   }));
+  
   let offset = 0;
   const read = (blob) => safari
-    ? new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsArrayBuffer(blob); })
+    ? new Promise((resolve, reject) => { 
+        const r = new FileReader(); 
+        r.onload = () => resolve(r.result); 
+        r.onerror = reject; 
+        r.readAsArrayBuffer(blob); 
+      })
     : blob.arrayBuffer();
+  
   while (offset < selectedFile.size && !transferAborted && generation === sendGeneration) {
     if (dc.readyState !== 'open') return;
-    if (dc.bufferedAmount > 1024 * 1024) { await new Promise((r) => setTimeout(r, 40)); continue; }
+    if (dc.bufferedAmount > 1024 * 1024) { 
+      await new Promise((r) => setTimeout(r, 40)); 
+      continue; 
+    }
     const end = Math.min(offset + CHUNK_SIZE, selectedFile.size);
-    try { dc.send(await read(selectedFile.slice(offset, end))); }
-    catch (e) { return error('❌ Erreur d\'envoi : ' + e.message, 'errorBox2'); }
+    try { 
+      dc.send(await read(selectedFile.slice(offset, end))); 
+    }
+    catch (e) { 
+      return error('❌ Erreur d\'envoi : ' + e.message, 'errorBox2'); 
+    }
     offset = end;
 
     // ⬅️ Mémoriser la progression pour ce destinataire précis
@@ -218,9 +234,14 @@ async function sendFile(dc, receiverId) {
     }
     if (!isMultiView()) updateProgress(offset, selectedFile.size, start);
   }
+  
   if (offset >= selectedFile.size) {
     const peerInfo = activePeerConnections.get(receiverId);
-    if (peerInfo) { peerInfo.progress = 100; peerInfo.speedText = ''; renderReceiversList(); }
+    if (peerInfo) { 
+      peerInfo.progress = 100; 
+      peerInfo.speedText = ''; 
+      renderReceiversList(); 
+    }
     console.log('✅ Envoi terminé (' + receiverId + ')');
   }
 }
