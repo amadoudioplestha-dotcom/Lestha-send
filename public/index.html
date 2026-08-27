@@ -68,7 +68,6 @@
       <button id="btnCopyLink" class="btn secondary" type="button">📋 Copier</button>
     </div>
 
-    <!-- ✅ QR CODE : affiché au moment de la génération -->
     <div id="qrBox" class="qr" aria-label="QR code du lien"></div>
     <p id="pinBadge" class="pin-badge hidden"></p>
 
@@ -86,6 +85,17 @@
   <section id="step-transfer" class="step">
     <div class="eyebrow">CONNEXION CHIFFRÉE</div>
     <p id="transferTitle">Préparation…</p>
+    
+    <!-- ✅ Boîte de saisie du PIN (affichée si requis) -->
+    <div id="pinBox" class="pin-box hidden">
+      <p>🔒 Ce transfert est protégé par un code PIN</p>
+      <p class="pin-hint">L'expéditeur doit vous communiquer ce code séparément</p>
+      <div class="link-box">
+        <input id="pinEntry" type="text" inputmode="numeric" maxlength="8" placeholder="Code PIN" autocomplete="off">
+        <button id="btnSubmitPin" class="btn secondary" type="button">Valider</button>
+      </div>
+    </div>
+    
     <div class="progress-container">
       <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
       <div class="progress-stats"><b id="progressText">0 %</b><span id="speedText"></span></div>
@@ -106,7 +116,6 @@
   <footer>🔒 WebRTC · chiffrement de bout en bout · aucun stockage</footer>
 </div>
 
-<!-- Seul Socket.IO au démarrage (page légère = pas de mémoire insuffisante) -->
 <script defer src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script defer src="/app.js"></script>
 </body>

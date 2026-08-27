@@ -125,9 +125,6 @@ app.post('/api/send-email', async (req, res) => {
     }
 });
 
-// ========================================
-//  SIGNALISATION WEBRTC + EXPIRATION + PIN
-// ========================================
 const rooms = new Map();
 
 function generateRoomId() {
@@ -138,11 +135,11 @@ function hashPin(pin) {
     return crypto.createHash('sha256').update(String(pin)).digest('hex');
 }
 
-// Nettoyage : respecte l'expiration réelle + max 7 jours
 setInterval(() => {
     const now = Date.now();
     for (const [roomId, room] of rooms.entries()) {
         if (now > room.expiresAt || now - room.createdAt > 7 * 86400000) {
+            console.log(`🧹 Room expirée nettoyée: ${roomId}`);
             rooms.delete(roomId);
         }
     }
@@ -151,7 +148,6 @@ setInterval(() => {
 io.on('connection', (socket) => {
     console.log('✅ Connexion socket:', socket.id);
 
-    // ✅ create-room avec TTL et PIN
     socket.on('create-room', (payload, callback) => {
         if (typeof payload === 'function') { callback = payload; payload = {}; }
         payload = payload || {};
@@ -165,6 +161,8 @@ io.on('connection', (socket) => {
             rooms.delete(socket.roomId);
         }
         const roomId = generateRoomId();
+        const pinHash = pin ? hashPin(pin) : null;
+        
         rooms.set(roomId, {
             senderSocketId: socket.id,
             receiverSocketId: null,
@@ -173,11 +171,12 @@ io.on('connection', (socket) => {
             iceCandidates: [],
             createdAt: Date.now(),
             expiresAt: Date.now() + ttl,
-            pinHash: pin ? hashPin(pin) : null
+            pinHash: pinHash
         });
         socket.join(roomId);
         socket.roomId = roomId;
         socket.role = 'sender';
+        console.log(`📍 Room créée: ${roomId} (TTL: ${Math.round(ttl/3600000)}h, PIN: ${pinHash ? '✅' : '❌'})`);
         if (typeof callback === 'function') callback({ roomId, success: true });
     });
 
@@ -188,7 +187,6 @@ io.on('connection', (socket) => {
         if (room.receiverSocketId) io.to(room.receiverSocketId).emit('offer-received', { offer });
     });
 
-    // ✅ join-room avec vérification expiration + PIN
     socket.on('join-room', ({ roomId, pin }, callback) => {
         const room = rooms.get(roomId);
         if (!room) return callback && callback({ success: false, error: 'Lien invalide ou expiré.' });
@@ -198,7 +196,8 @@ io.on('connection', (socket) => {
         }
         if (room.pinHash) {
             if (!pin) return callback && callback({ success: false, pinRequired: true });
-            if (hashPin(pin) !== room.pinHash) return callback && callback({ success: false, pinRequired: true, error: 'Code PIN incorrect.' });
+            const providedHash = hashPin(pin);
+            if (providedHash !== room.pinHash) return callback && callback({ success: false, pinRequired: true, error: 'Code PIN incorrect.' });
         }
         if (room.receiverSocketId) return callback && callback({ success: false, error: 'Room déjà occupée.' });
 
@@ -206,6 +205,7 @@ io.on('connection', (socket) => {
         socket.join(roomId);
         socket.roomId = roomId;
         socket.role = 'receiver';
+        console.log(`👤 Destinataire rejoint: ${roomId}`);
         if (typeof callback === 'function') callback({ success: true });
         io.to(room.senderSocketId).emit('receiver-joined');
         if (room.offer) socket.emit('offer-received', { offer: room.offer });
@@ -272,4 +272,5 @@ server.listen(PORT, () => {
     console.log(`🚀 Serveur démarré sur le port ${PORT}`);
     console.log(`📧 SendGrid: ${sgMail && process.env.SENDGRID_API_KEY ? '✅ Configuré' : '❌ Non configuré'}`);
     console.log(`📧 From: ${process.env.SENDGRID_FROM_EMAIL || 'Non configuré'}`);
+    console.log(`🔄 TURN: ${process.env.TURN_URL ? '✅ Configuré' : '❌ STUN uniquement'}`);
 });
