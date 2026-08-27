@@ -21,11 +21,9 @@ const PORT = process.env.PORT || 3000;
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '10mb' }));
 
-// Évite les 404 fantômes
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 app.all('/cdn-cgi/*', (req, res) => res.status(204).end());
 
-// Route de santé
 app.get('/health', (req, res) => {
     res.json({
         status: 'OK',
@@ -38,9 +36,6 @@ app.get('/health', (req, res) => {
     });
 });
 
-// ========================================
-//  CONFIG ICE (STUN/TURN)
-// ========================================
 function validateIceServer(url, username, credential) {
     if (!url || typeof url !== 'string') return null;
     url = url.trim();
@@ -84,9 +79,6 @@ app.get('/api/ice-config', (req, res) => {
     res.json({ iceServers });
 });
 
-// ========================================
-//  ENVOI EMAIL VIA SENDGRID
-// ========================================
 function escapeHtml(text) {
     if (text == null) return '';
     return String(text)
@@ -101,7 +93,7 @@ app.post('/api/send-email', async (req, res) => {
     if (!to || !link) return res.status(400).json({ error: 'Champs manquants (to, link).' });
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return res.status(400).json({ error: 'Email invalide.' });
     if (!sgMail || !process.env.SENDGRID_API_KEY) {
-        return res.status(503).json({ error: 'Service email non configuré. Ajoutez SENDGRID_API_KEY dans Render.' });
+        return res.status(503).json({ error: 'Service email non configuré.' });
     }
     const fromEmail = process.env.SENDGRID_FROM_EMAIL || 'amadoudioplestha@gmail.com';
     try {
@@ -127,7 +119,9 @@ app.post('/api/send-email', async (req, res) => {
         return res.json({ success: true, provider: 'sendgrid' });
     } catch (error) {
         console.error('❌ Erreur SendGrid:', error.response?.body || error.message);
-        return res.status(500).json({ error: 'Échec envoi: ' + (error.response?.body?.errors?.[0]?.message || error.message) });
+        return res.status(500).json({
+            error: 'Échec envoi: ' + (error.response?.body?.errors?.[0]?.message || error.message)
+        });
     }
 });
 
@@ -144,18 +138,20 @@ function hashPin(pin) {
     return crypto.createHash('sha256').update(String(pin)).digest('hex');
 }
 
-// ✅ NOUVEAU BLOC DE NETTOYAGE (toutes les minutes, respecte l'expiration)
+// Nettoyage : respecte l'expiration réelle + max 7 jours
 setInterval(() => {
     const now = Date.now();
     for (const [roomId, room] of rooms.entries()) {
-        if (now > room.expiresAt || now - room.createdAt > 7 * 86400000) rooms.delete(roomId);
+        if (now > room.expiresAt || now - room.createdAt > 7 * 86400000) {
+            rooms.delete(roomId);
+        }
     }
 }, 60000);
 
 io.on('connection', (socket) => {
     console.log('✅ Connexion socket:', socket.id);
 
-    // ✅ create-room AVEC expiration (ttl) + PIN
+    // ✅ create-room avec TTL et PIN
     socket.on('create-room', (payload, callback) => {
         if (typeof payload === 'function') { callback = payload; payload = {}; }
         payload = payload || {};
@@ -182,7 +178,6 @@ io.on('connection', (socket) => {
         socket.join(roomId);
         socket.roomId = roomId;
         socket.role = 'sender';
-        console.log(`📍 Room créée: ${roomId} (expire dans ${Math.round(ttl / 3600000)}h)`);
         if (typeof callback === 'function') callback({ roomId, success: true });
     });
 
@@ -193,7 +188,7 @@ io.on('connection', (socket) => {
         if (room.receiverSocketId) io.to(room.receiverSocketId).emit('offer-received', { offer });
     });
 
-    // ✅ join-room AVEC vérification expiration + PIN
+    // ✅ join-room avec vérification expiration + PIN
     socket.on('join-room', ({ roomId, pin }, callback) => {
         const room = rooms.get(roomId);
         if (!room) return callback && callback({ success: false, error: 'Lien invalide ou expiré.' });
@@ -211,7 +206,6 @@ io.on('connection', (socket) => {
         socket.join(roomId);
         socket.roomId = roomId;
         socket.role = 'receiver';
-        console.log(`👤 Destinataire rejoint: ${roomId}`);
         if (typeof callback === 'function') callback({ success: true });
         io.to(room.senderSocketId).emit('receiver-joined');
         if (room.offer) socket.emit('offer-received', { offer: room.offer });
@@ -278,5 +272,4 @@ server.listen(PORT, () => {
     console.log(`🚀 Serveur démarré sur le port ${PORT}`);
     console.log(`📧 SendGrid: ${sgMail && process.env.SENDGRID_API_KEY ? '✅ Configuré' : '❌ Non configuré'}`);
     console.log(`📧 From: ${process.env.SENDGRID_FROM_EMAIL || 'Non configuré'}`);
-    console.log(`🔄 TURN: ${process.env.TURN_URL ? '✅ Configuré' : '❌ STUN uniquement'}`);
 });

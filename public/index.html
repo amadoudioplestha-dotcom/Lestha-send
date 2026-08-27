@@ -2,8 +2,8 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="Transfert de fichiers P2P ultra-sécurisé, sans serveur, chiffré de bout en bout.">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="description" content="Transfert P2P ultra-sécurisé, direct, chiffré, sans stockage.">
 <meta name="theme-color" content="#00b4d8">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -17,6 +17,7 @@
 <body>
 <div class="container">
 
+  <!-- ÉTAPE 1 : SÉLECTION -->
   <section id="step-select" class="step active">
     <header>
       <div class="eyebrow">TRANSFERX / P2P</div>
@@ -26,10 +27,10 @@
 
     <div class="mode-choice">
       <button id="btnModeFile" class="btn-mode" type="button">
-        <span class="btn-mode-icon">📄</span><span class="btn-mode-text">Envoyer un fichier</span>
+        <span class="icon">📄</span><span>Envoyer un fichier</span>
       </button>
       <button id="btnModeFolder" class="btn-mode" type="button">
-        <span class="btn-mode-icon">📁</span><span class="btn-mode-text">Envoyer un dossier</span>
+        <span class="icon">📁</span><span>Envoyer un dossier</span>
       </button>
     </div>
 
@@ -57,34 +58,34 @@
     <div id="errorBox" class="error-box hidden"></div>
   </section>
 
+  <!-- ÉTAPE 2 : LIEN PRÊT -->
   <section id="step-waiting" class="step">
     <div class="eyebrow">LIEN PRÊT</div>
     <h2>Partagez votre lien</h2>
+
     <div class="link-box">
-      <input type="text" id="linkOutput" readonly placeholder="Génération du lien...">
+      <input type="text" id="linkOutput" readonly placeholder="Génération...">
       <button id="btnCopyLink" class="btn secondary" type="button">📋 Copier</button>
     </div>
+
+    <!-- ✅ QR CODE : affiché au moment de la génération -->
     <div id="qrBox" class="qr" aria-label="QR code du lien"></div>
     <p id="pinBadge" class="pin-badge hidden"></p>
+
     <div class="email-box">
       <input type="email" id="emailInput" placeholder="Envoyer par email (optionnel)">
       <button id="btnSendEmail" class="btn secondary" type="button">✉️ Envoyer</button>
     </div>
+
     <p id="waitingMsg" class="notice">⏳ En attente du destinataire…</p>
     <button id="btnCancelSend" class="btn danger" type="button">❌ Annuler</button>
     <div id="errorBox2" class="error-box hidden"></div>
   </section>
 
+  <!-- ÉTAPE 3 : TRANSFERT -->
   <section id="step-transfer" class="step">
     <div class="eyebrow">CONNEXION CHIFFRÉE</div>
     <p id="transferTitle">Préparation…</p>
-    <div id="pinBox" class="pin-box hidden">
-      <p>🔒 Ce transfert est protégé par un code PIN.</p>
-      <div class="link-box">
-        <input id="pinEntry" inputmode="numeric" maxlength="8" placeholder="Code PIN">
-        <button id="btnSubmitPin" class="btn secondary" type="button">Valider</button>
-      </div>
-    </div>
     <div class="progress-container">
       <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
       <div class="progress-stats"><b id="progressText">0 %</b><span id="speedText"></span></div>
@@ -93,6 +94,7 @@
     <div id="errorBox3" class="error-box hidden"></div>
   </section>
 
+  <!-- ÉTAPE 4 : TERMINÉ -->
   <section id="step-done" class="step">
     <div class="success-icon">✓</div>
     <h2>Transfert terminé</h2>
@@ -104,7 +106,7 @@
   <footer>🔒 WebRTC · chiffrement de bout en bout · aucun stockage</footer>
 </div>
 
-<!-- Socket.IO seul chargé au départ ; le reste est chargé à la demande -->
+<!-- Seul Socket.IO au démarrage (page légère = pas de mémoire insuffisante) -->
 <script defer src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script defer src="/app.js"></script>
 </body>

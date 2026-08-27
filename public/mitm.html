@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>StreamSaver</title>
+</head>
+<body>
+<script>
+/* StreamSaver.js MITM HTML - required for StreamSaver to work */
+'use strict';
+const downloadStream = (url, port, headers) => {
+  return fetch(url, { headers }).then(response => {
+    const readableStream = response.body;
+    return readableStream.pipeTo(new WritableStream({
+      write(chunk) { port.postMessage(chunk, [chunk]); },
+      close() { port.postMessage('close'); },
+      abort(e) { port.postMessage({ error: e.message }); }
+    }));
+  });
+};
+const ports = [];
+addEventListener('message', event => {
+  if (event.data.action === 'download') {
+    const port = event.ports[0];
+    ports.push(port);
+    downloadStream(event.data.url, port, event.data.headers).catch(e => port.postMessage({ error: e.message }));
+  }
+});
+addEventListener('fetch', event => {
+  const url = event.request.url;
+  if (url.includes('/intercept/')) {
+    const id = url.split('/intercept/')[1];
+    event.respondWith(new Response(new ReadableStream({
+      start(controller) {
+        const port = new MessageChannel();
+        port.port1.onmessage = event => {
+          if (event.data === 'close') controller.close();
+          else if (event.data.error) controller.error(new Error(event.data.error));
+          else controller.enqueue(event.data);
+        };
+        navigator.serviceWorker.controller.postMessage({ action: 'intercept', id, port: port.port2 }, [port.port2]);
+      }
+    })));
+  }
+});
+</script>
+</body>
+</html>
