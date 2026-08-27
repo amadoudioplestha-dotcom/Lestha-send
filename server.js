@@ -5,14 +5,13 @@ const { Server } = require('socket.io');
 const path = require('path');
 const crypto = require('crypto');
 
-// Configuration SendGrid (l'absence de variables ne doit pas empêcher le serveur de démarrer)
-const sgMail = require('@sendgrid/mail');
-const Mail = require('@sendgrid/helpers/classes/mail');
-if (process.env.SENDGRID_API_KEY && process.env.SENDGRID_FROM_EMAIL) {
-    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-    console.log('✅ SendGrid configuré');
-} else {
-    console.warn('⚠️ Service email non configuré : SENDGRID_API_KEY et SENDGRID_FROM_EMAIL sont requis.');
+// Charger SendGrid
+let sgMail = null;
+try {
+    sgMail = require('@sendgrid/mail');
+    console.log('✅ @sendgrid/mail chargé');
+} catch (e) {
+    console.warn('⚠️ @sendgrid/mail non disponible');
 }
 
 const app = express();
@@ -27,9 +26,7 @@ app.use(express.json({ limit: '10mb' }));
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 app.all('/cdn-cgi/*', (req, res) => res.status(204).end());
 
-// ========================================
-//  ROUTE DE SANTÉ
-// ========================================
+// Route de santé
 app.get('/health', (req, res) => {
     res.json({
         status: 'OK',
@@ -42,9 +39,7 @@ app.get('/health', (req, res) => {
     });
 });
 
-// ========================================
-//  CONFIGURATION ICE (STUN/TURN)
-// ========================================
+// Config ICE
 function validateIceServer(url, username, credential) {
     if (!url || typeof url !== 'string') return null;
     url = url.trim();
@@ -88,9 +83,7 @@ app.get('/api/ice-config', (req, res) => {
     res.json({ iceServers });
 });
 
-// ========================================
-//  📧 ENVOI D'EMAIL VIA SENDGRID
-// ========================================
+// Envoi email via SendGrid
 function escapeHtml(text) {
     if (text == null) return '';
     return String(text)
@@ -112,21 +105,25 @@ app.post('/api/send-email', async (req, res) => {
         return res.status(400).json({ error: 'Email invalide.' });
     }
 
-    if (!process.env.SENDGRID_API_KEY || !process.env.SENDGRID_FROM_EMAIL) {
-        return res.status(503).json({
-            error: 'Service email non configuré. Ajoutez SENDGRID_API_KEY et SENDGRID_FROM_EMAIL dans Render.'
+    if (!sgMail || !process.env.SENDGRID_API_KEY) {
+        return res.status(503).json({ 
+            error: 'Service email non configuré. Ajoutez SENDGRID_API_KEY dans Render.' 
         });
     }
 
+    const fromEmail = process.env.SENDGRID_FROM_EMAIL || 'amadoudioplestha@gmail.com';
+
     try {
-        const msg = new Mail();
-        msg.setFrom({
-            email: process.env.SENDGRID_FROM_EMAIL,
-            name: 'TransferX'
-        });
-        msg.setSubject(`📦 Vous avez reçu un fichier : ${escapeHtml(fileName) || 'sans nom'}`);
-        msg.addTo(to.trim());
-        msg.setHtml(`
+        sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+        
+        await sgMail.send({
+            to: to.trim(),
+            from: {
+                email: fromEmail,
+                name: 'TransferX'
+            },
+            subject: `📦 Vous avez reçu un fichier : ${escapeHtml(fileName) || 'sans nom'}`,
+            html: `
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; background: #f9fafb; padding: 20px; border-radius: 8px;">
                     <h2 style="color: #1f2937;">📦 Fichier prêt à être récupéré</h2>
                     <p style="color: #374151;">Un fichier <strong>${escapeHtml(fileName) || 'sans nom'}</strong> vous a été envoyé de manière sécurisée via TransferX.</p>
@@ -140,9 +137,9 @@ app.post('/api/send-email', async (req, res) => {
                         🔒 Transfert P2P direct et chiffré — aucun fichier stocké sur un serveur.
                     </p>
                 </div>
-            `);
+            `
+        });
 
-        await sgMail.send(msg);
         console.log(`✅ Email envoyé à ${to} via SendGrid`);
         return res.json({ success: true, provider: 'sendgrid' });
     } catch (error) {
@@ -153,9 +150,7 @@ app.post('/api/send-email', async (req, res) => {
     }
 });
 
-// ========================================
-//  SIGNALISATION WEBRTC (Rooms)
-// ========================================
+// Signalisation WebRTC
 const rooms = new Map();
 function generateRoomId() {
     return crypto.randomBytes(8).toString('hex');
@@ -193,6 +188,7 @@ io.on('connection', (socket) => {
         socket.join(roomId);
         socket.roomId = roomId;
         socket.role = 'sender';
+        console.log(`📍 Room créée: ${roomId}`);
         if (typeof callback === 'function') callback({ roomId, success: true });
     });
 
@@ -214,6 +210,7 @@ io.on('connection', (socket) => {
         socket.join(roomId);
         socket.roomId = roomId;
         socket.role = 'receiver';
+        console.log(`👤 Destinataire rejoint: ${roomId}`);
         if (typeof callback === 'function') callback({ success: true });
         
         io.to(room.senderSocketId).emit('receiver-joined');
@@ -280,9 +277,6 @@ io.on('connection', (socket) => {
     socket.on('ping-keepalive', () => socket.emit('pong-keepalive'));
 });
 
-// ========================================
-//  🚀 DÉMARRAGE
-// ========================================
 server.listen(PORT, () => {
     console.log(`🚀 Serveur démarré sur le port ${PORT}`);
     console.log(`📧 SendGrid: ${sgMail && process.env.SENDGRID_API_KEY ? '✅ Configuré' : '❌ Non configuré'}`);
