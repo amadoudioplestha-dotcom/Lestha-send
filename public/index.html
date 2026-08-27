@@ -17,7 +17,6 @@
 <body>
 <div class="container">
 
-  <!-- ÉTAPE 1 : SÉLECTION -->
   <section id="step-select" class="step active">
     <header>
       <div class="eyebrow">TRANSFERX / P2P</div>
@@ -52,41 +51,37 @@
       <label>🔢 PIN optionnel
         <input id="pinInput" inputmode="numeric" maxlength="8" placeholder="4 à 8 chiffres">
       </label>
+      <label class="full-width">
+        <input type="checkbox" id="multiDownload" style="width:auto; margin-right:8px; min-height:auto;">
+        Autoriser plusieurs téléchargements
+      </label>
     </div>
 
     <button id="btnStartSend" class="btn primary" type="button">🔗 Générer le lien sécurisé</button>
     <div id="errorBox" class="error-box hidden"></div>
   </section>
 
-  <!-- ÉTAPE 2 : LIEN PRÊT -->
   <section id="step-waiting" class="step">
     <div class="eyebrow">LIEN PRÊT</div>
     <h2>Partagez votre lien</h2>
-
     <div class="link-box">
       <input type="text" id="linkOutput" readonly placeholder="Génération...">
       <button id="btnCopyLink" class="btn secondary" type="button">📋 Copier</button>
     </div>
-
     <div id="qrBox" class="qr" aria-label="QR code du lien"></div>
     <p id="pinBadge" class="pin-badge hidden"></p>
-
     <div class="email-box">
       <input type="email" id="emailInput" placeholder="Envoyer par email (optionnel)">
       <button id="btnSendEmail" class="btn secondary" type="button">✉️ Envoyer</button>
     </div>
-
     <p id="waitingMsg" class="notice">⏳ En attente du destinataire…</p>
     <button id="btnCancelSend" class="btn danger" type="button">❌ Annuler</button>
     <div id="errorBox2" class="error-box hidden"></div>
   </section>
 
-  <!-- ÉTAPE 3 : TRANSFERT -->
   <section id="step-transfer" class="step">
     <div class="eyebrow">CONNEXION CHIFFRÉE</div>
     <p id="transferTitle">Préparation…</p>
-    
-    <!-- ✅ Boîte de saisie du PIN (affichée si requis) -->
     <div id="pinBox" class="pin-box hidden">
       <p>🔒 Ce transfert est protégé par un code PIN</p>
       <p class="pin-hint">L'expéditeur doit vous communiquer ce code séparément</p>
@@ -95,7 +90,6 @@
         <button id="btnSubmitPin" class="btn secondary" type="button">Valider</button>
       </div>
     </div>
-    
     <div class="progress-container">
       <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
       <div class="progress-stats"><b id="progressText">0 %</b><span id="speedText"></span></div>
@@ -104,7 +98,6 @@
     <div id="errorBox3" class="error-box hidden"></div>
   </section>
 
-  <!-- ÉTAPE 4 : TERMINÉ -->
   <section id="step-done" class="step">
     <div class="success-icon">✓</div>
     <h2>Transfert terminé</h2>
