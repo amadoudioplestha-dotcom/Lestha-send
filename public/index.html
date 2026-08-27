@@ -17,6 +17,7 @@
 <body>
 <div class="container">
 
+  <!-- ÉTAPE 1 : SÉLECTION -->
   <section id="step-select" class="step active">
     <header>
       <div class="eyebrow">TRANSFERX / P2P</div>
@@ -51,34 +52,60 @@
       <label>🔢 PIN optionnel
         <input id="pinInput" inputmode="numeric" maxlength="8" placeholder="4 à 8 chiffres">
       </label>
-      <label class="full-width">
-        <input type="checkbox" id="multiDownload" style="width:auto; margin-right:8px; min-height:auto;">
-        Autoriser plusieurs téléchargements
-      </label>
     </div>
 
     <button id="btnStartSend" class="btn primary" type="button">🔗 Générer le lien sécurisé</button>
+    <button id="btnShowHistory" class="btn ghost" type="button">📋 Historique des liens</button>
     <div id="errorBox" class="error-box hidden"></div>
   </section>
 
+  <!-- HISTORIQUE -->
+  <section id="step-history" class="step">
+    <div class="eyebrow">HISTORIQUE</div>
+    <h2>Vos liens de transfert</h2>
+    <div id="historyStats" class="history-stats"></div>
+    <div id="historyList" class="history-list"></div>
+    <button id="btnBackFromHistory" class="btn secondary" type="button">← Retour</button>
+    <button id="btnExportHistory" class="btn ghost" type="button">📤 Exporter (JSON)</button>
+  </section>
+
+  <!-- ÉTAPE 2 : LIEN PRÊT + DASHBOARD -->
   <section id="step-waiting" class="step">
     <div class="eyebrow">LIEN PRÊT</div>
     <h2>Partagez votre lien</h2>
+
     <div class="link-box">
       <input type="text" id="linkOutput" readonly placeholder="Génération...">
       <button id="btnCopyLink" class="btn secondary" type="button">📋 Copier</button>
     </div>
+
     <div id="qrBox" class="qr" aria-label="QR code du lien"></div>
     <p id="pinBadge" class="pin-badge hidden"></p>
+
+    <div id="dashboard" class="dashboard">
+      <div class="dashboard-header">
+        <h3>📊 Tableau de bord</h3>
+        <span id="dashboardStatus" class="status-badge">🟢 Actif</span>
+      </div>
+      <div class="dashboard-stats">
+        <div class="stat"><span class="stat-label">👥 Connectés</span><span id="statConnected" class="stat-value">0</span></div>
+        <div class="stat"><span class="stat-label">⬇️ Téléchargements</span><span id="statDownloads" class="stat-value">0</span></div>
+        <div class="stat"><span class="stat-label">⏱️ Temps restant</span><span id="statTimeLeft" class="stat-value">--</span></div>
+      </div>
+      <div id="receiversList" class="receivers-list"></div>
+    </div>
+
     <div class="email-box">
       <input type="email" id="emailInput" placeholder="Envoyer par email (optionnel)">
       <button id="btnSendEmail" class="btn secondary" type="button">✉️ Envoyer</button>
     </div>
+
     <p id="waitingMsg" class="notice">⏳ En attente du destinataire…</p>
     <button id="btnCancelSend" class="btn danger" type="button">❌ Annuler</button>
     <div id="errorBox2" class="error-box hidden"></div>
   </section>
 
+  <!-- ÉTAPE 3 : TRANSFERT -->
   <section id="step-transfer" class="step">
     <div class="eyebrow">CONNEXION CHIFFRÉE</div>
     <p id="transferTitle">Préparation…</p>
@@ -98,6 +125,7 @@
     <div id="errorBox3" class="error-box hidden"></div>
   </section>
 
+  <!-- ÉTAPE 4 : TERMINÉ -->
   <section id="step-done" class="step">
     <div class="success-icon">✓</div>
     <h2>Transfert terminé</h2>

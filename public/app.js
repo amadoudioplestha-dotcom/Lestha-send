@@ -1,6 +1,6 @@
+/* TransferX — client final (session persistante + historique + dashboard + OPFS) */
 (() => {
 'use strict';
-
 const $ = (id) => document.getElementById(id);
 const safari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
@@ -15,15 +15,18 @@ let transferAborted = false;
 let iceServers = null;
 let sendGeneration = 0;
 
-// ✅ Multi-récepteurs
-let isMultiMode = false;
+// ✅ Multi-connexions (session persistante)
 let activePeerConnections = new Map(); // receiverId -> {pc, dc}
+let currentTransfer = null; // {roomId, expiresAt, fileName, fileSize, pin}
+let downloadCount = 0;
+let timeLeftInterval = null;
+let historyInterval = null;
 
-// ✅ Réception (pour destinataire)
+// ✅ Réception (destinataire)
 let expectedName = '', expectedSize = 0, receivedSize = 0, transferStart = 0;
 let remoteDescriptionSet = false;
 let pendingIce = [];
-let pc = null; // PeerConnection pour le mode unique
+let pc = null;
 let sink = null;
 
 const LIBS = {
@@ -43,13 +46,13 @@ function need(name) {
   });
 }
 
+/* ---------- Utilitaires ---------- */
 function showStep(id) {
   document.querySelectorAll('.step').forEach(el => el.classList.remove('active'));
   const el = $(id);
   if (el) el.classList.add('active');
   window.scrollTo(0, 0);
 }
-
 function error(message, box) {
   const el = $(box || 'errorBox');
   if (!el) return;
@@ -58,31 +61,20 @@ function error(message, box) {
   console.error(message);
   setTimeout(() => { if (el.textContent === message) el.classList.add('hidden'); }, 8000);
 }
-
 function clearErrors() {
-  document.querySelectorAll('.error-box').forEach(el => {
-    el.textContent = '';
-    el.classList.add('hidden');
-  });
+  document.querySelectorAll('.error-box').forEach(el => { el.textContent = ''; el.classList.add('hidden'); });
 }
-
 function bytes(n) {
   if (!n || isNaN(n)) return '0 o';
   const units = ['o', 'Ko', 'Mo', 'Go', 'To'];
   const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), units.length - 1);
   return (n / Math.pow(1024, i)).toFixed(i < 2 ? 0 : 1) + ' ' + units[i];
 }
-
 function speed(n) { return n > 0 ? bytes(n) + '/s' : ''; }
-
 function setSocketReady(ready) {
   const btn = $('btnStartSend');
-  if (btn) {
-    btn.disabled = !ready;
-    btn.title = ready ? '' : 'Connexion au serveur en cours…';
-  }
+  if (btn) { btn.disabled = !ready; btn.title = ready ? '' : 'Connexion au serveur en cours…'; }
 }
-
 function updateProgress(current, total, started) {
   const start = started || transferStart;
   const pct = total ? Math.min(100, Math.round((current / total) * 100)) : 0;
@@ -90,7 +82,6 @@ function updateProgress(current, total, started) {
   const txt = $('progressText'); if (txt) txt.textContent = pct + ' %';
   const sp = $('speedText'); if (sp && start) sp.textContent = speed(current / Math.max((Date.now() - start) / 1000, 0.1));
 }
-
 function showPreview(file) {
   const info = $('fileInfo'), box = $('filePreview');
   if (!info || !box) return;
@@ -99,7 +90,15 @@ function showPreview(file) {
   const s = info.querySelector('.file-preview-size'); if (s) s.textContent = bytes(file.size);
   box.classList.remove('hidden');
 }
-
+function formatTimeLeft(ms) {
+  if (ms <= 0) return 'Expiré';
+  const d = Math.floor(ms / 86400000);
+  const h = Math.floor((ms % 86400000) / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  if (d > 0) return d + 'j ' + h + 'h';
+  if (h > 0) return h + 'h ' + m + 'min';
+  return m + 'min';
+}
 async function renderQR(text) {
   const box = $('qrBox');
   if (!box) return;
@@ -110,6 +109,7 @@ async function renderQR(text) {
   } catch (e) { console.warn('QR non généré :', e.message); }
 }
 
+/* ---------- ICE / PeerConnection ---------- */
 async function getIceServers() {
   if (iceServers) return iceServers;
   try {
@@ -120,11 +120,7 @@ async function getIceServers() {
   }
   return iceServers;
 }
-
-async function newPeerConnection() {
-  return new RTCPeerConnection({ iceServers: await getIceServers() });
-}
-
+async function newPeerConnection() { return new RTCPeerConnection({ iceServers: await getIceServers() }); }
 function wirePeer(peer, receiverId) {
   peer.onicecandidate = (event) => {
     if (event.candidate && socket?.connected && roomId) {
@@ -133,17 +129,15 @@ function wirePeer(peer, receiverId) {
   };
   peer.oniceconnectionstatechange = () => {
     if (['failed', 'closed'].includes(peer.iceConnectionState) && !transferAborted) {
-      error('❌ Connexion WebRTC interrompue', 'errorBox3');
+      error('❌ Connexion WebRTC interrompue', role === 'sender' ? 'errorBox2' : 'errorBox3');
     }
   };
 }
-
 async function flushIce(peer) {
   if (!peer || !remoteDescriptionSet) return;
   const queued = pendingIce.splice(0);
   for (const c of queued) { try { await peer.addIceCandidate(c); } catch (e) {} }
 }
-
 function requestQueuedIce(receiverId) {
   if (!socket?.connected || !roomId) return;
   socket.emit('get-ice-candidates', { roomId }, (reply) => {
@@ -155,43 +149,34 @@ function requestQueuedIce(receiverId) {
   });
 }
 
-/* ---------- EXPÉDITEUR ---------- */
-function setupSenderChannel(dc, peerId) {
+/* ---------- EXPÉDITEUR (multi-connexions) ---------- */
+function setupSenderChannel(dc, receiverId) {
   dc.binaryType = 'arraybuffer';
   dc.onopen = () => {
-    if (!isMultiMode || peerId === 'main') {
-      const t = $('transferTitle');
-      if (t) t.textContent = isMultiMode ? 'Transferts en cours…' : 'Envoi en cours…';
-    }
-    sendFile(dc, peerId);
+    const t = $('transferTitle');
+    if (t && !isMultiView()) t.textContent = 'Envoi en cours…';
+    sendFile(dc, receiverId);
   };
   dc.onmessage = (event) => {
     try {
       const msg = JSON.parse(event.data);
       if (msg.msgType === 'complete') {
-        if (!isMultiMode) {
-          showStep('step-done');
-          const t = $('transferTitle');
-          if (t) t.textContent = 'Transfert réussi !';
-        } else {
-          console.log(`✅ Destinataire ${peerId} a terminé`);
-          const peer = activePeerConnections.get(peerId);
-          if (peer) {
-            try { peer.pc.close(); } catch (e) {}
-            activePeerConnections.delete(peerId);
-          }
-          updateWaitingMessage();
-        }
+        console.log('✅ Destinataire ' + receiverId + ' a terminé');
+        // Fermer uniquement cette connexion, la room reste active
+        const peer = activePeerConnections.get(receiverId);
+        if (peer) { try { peer.pc.close(); } catch (e) {} activePeerConnections.delete(receiverId); }
+        updateDashboard();
       } else if (msg.msgType === 'error') {
-        error('❌ ' + msg.message, 'errorBox3');
+        error('❌ ' + msg.message, 'errorBox2');
       }
     } catch (e) {}
   };
 }
+function isMultiView() { return role === 'sender'; }
 
-async function sendFile(dc, peerId) {
+async function sendFile(dc, receiverId) {
   const generation = ++sendGeneration;
-  if (!selectedFile || dc?.readyState !== 'open') return error('❌ Canal de transfert non prêt', 'errorBox3');
+  if (!selectedFile || dc?.readyState !== 'open') return error('❌ Canal de transfert non prêt', 'errorBox2');
   const start = Date.now();
   dc.send(JSON.stringify({
     msgType: 'metadata', name: selectedFile.name, size: selectedFile.size,
@@ -206,11 +191,11 @@ async function sendFile(dc, peerId) {
     if (dc.bufferedAmount > 1024 * 1024) { await new Promise((r) => setTimeout(r, 40)); continue; }
     const end = Math.min(offset + CHUNK_SIZE, selectedFile.size);
     try { dc.send(await read(selectedFile.slice(offset, end))); }
-    catch (e) { return error('❌ Erreur d\'envoi : ' + e.message, 'errorBox3'); }
+    catch (e) { return error('❌ Erreur d\'envoi : ' + e.message, 'errorBox2'); }
     offset = end;
-    if (!isMultiMode || peerId === 'main') updateProgress(offset, selectedFile.size, start);
+    updateProgress(offset, selectedFile.size, start);
   }
-  if (offset >= selectedFile.size) console.log(`✅ Envoi terminé (${peerId})`);
+  if (offset >= selectedFile.size) console.log('✅ Envoi terminé (' + receiverId + ')');
 }
 
 async function createPeerForReceiver(receiverId) {
@@ -224,24 +209,134 @@ async function createPeerForReceiver(receiverId) {
     socket.emit('send-offer', { roomId, offer: peer.localDescription, receiverId });
     activePeerConnections.set(receiverId, { pc: peer, dc });
     requestQueuedIce(receiverId);
-    console.log(`✅ Nouvelle connexion P2P pour destinataire ${receiverId}`);
-    updateWaitingMessage();
-  } catch (e) {
-    console.error('❌ Erreur création PC:', e);
-  }
+    updateDashboard();
+  } catch (e) { console.error('❌ Erreur création PC:', e); }
 }
 
-function updateWaitingMessage() {
-  const wm = $('waitingMsg');
-  if (!wm || role !== 'sender') return;
-  if (!isMultiMode) {
-    wm.textContent = '⏳ En attente du destinataire…';
+/* ---------- DASHBOARD ---------- */
+function updateDashboard() {
+  const sc = $('statConnected'); if (sc) sc.textContent = activePeerConnections.size;
+  const sd = $('statDownloads'); if (sd) sd.textContent = downloadCount;
+  renderReceiversList();
+}
+function renderReceiversList() {
+  const list = $('receiversList');
+  if (!list) return;
+  if (activePeerConnections.size === 0) { list.innerHTML = ''; return; }
+  let html = '';
+  activePeerConnections.forEach((peer, id) => {
+    html += '<div class="receiver-item"><span class="receiver-id">👤 ' + id.slice(0, 8) + '…</span><span class="receiver-status">⬇️ En cours</span></div>';
+  });
+  list.innerHTML = html;
+}
+function startTimeLeftTicker() {
+  if (timeLeftInterval) clearInterval(timeLeftInterval);
+  timeLeftInterval = setInterval(() => {
+    const el = $('statTimeLeft');
+    const badge = $('dashboardStatus');
+    if (!currentTransfer || !el) return;
+    const left = currentTransfer.expiresAt - Date.now();
+    el.textContent = formatTimeLeft(left);
+    if (badge) {
+      if (left <= 0) { badge.textContent = '🔴 Expiré'; badge.classList.add('expired'); }
+      else { badge.textContent = '🟢 Actif'; badge.classList.remove('expired'); }
+    }
+  }, 30000);
+}
+
+/* ---------- HISTORIQUE (localStorage) ---------- */
+function getHistory() {
+  try { return JSON.parse(localStorage.getItem('transferx_history') || '[]'); } catch (e) { return []; }
+}
+function setHistory(h) { localStorage.setItem('transferx_history', JSON.stringify(h)); }
+function saveToHistory(entry) {
+  const h = getHistory();
+  h.unshift(entry);
+  if (h.length > 50) h.length = 50;
+  setHistory(h);
+}
+function updateHistoryDownloads(rid, count) {
+  const h = getHistory();
+  const item = h.find(x => x.roomId === rid);
+  if (item) { item.downloadCount = count; setHistory(h); }
+}
+function showHistory() {
+  showStep('step-history');
+  renderHistory();
+  if (historyInterval) clearInterval(historyInterval);
+  historyInterval = setInterval(renderHistory, 5000);
+}
+function hideHistory() {
+  if (historyInterval) { clearInterval(historyInterval); historyInterval = null; }
+  showStep('step-select');
+}
+function renderHistory() {
+  const h = getHistory();
+  const now = Date.now();
+  const stats = $('historyStats');
+  if (stats) {
+    const active = h.filter(x => x.expiresAt > now).length;
+    const totalDl = h.reduce((s, x) => s + (x.downloadCount || 0), 0);
+    const totalSize = h.reduce((s, x) => s + (x.fileSize || 0), 0);
+    stats.innerHTML =
+      '<div class="stat-card"><span class="stat-number">' + h.length + '</span><span class="stat-label">Liens créés</span></div>' +
+      '<div class="stat-card"><span class="stat-number">' + active + '</span><span class="stat-label">Actifs</span></div>' +
+      '<div class="stat-card"><span class="stat-number">' + totalDl + '</span><span class="stat-label">Téléchargements</span></div>' +
+      '<div class="stat-card"><span class="stat-number">' + bytes(totalSize) + '</span><span class="stat-label">Total</span></div>';
+  }
+  const list = $('historyList');
+  if (!list) return;
+  if (h.length === 0) {
+    list.innerHTML = '<p style="text-align:center;color:var(--muted);padding:30px;">Aucun lien créé pour le moment</p>';
     return;
   }
-  const count = activePeerConnections.size;
-  wm.textContent = count > 0
-    ? `👥 ${count} personne(s) connectée(s) — transfert en cours`
-    : '⏳ Partagez le lien — plusieurs personnes peuvent télécharger';
+  list.innerHTML = h.map(item => {
+    const isActive = item.expiresAt > now;
+    return '<div class="history-item ' + (isActive ? '' : 'expired') + '">' +
+      '<div class="history-item-header"><span class="history-item-name">📎 ' + escapeHtmlLocal(item.fileName) + '</span>' +
+      '<span class="history-item-status ' + (isActive ? 'active' : 'expired') + '">' + (isActive ? 'Actif' : 'Expiré') + '</span></div>' +
+      '<div class="history-item-details">' +
+      '<span>📦 ' + bytes(item.fileSize) + '</span>' +
+      '<span>📅 ' + new Date(item.createdAt).toLocaleDateString('fr-FR') + '</span>' +
+      '<span>⏱️ ' + formatTimeLeft(item.expiresAt - now) + '</span>' +
+      '<span>🔢 ' + (item.pin ? item.pin : '—') + '</span>' +
+      '<span>⬇️ ' + (item.downloadCount || 0) + '</span>' +
+      '</div>' +
+      '<div class="history-item-actions">' +
+      (isActive ? '<button class="btn secondary" onclick="window.__copyHistoryLink(\'' + item.roomId + '\')">📋 Copier</button>' +
+        '<button class="btn secondary" onclick="window.__showHistoryQR(\'' + item.roomId + '\')">📱 QR</button>' : '') +
+      '<button class="btn ghost" onclick="window.__deleteHistory(\'' + item.roomId + '\')">🗑️</button>' +
+      '</div></div>';
+  }).join('');
+}
+function escapeHtmlLocal(t) {
+  return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+window.__copyHistoryLink = (rid) => {
+  const link = location.origin + '?room=' + encodeURIComponent(rid);
+  if (navigator.clipboard) navigator.clipboard.writeText(link);
+  alert('✅ Lien copié !');
+};
+window.__showHistoryQR = (rid) => {
+  const link = location.origin + '?room=' + encodeURIComponent(rid);
+  hideHistory();
+  showStep('step-waiting');
+  const out = $('linkOutput'); if (out) out.value = link;
+  renderQR(link);
+};
+window.__deleteHistory = (rid) => {
+  if (!confirm('Supprimer ce lien de l\'historique ?')) return;
+  setHistory(getHistory().filter(x => x.roomId !== rid));
+  renderHistory();
+};
+function exportHistory() {
+  const blob = new Blob([JSON.stringify(getHistory(), null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'transferx-historique-' + new Date().toISOString().split('T')[0] + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 /* ---------- SINK OPFS (réception) ---------- */
@@ -281,12 +376,7 @@ function setupReceiverChannel() {
     channel.binaryType = 'arraybuffer';
     let gotMetadata = false;
     let started = 0;
-    channel.onopen = () => {
-      const t = $('transferTitle');
-      if (t) t.textContent = 'Réception en cours…';
-      started = Date.now();
-      transferStart = started;
-    };
+    channel.onopen = () => { const t = $('transferTitle'); if (t) t.textContent = 'Réception en cours…'; started = Date.now(); transferStart = started; };
     channel.onmessage = async (msgEvent) => {
       if (transferAborted) return;
       if (!gotMetadata) {
@@ -324,28 +414,21 @@ function setupReceiverChannel() {
     };
   };
 }
-
 async function finishReceive(channel) {
   if (sink) {
     try {
       const file = await sink.close();
       const url = URL.createObjectURL(file);
       const link = $('downloadLink');
-      if (link) {
-        link.href = url;
-        link.download = expectedName;
-        link.classList.remove('hidden');
-        link.textContent = '⬇️ Télécharger ' + expectedName + ' (' + bytes(file.size) + ')';
-      }
-    } catch (e) {
-      error('❌ Finalisation : ' + e.message, 'errorBox3');
-    }
+      if (link) { link.href = url; link.download = expectedName; link.classList.remove('hidden'); link.textContent = '⬇️ Télécharger ' + expectedName + ' (' + bytes(file.size) + ')'; }
+    } catch (e) { error('❌ Finalisation : ' + e.message, 'errorBox3'); }
     sink = null;
   }
+  // ✅ Notifier le serveur (compteur de téléchargements)
   try { channel.send(JSON.stringify({ msgType: 'complete' })); } catch (e) {}
+  if (socket?.connected && roomId) socket.emit('download-complete', { roomId });
   showStep('step-done');
-  const sub = $('doneSubtitle');
-  if (sub) sub.textContent = expectedName + ' — transfert terminé';
+  const sub = $('doneSubtitle'); if (sub) sub.textContent = expectedName + ' — transfert terminé';
 }
 
 /* ---------- FLUX EXPÉDITEUR ---------- */
@@ -356,20 +439,33 @@ async function startSender() {
   const ttlSel = $('expirySelect');
   const ttl = ttlSel ? parseInt(ttlSel.value, 10) || 86400000 : 86400000;
   const pinRaw = $('pinInput') ? $('pinInput').value.trim() : '';
-  const multi = $('multiDownload') ? $('multiDownload').checked : false;
   if (pinRaw && !/^\d{4,8}$/.test(pinRaw)) return error('❌ Le code PIN doit contenir 4 à 8 chiffres');
 
   role = 'sender';
   transferAborted = false;
+  activePeerConnections = new Map();
+  downloadCount = 0;
   showStep('step-waiting');
   const wm = $('waitingMsg'); if (wm) wm.textContent = 'Connexion…';
 
-  socket.emit('create-room', { ttl, pin: pinRaw || null, multi }, async (reply) => {
+  socket.emit('create-room', { ttl, pin: pinRaw || null }, async (reply) => {
     if (!reply?.success || !reply.roomId) {
       showStep('step-select');
-      return error('❌ ' + ((reply && reply.error) || 'Impossible de créer la room'), 'errorBox2');
+      return error('❌ ' + ((reply && reply.error) || 'Impossible de créer la room'), 'errorBox');
     }
     roomId = reply.roomId;
+    currentTransfer = {
+      roomId,
+      expiresAt: reply.expiresAt || (Date.now() + ttl),
+      fileName: selectedFile.name,
+      fileSize: selectedFile.size,
+      pin: pinRaw || null,
+      createdAt: Date.now(),
+      downloadCount: 0
+    };
+    // ✅ Sauvegarder dans l'historique
+    saveToHistory(currentTransfer);
+
     const link = location.origin + '?room=' + encodeURIComponent(roomId);
     const out = $('linkOutput'); if (out) out.value = link;
     await renderQR(link);
@@ -379,28 +475,9 @@ async function startSender() {
       if (pinRaw) { badge.textContent = '🔢 PIN à communiquer séparément : ' + pinRaw; badge.classList.remove('hidden'); }
       else badge.classList.add('hidden');
     }
-
-    isMultiMode = reply.multi;
-    activePeerConnections = new Map();
-    updateWaitingMessage();
-
-    if (!isMultiMode) {
-      try {
-        pc = await newPeerConnection();
-        wirePeer(pc);
-        const dc = pc.createDataChannel('file', { ordered: true });
-        setupSenderChannel(dc, 'main');
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        socket.emit('send-offer', { roomId, offer: pc.localDescription });
-        activePeerConnections.set('main', { pc, dc });
-        requestQueuedIce();
-      } catch (e) {
-        error('❌ Erreur WebRTC : ' + e.message, 'errorBox2');
-        resetConnection();
-        showStep('step-select');
-      }
-    }
+    const wm2 = $('waitingMsg'); if (wm2) wm2.textContent = '⏳ Partagez le lien — il reste actif jusqu\'à expiration';
+    updateDashboard();
+    startTimeLeftTicker();
   });
 }
 
@@ -413,7 +490,7 @@ function joinRoom(pin) {
       const pinBox = $('pinBox'); if (pinBox) pinBox.classList.remove('hidden');
       if (reply.error) {
         error('❌ ' + reply.error, 'errorBox3');
-        const pinEntry = $('pinEntry'); if (pinEntry) { pinEntry.value = ''; pinEntry.focus(); }
+        const pe = $('pinEntry'); if (pe) { pe.value = ''; pe.focus(); }
       }
       return;
     }
@@ -426,7 +503,6 @@ function joinRoom(pin) {
     requestQueuedIce();
   });
 }
-
 async function startReceiver() {
   role = 'receiver';
   showStep('step-transfer');
@@ -436,9 +512,7 @@ async function startReceiver() {
     wirePeer(pc);
     setupReceiverChannel();
     joinRoom(null);
-  } catch (e) {
-    error('❌ Erreur connexion : ' + e.message, 'errorBox3');
-  }
+  } catch (e) { error('❌ Erreur connexion : ' + e.message, 'errorBox3'); }
 }
 
 /* ---------- RESET ---------- */
@@ -447,21 +521,16 @@ function resetConnection() {
   pendingIce = [];
   remoteDescriptionSet = false;
   if (sink) { sink.abort(); sink = null; }
-
-  if (isMultiMode) {
-    activePeerConnections.forEach(({ pc: peer }) => {
-      try { peer.close(); } catch (e) {}
-    });
-    activePeerConnections.clear();
-  }
-
+  activePeerConnections.forEach(({ pc: peer }) => { try { peer.close(); } catch (e) {} });
+  activePeerConnections.clear();
   try { if (pc) pc.close(); } catch (e) {}
   pc = null;
-  isMultiMode = false;
+  if (timeLeftInterval) { clearInterval(timeLeftInterval); timeLeftInterval = null; }
 }
-
 function resetUI() {
   selectedFile = null;
+  currentTransfer = null;
+  downloadCount = 0;
   const fi = $('fileInput'); if (fi) fi.value = '';
   const fo = $('folderInput'); if (fo) fo.value = '';
   const fp = $('filePreview'); if (fp) fp.classList.add('hidden');
@@ -475,9 +544,7 @@ function resetUI() {
   const pi = $('pinInput'); if (pi) pi.value = '';
   const pe = $('pinEntry'); if (pe) pe.value = '';
   const pbox = $('pinBox'); if (pbox) pbox.classList.add('hidden');
-  const md = $('multiDownload'); if (md) md.checked = false;
 }
-
 function cancelTransfer() {
   transferAborted = true;
   if (roomId && socket?.connected) socket.emit('cancel-transfer', { roomId });
@@ -514,37 +581,24 @@ function initSocket() {
       await pc.setLocalDescription(answer);
       socket.emit('send-answer', { roomId, answer: pc.localDescription });
       requestQueuedIce();
-    } catch (e) {
-      error('❌ Offre invalide : ' + e.message, 'errorBox3');
-    }
+    } catch (e) { error('❌ Offre invalide : ' + e.message, 'errorBox3'); }
   });
 
   socket.on('answer-received', async ({ answer, receiverId }) => {
-    let targetPc;
-    if (receiverId) {
-      const peer = activePeerConnections.get(receiverId);
-      if (!peer) return;
-      targetPc = peer.pc;
-    } else {
-      targetPc = pc;
-    }
+    const targetPc = receiverId ? (activePeerConnections.get(receiverId)?.pc) : pc;
     if (!targetPc) return;
     try {
       await targetPc.setRemoteDescription(answer);
-      remoteDescriptionSet = true;
+      if (!receiverId) remoteDescriptionSet = true;
       await flushIce(targetPc);
-      if (!isMultiMode) showStep('step-transfer');
       requestQueuedIce(receiverId);
-    } catch (e) {
-      error('❌ Réponse invalide : ' + e.message, 'errorBox2');
-    }
+    } catch (e) { error('❌ Réponse invalide : ' + e.message, 'errorBox2'); }
   });
 
   socket.on('ice-candidate', (data) => {
     const candidate = data.candidate || data;
     const from = data.from;
     if (!candidate) return;
-
     if (role === 'receiver') {
       if (!pc) return;
       if (!remoteDescriptionSet) pendingIce.push(candidate);
@@ -552,32 +606,33 @@ function initSocket() {
     } else if (role === 'sender') {
       const peer = activePeerConnections.get(from);
       if (peer && peer.pc) peer.pc.addIceCandidate(candidate).catch(() => {});
-      else if (pc) pc.addIceCandidate(candidate).catch(() => {});
     }
   });
 
   socket.on('receiver-joined', (data) => {
-    if (isMultiMode && data?.receiverId) {
-      createPeerForReceiver(data.receiverId);
-    } else {
-      const wm = $('waitingMsg');
-      if (wm && role === 'sender') wm.textContent = '✅ Destinataire connecté !';
-      requestQueuedIce();
-    }
+    if (role !== 'sender') return;
+    if (data?.receiverId) createPeerForReceiver(data.receiverId);
+    else { const wm = $('waitingMsg'); if (wm) wm.textContent = '✅ Destinataire connecté !'; }
   });
 
   socket.on('receiver-left', (data) => {
-    if (isMultiMode && data?.receiverId) {
+    if (role !== 'sender') return;
+    if (data?.receiverId) {
       const peer = activePeerConnections.get(data.receiverId);
-      if (peer) {
-        try { peer.pc.close(); } catch (e) {}
-        activePeerConnections.delete(data.receiverId);
-      }
-      updateWaitingMessage();
-    } else {
-      const wm = $('waitingMsg');
-      if (wm && role === 'sender' && !transferAborted) wm.textContent = '⏳ Destinataire déconnecté, en attente…';
+      if (peer) { try { peer.pc.close(); } catch (e) {} activePeerConnections.delete(data.receiverId); }
     }
+    updateDashboard();
+    const wm = $('waitingMsg');
+    if (wm && !transferAborted) wm.textContent = '⏳ Lien toujours actif — en attente d\'autres destinataires…';
+  });
+
+  // ✅ Notification de téléchargement terminé
+  socket.on('download-notification', (data) => {
+    downloadCount = data.totalDownloads || (downloadCount + 1);
+    updateDashboard();
+    if (currentTransfer) updateHistoryDownloads(currentTransfer.roomId, downloadCount);
+    const wm = $('waitingMsg');
+    if (wm) wm.textContent = '✅ Téléchargement #' + downloadCount + ' terminé — lien toujours actif';
   });
 
   socket.on('peer-disconnected', () => {
@@ -587,7 +642,6 @@ function initSocket() {
       showStep('step-select');
     }
   });
-
   socket.on('peer-cancelled', () => {
     error('❌ Expéditeur annulé', 'errorBox3');
     resetConnection();
@@ -619,7 +673,6 @@ async function sendEmail() {
 function bindUI() {
   const bmf = $('btnModeFile');
   if (bmf) bmf.onclick = () => { clearErrors(); const i = $('fileInput'); if (i) i.click(); };
-
   const bmf2 = $('btnModeFolder');
   if (bmf2) bmf2.onclick = () => { clearErrors(); const i = $('folderInput'); if (i) i.click(); };
 
@@ -627,10 +680,7 @@ function bindUI() {
   if (fi) fi.onchange = (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
-    if (file.size > MAX_FILE_SIZE) {
-      error('❌ Fichier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')');
-      e.target.value = ''; return;
-    }
+    if (file.size > MAX_FILE_SIZE) { error('❌ Fichier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')'); e.target.value = ''; return; }
     selectedFile = file; showPreview(file);
   };
 
@@ -639,21 +689,14 @@ function bindUI() {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
     const total = files.reduce((s, f) => s + (f.size || 0), 0);
-    if (total > MAX_FILE_SIZE) {
-      error('❌ Dossier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')');
-      e.target.value = ''; return;
-    }
+    if (total > MAX_FILE_SIZE) { error('❌ Dossier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')'); e.target.value = ''; return; }
     try {
       await need('jszip');
       const zip = new JSZip();
       files.forEach(f => zip.file(f.webkitRelativePath || f.name, f));
       const parts = [];
       await new Promise((resolve, reject) => {
-        const stream = zip.generateInternalStream({
-          type: 'uint8array',
-          compression: isMobile ? 'STORE' : 'DEFLATE',
-          compressionOptions: { level: 1 }
-        });
+        const stream = zip.generateInternalStream({ type: 'uint8array', compression: isMobile ? 'STORE' : 'DEFLATE', compressionOptions: { level: 1 } });
         stream.on('data', (chunk) => { parts.push(new Blob([chunk])); });
         stream.on('error', reject);
         stream.on('end', resolve);
@@ -669,7 +712,6 @@ function bindUI() {
   const bcs = $('btnCancelSend'); if (bcs) bcs.onclick = cancelTransfer;
   const bct = $('btnCancelTransfer'); if (bct) bct.onclick = cancelTransfer;
   const br = $('btnRestart'); if (br) br.onclick = () => { cancelTransfer(); history.replaceState({}, document.title, '/'); };
-
   const bcl = $('btnCopyLink');
   if (bcl) bcl.onclick = async () => {
     const out = $('linkOutput'); if (!out) return;
@@ -678,42 +720,31 @@ function bindUI() {
     bcl.textContent = '✅ Copié';
     setTimeout(() => { bcl.textContent = '📋 Copier'; }, 2000);
   };
+  const bse = $('btnSendEmail'); if (bse) bse.onclick = sendEmail;
 
-  const bse = $('btnSendEmail');
-  if (bse) bse.onclick = sendEmail;
+  // ✅ Historique
+  const bsh = $('btnShowHistory'); if (bsh) bsh.onclick = showHistory;
+  const bbh = $('btnBackFromHistory'); if (bbh) bbh.onclick = hideHistory;
+  const beh = $('btnExportHistory'); if (beh) beh.onclick = exportHistory;
 
-  const btnSubmitPin = $('btnSubmitPin');
-  if (btnSubmitPin) {
-    btnSubmitPin.onclick = () => {
-      const pinEntry = $('pinEntry');
-      const pin = pinEntry ? pinEntry.value.trim() : '';
-      if (!/^\d{4,8}$/.test(pin)) {
-        error('❌ Le code PIN doit contenir 4 à 8 chiffres', 'errorBox3');
-        return;
-      }
-      clearErrors();
-      const t = $('transferTitle');
-      if (t) t.textContent = 'Vérification du PIN…';
-      joinRoom(pin);
-    };
-  }
-
-  const pinEntry = $('pinEntry');
-  if (pinEntry) {
-    pinEntry.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        const btn = $('btnSubmitPin');
-        if (btn) btn.click();
-      }
-    });
-  }
+  // ✅ PIN destinataire
+  const bsp = $('btnSubmitPin');
+  if (bsp) bsp.onclick = () => {
+    const pe = $('pinEntry');
+    const pin = pe ? pe.value.trim() : '';
+    if (!/^\d{4,8}$/.test(pin)) { error('❌ Le code PIN doit contenir 4 à 8 chiffres', 'errorBox3'); return; }
+    clearErrors();
+    const t = $('transferTitle'); if (t) t.textContent = 'Vérification du PIN…';
+    joinRoom(pin);
+  };
+  const pe = $('pinEntry');
+  if (pe) pe.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); const b = $('btnSubmitPin'); if (b) b.click(); }
+  });
 }
 
 /* ---------- CYCLE DE VIE ---------- */
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && socket && !socket.connected) socket.connect();
-});
+document.addEventListener('visibilitychange', () => { if (!document.hidden && socket && !socket.connected) socket.connect(); });
 window.addEventListener('pageshow', () => { if (socket && !socket.connected) socket.connect(); });
 window.addEventListener('beforeunload', (e) => {
   if (role && !transferAborted && expectedSize && receivedSize < expectedSize) {
@@ -723,10 +754,10 @@ window.addEventListener('beforeunload', (e) => {
 setInterval(() => { if (socket?.connected) socket.emit('ping-keepalive'); }, 20000);
 
 document.addEventListener('DOMContentLoaded', () => {
+  // ✅ Nettoyage des fichiers temporaires OPFS
   if (window.isSecureContext && navigator.storage?.getDirectory) {
     navigator.storage.getDirectory().then(root => {
       root.removeEntry('transferx.tmp').catch(() => {});
-      root.removeEntry('transferx_send.tmp').catch(() => {});
     }).catch(() => {});
   }
   bindUI();

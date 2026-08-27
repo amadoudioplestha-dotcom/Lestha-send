@@ -126,7 +126,7 @@ app.post('/api/send-email', async (req, res) => {
 });
 
 // ========================================
-//  SIGNALISATION WEBRTC
+//  SIGNALISATION WEBRTC — SESSION PERSISTANTE
 // ========================================
 const rooms = new Map();
 
@@ -144,11 +144,7 @@ setInterval(() => {
     for (const [roomId, room] of rooms.entries()) {
         if ((room.expiresAt && now > room.expiresAt) || now - room.createdAt > 7 * 86400000) {
             console.log(`🧹 Room expirée nettoyée: ${roomId}`);
-            if (room.receivers) {
-                room.receivers.forEach(id => io.to(id).emit('peer-disconnected'));
-            } else if (room.receiverSocketId) {
-                io.to(room.receiverSocketId).emit('peer-disconnected');
-            }
+            room.receivers.forEach(id => io.to(id).emit('peer-disconnected'));
             rooms.delete(roomId);
         }
     }
@@ -157,21 +153,16 @@ setInterval(() => {
 io.on('connection', (socket) => {
     console.log('✅ Connexion socket:', socket.id);
 
-    // ✅ create-room avec TTL, PIN et mode multi
+    // ✅ create-room : TTL + PIN + compteur
     socket.on('create-room', (payload, callback) => {
         if (typeof payload === 'function') { callback = payload; payload = {}; }
         payload = payload || {};
         const ttl = Math.min(Math.max(parseInt(payload.ttl, 10) || 3600000, 60000), 7 * 86400000);
         const pin = payload.pin ? String(payload.pin) : null;
-        const multi = !!payload.multi;
 
         if (socket.roomId && rooms.has(socket.roomId)) {
             const oldRoom = rooms.get(socket.roomId);
-            if (oldRoom.receivers) {
-                oldRoom.receivers.forEach(id => io.to(id).emit('peer-disconnected'));
-            } else if (oldRoom.receiverSocketId) {
-                io.to(oldRoom.receiverSocketId).emit('peer-disconnected');
-            }
+            oldRoom.receivers.forEach(id => io.to(id).emit('peer-disconnected'));
             rooms.delete(socket.roomId);
         }
 
@@ -180,38 +171,33 @@ io.on('connection', (socket) => {
 
         rooms.set(roomId, {
             senderSocketId: socket.id,
-            receivers: multi ? new Set() : null,
-            receiverSocketId: multi ? null : null,
-            offers: multi ? new Map() : null,
-            offer: multi ? null : null,
+            receivers: new Set(),
+            offers: new Map(),
             answers: new Map(),
             iceCandidates: new Map(),
             createdAt: Date.now(),
             expiresAt: Date.now() + ttl,
             pinHash: pinHash,
-            multi: multi
+            downloadCount: 0
         });
         socket.join(roomId);
         socket.roomId = roomId;
         socket.role = 'sender';
-        console.log(`📍 Room ${multi ? 'MULTI' : 'UNIQUE'} créée: ${roomId} (TTL: ${Math.round(ttl / 3600000)}h, PIN: ${pinHash ? '✅' : '❌'})`);
-        if (typeof callback === 'function') callback({ roomId, success: true, multi });
+        console.log(`📍 Room créée: ${roomId} (TTL: ${Math.round(ttl / 3600000)}h, PIN: ${pinHash ? '✅' : '❌'})`);
+        if (typeof callback === 'function') callback({ roomId, success: true, expiresAt: Date.now() + ttl });
     });
 
-    // ✅ Offre SDP (avec support multi)
+    // ✅ Offre SDP vers un destinataire précis
     socket.on('send-offer', ({ roomId, offer, receiverId }) => {
         const room = rooms.get(roomId);
         if (!room || room.senderSocketId !== socket.id) return;
-        if (room.multi && receiverId) {
+        if (receiverId) {
             room.offers.set(receiverId, offer);
             io.to(receiverId).emit('offer-received', { offer });
-        } else {
-            room.offer = offer;
-            if (room.receiverSocketId) io.to(room.receiverSocketId).emit('offer-received', { offer });
         }
     });
 
-    // ✅ join-room avec PIN + mode multi
+    // ✅ join-room : PIN + multi-destinataires (session persistante)
     socket.on('join-room', ({ roomId, pin }, callback) => {
         const room = rooms.get(roomId);
         if (!room) return callback && callback({ success: false, error: 'Lien invalide ou expiré.' });
@@ -221,55 +207,32 @@ io.on('connection', (socket) => {
         }
         if (room.pinHash) {
             if (!pin) return callback && callback({ success: false, pinRequired: true });
-            const providedHash = hashPin(pin);
-            if (providedHash !== room.pinHash) return callback && callback({ success: false, pinRequired: true, error: 'Code PIN incorrect.' });
+            if (hashPin(pin) !== room.pinHash) return callback && callback({ success: false, pinRequired: true, error: 'Code PIN incorrect.' });
         }
 
-        if (room.multi) {
-            // Mode MULTI : on accepte tout le monde
-            room.receivers.add(socket.id);
-            socket.join(roomId);
-            socket.roomId = roomId;
-            socket.role = 'receiver';
-            console.log(`👤 Destinataire #${room.receivers.size} rejoint: ${roomId}`);
-            if (typeof callback === 'function') callback({ success: true, multi: true });
-            io.to(room.senderSocketId).emit('receiver-joined', { receiverId: socket.id });
-        } else {
-            // Mode UNIQUE
-            if (room.receiverSocketId) return callback && callback({ success: false, error: 'Room déjà occupée.' });
-            room.receiverSocketId = socket.id;
-            socket.join(roomId);
-            socket.roomId = roomId;
-            socket.role = 'receiver';
-            console.log(`👤 Destinataire rejoint: ${roomId}`);
-            if (typeof callback === 'function') callback({ success: true });
-            io.to(room.senderSocketId).emit('receiver-joined');
-            if (room.offer) socket.emit('offer-received', { offer: room.offer });
-        }
+        room.receivers.add(socket.id);
+        socket.join(roomId);
+        socket.roomId = roomId;
+        socket.role = 'receiver';
+        console.log(`👤 Destinataire #${room.receivers.size} rejoint: ${roomId}`);
+        if (typeof callback === 'function') callback({ success: true });
+        io.to(room.senderSocketId).emit('receiver-joined', { receiverId: socket.id, totalReceivers: room.receivers.size });
     });
 
-    // Réponse SDP
     socket.on('send-answer', ({ roomId, answer }) => {
         const room = rooms.get(roomId);
         if (!room) return;
-        if (room.multi) {
-            room.answers.set(socket.id, answer);
-            io.to(room.senderSocketId).emit('answer-received', { answer, receiverId: socket.id });
-        } else {
-            if (room.receiverSocketId !== socket.id) return;
-            room.answer = answer;
-            io.to(room.senderSocketId).emit('answer-received', { answer });
-        }
+        room.answers.set(socket.id, answer);
+        io.to(room.senderSocketId).emit('answer-received', { answer, receiverId: socket.id });
     });
 
-    // ✅ Candidats ICE (avec support multi)
     socket.on('ice-candidate', ({ roomId, candidate, targetId }) => {
         const room = rooms.get(roomId);
         if (!room) return;
-        if (room.multi && targetId) {
+        if (targetId) {
             io.to(targetId).emit('ice-candidate', { candidate, from: socket.id });
         } else {
-            const target = socket.id === room.senderSocketId ? room.receiverSocketId : room.senderSocketId;
+            const target = socket.id === room.senderSocketId ? null : room.senderSocketId;
             if (target) io.to(target).emit('ice-candidate', { candidate, from: socket.id });
             else {
                 if (!room.iceCandidates.has(socket.id)) room.iceCandidates.set(socket.id, []);
@@ -285,37 +248,37 @@ io.on('connection', (socket) => {
         const candidates = [];
         room.iceCandidates.forEach((list, fromId) => {
             const fromRole = fromId === room.senderSocketId ? 'sender' : 'receiver';
-            if (fromRole !== myRole) {
-                list.forEach(c => candidates.push(c.candidate));
-            }
+            if (fromRole !== myRole) list.forEach(c => candidates.push(c.candidate));
         });
         if (typeof callback === 'function') callback({ candidates });
+    });
+
+    // ✅ Nouveau : téléchargement terminé → compteur + notification
+    socket.on('download-complete', ({ roomId }) => {
+        const room = rooms.get(roomId);
+        if (!room) return;
+        room.downloadCount = (room.downloadCount || 0) + 1;
+        io.to(room.senderSocketId).emit('download-notification', {
+            receiverId: socket.id,
+            totalDownloads: room.downloadCount,
+            timestamp: Date.now()
+        });
+        console.log(`✅ Téléchargement terminé: ${roomId} (total: ${room.downloadCount})`);
     });
 
     socket.on('cancel-transfer', ({ roomId }) => {
         const room = rooms.get(roomId);
         if (!room || room.senderSocketId !== socket.id) return;
-        if (room.multi) {
-            room.receivers.forEach(id => io.to(id).emit('peer-cancelled'));
-        } else if (room.receiverSocketId) {
-            io.to(room.receiverSocketId).emit('peer-cancelled');
-        }
+        room.receivers.forEach(id => io.to(id).emit('peer-cancelled'));
         rooms.delete(roomId);
     });
 
     socket.on('leave-room', ({ roomId }) => {
         const room = rooms.get(roomId);
         if (!room) return;
-        if (room.multi) {
-            if (room.receivers.has(socket.id)) {
-                room.receivers.delete(socket.id);
-                io.to(room.senderSocketId).emit('receiver-left', { receiverId: socket.id });
-            }
-        } else {
-            if (room.receiverSocketId === socket.id) {
-                room.receiverSocketId = null;
-                io.to(room.senderSocketId).emit('receiver-left');
-            }
+        if (room.receivers.has(socket.id)) {
+            room.receivers.delete(socket.id);
+            io.to(room.senderSocketId).emit('receiver-left', { receiverId: socket.id, totalReceivers: room.receivers.size });
         }
     });
 
@@ -324,23 +287,14 @@ io.on('connection', (socket) => {
         if (!roomId) return;
         const room = rooms.get(roomId);
         if (!room) return;
-
-        if (room.multi) {
-            if (socket.id === room.senderSocketId) {
-                room.receivers.forEach(id => io.to(id).emit('peer-disconnected'));
-                rooms.delete(roomId);
-            } else {
-                if (room.receivers.has(socket.id)) {
-                    room.receivers.delete(socket.id);
-                    io.to(room.senderSocketId).emit('receiver-left', { receiverId: socket.id });
-                }
-            }
+        if (socket.id === room.senderSocketId) {
+            room.receivers.forEach(id => io.to(id).emit('peer-disconnected'));
+            rooms.delete(roomId);
         } else {
-            const isSender = socket.id === room.senderSocketId;
-            const otherId = isSender ? room.receiverSocketId : room.senderSocketId;
-            if (otherId) io.to(otherId).emit('peer-disconnected');
-            if (isSender) rooms.delete(roomId);
-            else room.receiverSocketId = null;
+            if (room.receivers.has(socket.id)) {
+                room.receivers.delete(socket.id);
+                io.to(room.senderSocketId).emit('receiver-left', { receiverId: socket.id, totalReceivers: room.receivers.size });
+            }
         }
     });
 
