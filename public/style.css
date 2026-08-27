@@ -299,15 +299,26 @@ footer { text-align: center; border-top: 1px solid var(--line); padding-top: 20p
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
 
-/* Cartes destinataires enrichies */
+/* ===== Cartes destinataires (fusionnées, sans doublons) ===== */
 .receiver-item {
+  display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 6px;
+  background: var(--card);
   border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
   animation: fadeUp 0.3s both;
 }
-.receiver-item-top { display: flex; justify-content: space-between; align-items: center; }
+.receiver-item-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.receiver-id { color: var(--muted); font-family: monospace; font-size: 11px; }
+.receiver-status { font-weight: 700; color: var(--teal); }
 .receiver-progress-bar {
   height: 8px;
   background: #0c1424;
@@ -317,18 +328,10 @@ footer { text-align: center; border-top: 1px solid var(--line); padding-top: 20p
 .receiver-progress-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--cyan), var(--teal));
-  transition: width 0.25s ease;
   border-radius: 20px;
+  transition: width 0.25s ease;
 }
 .receiver-speed { font-size: 11px; color: var(--muted); text-align: right; }
-
-.receiver-item{background:var(--card);border-radius:8px;padding:10px 12px;font-size:13px}
-.receiver-item-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
-.receiver-id{color:var(--muted);font-family:monospace;font-size:11px}
-.receiver-status{font-weight:700;color:var(--teal)}
-.receiver-progress-bar{height:6px;background:#0c1424;border-radius:6px;overflow:hidden}
-.receiver-progress-fill{height:100%;background:linear-gradient(90deg,var(--cyan),var(--teal));transition:width .2s}
-.receiver-speed{color:var(--muted);font-size:11px;margin-top:4px}
 
 /* RESPONSIVE COMPLET */
 @media (max-width: 480px) {
