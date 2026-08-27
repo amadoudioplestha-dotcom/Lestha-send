@@ -1,9 +1,16 @@
 /* StreamSaver + Share Target Service Worker */
+/*
+ * Le service worker reste minimal pour préserver le bfcache :
+ * aucune interception inutile des navigations ou des requêtes ordinaires.
+ */
 'use strict';
 const map = new Map;
 
-self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
+self.addEventListener('install', () => {});
+self.addEventListener('activate', event => {
+  // Prendre le contrôle des pages ouvertes sans attendre une nouvelle navigation.
+  event.waitUntil(self.clients.claim());
+});
 
 self.addEventListener('message', event => {
   if (event.data.action === 'intercept') {
@@ -13,6 +20,8 @@ self.addEventListener('message', event => {
 
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
+
+  if (url.origin !== self.location.origin || url.pathname.includes('/socket.io/')) return;
 
   // 1️⃣ LOGIQUE EXISTANTE (StreamSaver)
   if (url.pathname.includes('/intercept/')) {
@@ -39,18 +48,23 @@ self.addEventListener('fetch', event => {
       try {
         const formData = await event.request.formData();
         const file = formData.get('shared_file');
-        
-        // Retransmettre le fichier à l'interface client
-        const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-        for (const client of clients) {
-          client.postMessage({ type: 'SHARED_FILE', file: file });
-        }
-        
+        if (!(file instanceof File)) throw new Error('Fichier partagé introuvable');
+
+        const headers = new Headers({
+          'Content-Type': file.type || 'application/octet-stream',
+          'X-Filename': file.name || 'shared-file'
+        });
+        const cache = await caches.open('shared-inbox');
+        await cache.put(new Request('/__shared__'), new Response(file, { headers }));
+
         // Rediriger vers la page d'accueil pour que l'app s'affiche proprement
-        return Response.redirect('/?shared=true', 303);
+        return Response.redirect('/?shared=1', 303);
       } catch (e) {
         return Response.redirect('/', 303);
       }
     })());
+    return;
   }
+
+  return;
 });
