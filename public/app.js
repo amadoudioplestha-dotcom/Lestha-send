@@ -1,12 +1,14 @@
 /* TransferX — client final (session persistante + historique + dashboard + OPFS) */
 (() => {
 'use strict';
+
 const $ = (id) => document.getElementById(id);
 const safari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
 const CHUNK_SIZE = 64 * 1024;
 const MAX_FILE_SIZE = (isMobile ? 2 : 5) * 1024 * 1024 * 1024;
 const MEM_SINK_LIMIT = 400 * 1024 * 1024;
+const MEM_ZIP_LIMIT = 200 * 1024 * 1024;
 
 let socket = null;
 let role = null, roomId = null;
@@ -16,8 +18,8 @@ let iceServers = null;
 let sendGeneration = 0;
 
 // ✅ Multi-connexions (session persistante)
-let activePeerConnections = new Map(); // receiverId -> {pc, dc, progress, speedText}
-let currentTransfer = null; // {roomId, expiresAt, fileName, fileSize, pin}
+let activePeerConnections = new Map(); // receiverId -> {pc, dc, pending, progress, speedText}
+let currentTransfer = null;
 let downloadCount = 0;
 let timeLeftInterval = null;
 let historyInterval = null;
@@ -53,7 +55,6 @@ function showStep(id) {
   if (el) el.classList.add('active');
   window.scrollTo(0, 0);
 }
-
 function error(message, box) {
   const el = $(box || 'errorBox');
   if (!el) return;
@@ -62,25 +63,20 @@ function error(message, box) {
   console.error(message);
   setTimeout(() => { if (el.textContent === message) el.classList.add('hidden'); }, 8000);
 }
-
 function clearErrors() {
   document.querySelectorAll('.error-box').forEach(el => { el.textContent = ''; el.classList.add('hidden'); });
 }
-
 function bytes(n) {
   if (!n || isNaN(n)) return '0 o';
   const units = ['o', 'Ko', 'Mo', 'Go', 'To'];
   const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), units.length - 1);
   return (n / Math.pow(1024, i)).toFixed(i < 2 ? 0 : 1) + ' ' + units[i];
 }
-
 function speed(n) { return n > 0 ? bytes(n) + '/s' : ''; }
-
 function setSocketReady(ready) {
   const btn = $('btnStartSend');
   if (btn) { btn.disabled = !ready; btn.title = ready ? '' : 'Connexion au serveur en cours…'; }
 }
-
 function updateProgress(current, total, started) {
   const start = started || transferStart;
   const pct = total ? Math.min(100, Math.round((current / total) * 100)) : 0;
@@ -88,7 +84,6 @@ function updateProgress(current, total, started) {
   const txt = $('progressText'); if (txt) txt.textContent = pct + ' %';
   const sp = $('speedText'); if (sp && start) sp.textContent = speed(current / Math.max((Date.now() - start) / 1000, 0.1));
 }
-
 function showPreview(file) {
   const info = $('fileInfo'), box = $('filePreview');
   if (!info || !box) return;
@@ -97,7 +92,6 @@ function showPreview(file) {
   const s = info.querySelector('.file-preview-size'); if (s) s.textContent = bytes(file.size);
   box.classList.remove('hidden');
 }
-
 function formatTimeLeft(ms) {
   if (ms <= 0) return 'Expiré';
   const d = Math.floor(ms / 86400000);
@@ -107,7 +101,6 @@ function formatTimeLeft(ms) {
   if (h > 0) return h + 'h ' + m + 'min';
   return m + 'min';
 }
-
 async function renderQR(text) {
   const box = $('qrBox');
   if (!box) return;
@@ -129,12 +122,10 @@ async function getIceServers() {
   }
   return iceServers;
 }
-
 async function newPeerConnection() { return new RTCPeerConnection({ iceServers: await getIceServers() }); }
-
 function wirePeer(peer, receiverId) {
   peer.onicecandidate = (event) => {
-    if (event.candidate && socket?.connected && roomId) {
+    if (event.candidate && socket && socket.connected && roomId) {
       socket.emit('ice-candidate', { roomId, candidate: event.candidate, targetId: receiverId || null });
     }
   };
@@ -144,20 +135,22 @@ function wirePeer(peer, receiverId) {
     }
   };
 }
-
-async function flushIce(peer) {
-  if (!peer || !remoteDescriptionSet) return;
-  const queued = pendingIce.splice(0);
-  for (const c of queued) { try { await peer.addIceCandidate(c); } catch (e) {} }
-}
-
 function requestQueuedIce(receiverId) {
-  if (!socket?.connected || !roomId) return;
+  if (!socket || !socket.connected || !roomId) return;
   socket.emit('get-ice-candidates', { roomId }, (reply) => {
-    const targetPc = receiverId ? (activePeerConnections.get(receiverId)?.pc) : pc;
-    for (const c of ((reply && reply.candidates) || [])) {
-      if (!remoteDescriptionSet) pendingIce.push(c);
-      else if (targetPc) targetPc.addIceCandidate(c).catch(() => {});
+    const candidates = (reply && reply.candidates) || [];
+    if (role === 'receiver') {
+      for (const c of candidates) {
+        if (!remoteDescriptionSet) pendingIce.push(c);
+        else if (pc) pc.addIceCandidate(c).catch(() => {});
+      }
+    } else {
+      const peer = activePeerConnections.get(receiverId);
+      if (!peer) return;
+      for (const c of candidates) {
+        if (peer.pc.remoteDescription) peer.pc.addIceCandidate(c).catch(() => {});
+        else peer.pending.push(c);
+      }
     }
   });
 }
@@ -167,7 +160,7 @@ function setupSenderChannel(dc, receiverId) {
   dc.binaryType = 'arraybuffer';
   dc.onopen = () => {
     const t = $('transferTitle');
-    if (t && !isMultiView()) t.textContent = 'Envoi en cours…';
+    if (t && role === 'sender' && activePeerConnections.size === 1) t.textContent = 'Envoi en cours…';
     sendFile(dc, receiverId);
   };
   dc.onmessage = (event) => {
@@ -185,63 +178,43 @@ function setupSenderChannel(dc, receiverId) {
   };
 }
 
-function isMultiView() { return role === 'sender'; }
-
 async function sendFile(dc, receiverId) {
   const generation = ++sendGeneration;
-  if (!selectedFile || dc?.readyState !== 'open') return error('❌ Canal de transfert non prêt', 'errorBox2');
+  if (!selectedFile || dc.readyState !== 'open') return error("❌ Canal de transfert non prêt", 'errorBox2');
   const start = Date.now();
   dc.send(JSON.stringify({
-    msgType: 'metadata', 
-    name: selectedFile.name, 
+    msgType: 'metadata',
+    name: selectedFile.name,
     size: selectedFile.size,
     fileType: selectedFile.type || 'application/octet-stream'
   }));
-  
   let offset = 0;
   const read = (blob) => safari
-    ? new Promise((resolve, reject) => { 
-        const r = new FileReader(); 
-        r.onload = () => resolve(r.result); 
-        r.onerror = reject; 
-        r.readAsArrayBuffer(blob); 
+    ? new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = reject;
+        r.readAsArrayBuffer(blob);
       })
     : blob.arrayBuffer();
-  
   while (offset < selectedFile.size && !transferAborted && generation === sendGeneration) {
     if (dc.readyState !== 'open') return;
-    if (dc.bufferedAmount > 1024 * 1024) { 
-      await new Promise((r) => setTimeout(r, 40)); 
-      continue; 
-    }
+    if (dc.bufferedAmount > 1024 * 1024) { await new Promise((r) => setTimeout(r, 40)); continue; }
     const end = Math.min(offset + CHUNK_SIZE, selectedFile.size);
-    try { 
-      dc.send(await read(selectedFile.slice(offset, end))); 
-    }
-    catch (e) { 
-      return error('❌ Erreur d\'envoi : ' + e.message, 'errorBox2'); 
-    }
+    try { dc.send(await read(selectedFile.slice(offset, end))); }
+    catch (e) { return error("❌ Erreur d'envoi : " + e.message, 'errorBox2'); }
     offset = end;
-
-    // ⬅️ Mémoriser la progression pour ce destinataire précis
     const peerInfo = activePeerConnections.get(receiverId);
     if (peerInfo) {
-      const pct = selectedFile.size ? Math.round((offset / selectedFile.size) * 100) : 0;
-      const spd = offset / Math.max((Date.now() - start) / 1000, 0.1);
-      peerInfo.progress = pct;
-      peerInfo.speedText = speed(spd);
+      peerInfo.progress = selectedFile.size ? Math.round((offset / selectedFile.size) * 100) : 0;
+      peerInfo.speedText = speed(offset / Math.max((Date.now() - start) / 1000, 0.1));
       renderReceiversList();
     }
-    if (!isMultiView()) updateProgress(offset, selectedFile.size, start);
+    updateProgress(offset, selectedFile.size, start);
   }
-  
   if (offset >= selectedFile.size) {
     const peerInfo = activePeerConnections.get(receiverId);
-    if (peerInfo) { 
-      peerInfo.progress = 100; 
-      peerInfo.speedText = ''; 
-      renderReceiversList(); 
-    }
+    if (peerInfo) { peerInfo.progress = 100; peerInfo.speedText = ''; renderReceiversList(); }
     console.log('✅ Envoi terminé (' + receiverId + ')');
   }
 }
@@ -255,10 +228,10 @@ async function createPeerForReceiver(receiverId) {
     const offer = await peer.createOffer();
     await peer.setLocalDescription(offer);
     socket.emit('send-offer', { roomId, offer: peer.localDescription, receiverId });
-    activePeerConnections.set(receiverId, { pc: peer, dc, progress: 0, speedText: '' });
+    activePeerConnections.set(receiverId, { pc: peer, dc, pending: [], progress: 0, speedText: '' });
     requestQueuedIce(receiverId);
     updateDashboard();
-  } catch (e) { console.error('❌ Erreur création PC:', e); }
+  } catch (e) { console.error('❌ Erreur création PC :', e); }
 }
 
 /* ---------- DASHBOARD ---------- */
@@ -267,7 +240,6 @@ function updateDashboard() {
   const sd = $('statDownloads'); if (sd) sd.textContent = downloadCount;
   renderReceiversList();
 }
-
 function renderReceiversList() {
   const list = $('receiversList');
   if (!list) return;
@@ -277,17 +249,14 @@ function renderReceiversList() {
     const pct = peer.progress || 0;
     const done = pct >= 100;
     html += '<div class="receiver-item">' +
-      '<div class="receiver-item-top">' +
-        '<span class="receiver-id">👤 ' + id.slice(0, 8) + '…</span>' +
-        '<span class="receiver-status">' + (done ? '✅ Terminé' : '⬇️ ' + pct + ' %') + '</span>' +
-      '</div>' +
+      '<div class="receiver-item-top"><span class="receiver-id">👤 ' + id.slice(0, 8) + '…</span>' +
+      '<span class="receiver-status">' + (done ? '✅ Terminé' : '⬇️ ' + pct + ' %') + '</span></div>' +
       '<div class="receiver-progress-bar"><div class="receiver-progress-fill" style="width:' + pct + '%"></div></div>' +
       (peer.speedText && !done ? '<div class="receiver-speed">' + peer.speedText + '</div>' : '') +
-    '</div>';
+      '</div>';
   });
   list.innerHTML = html;
 }
-
 function startTimeLeftTicker() {
   if (timeLeftInterval) clearInterval(timeLeftInterval);
   timeLeftInterval = setInterval(() => {
@@ -307,34 +276,36 @@ function startTimeLeftTicker() {
 function getHistory() {
   try { return JSON.parse(localStorage.getItem('transferx_history') || '[]'); } catch (e) { return []; }
 }
-
 function setHistory(h) { localStorage.setItem('transferx_history', JSON.stringify(h)); }
-
 function saveToHistory(entry) {
   const h = getHistory();
   h.unshift(entry);
   if (h.length > 50) h.length = 50;
   setHistory(h);
 }
-
 function updateHistoryDownloads(rid, count) {
   const h = getHistory();
   const item = h.find(x => x.roomId === rid);
   if (item) { item.downloadCount = count; setHistory(h); }
 }
-
 function showHistory() {
   showStep('step-history');
   renderHistory();
   if (historyInterval) clearInterval(historyInterval);
   historyInterval = setInterval(renderHistory, 5000);
 }
-
 function hideHistory() {
   if (historyInterval) { clearInterval(historyInterval); historyInterval = null; }
   showStep('step-select');
 }
-
+function escapeHtmlLocal(t) {
+  return String(t)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 function renderHistory() {
   const h = getHistory();
   const now = Date.now();
@@ -374,17 +345,11 @@ function renderHistory() {
       '</div></div>';
   }).join('');
 }
-
-function escapeHtmlLocal(t) {
-  return String(t).replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>').replace(/"/g, '"').replace(/'/g, ''');
-}
-
 window.__copyHistoryLink = (rid) => {
   const link = location.origin + '?room=' + encodeURIComponent(rid);
   if (navigator.clipboard) navigator.clipboard.writeText(link).catch(() => {});
   alert('✅ Lien copié !');
 };
-
 window.__showHistoryQR = (rid) => {
   const link = location.origin + '?room=' + encodeURIComponent(rid);
   hideHistory();
@@ -392,13 +357,11 @@ window.__showHistoryQR = (rid) => {
   const out = $('linkOutput'); if (out) out.value = link;
   renderQR(link);
 };
-
 window.__deleteHistory = (rid) => {
-  if (!confirm('Supprimer ce lien de l\'historique ?')) return;
+  if (!confirm("Supprimer ce lien de l'historique ?")) return;
   setHistory(getHistory().filter(x => x.roomId !== rid));
   renderHistory();
 };
-
 function exportHistory() {
   const blob = new Blob([JSON.stringify(getHistory(), null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -446,7 +409,12 @@ function setupReceiverChannel() {
     channel.binaryType = 'arraybuffer';
     let gotMetadata = false;
     let started = 0;
-    channel.onopen = () => { const t = $('transferTitle'); if (t) t.textContent = 'Réception en cours…'; started = Date.now(); transferStart = started; };
+    channel.onopen = () => {
+      const t = $('transferTitle');
+      if (t) t.textContent = 'Réception en cours…';
+      started = Date.now();
+      transferStart = started;
+    };
     channel.onmessage = async (msgEvent) => {
       if (transferAborted) return;
       if (!gotMetadata) {
@@ -462,9 +430,14 @@ function setupReceiverChannel() {
               try { channel.send(JSON.stringify({ msgType: 'error', message: 'Fichier trop volumineux (max ' + bytes(MAX_FILE_SIZE) + ')' })); } catch (e) {}
               return error('❌ Fichier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')', 'errorBox3');
             }
-            if (navigator.storage?.estimate) {
-              const { quota } = await navigator.storage.estimate();
-              if (quota && expectedSize > quota * 0.9) return error('❌ Espace de stockage insuffisant sur cet appareil', 'errorBox3');
+            if (navigator.storage && navigator.storage.estimate) {
+              try {
+                const est = await navigator.storage.estimate();
+                const available = Math.max(0, (est.quota || 0) - (est.usage || 0));
+                if (est.quota && expectedSize > available * 0.9) {
+                  return error('❌ Espace de stockage insuffisant sur cet appareil', 'errorBox3');
+                }
+              } catch (e) { console.warn('Estimation du stockage indisponible :', e); }
             }
             try { sink = await createSink(); }
             catch (e) { sink = null; return error('❌ ' + e.message, 'errorBox3'); }
@@ -476,7 +449,7 @@ function setupReceiverChannel() {
       const part = new Uint8Array(msgEvent.data);
       if (sink) {
         try { await sink.write(part); }
-        catch (e) { sink = null; return error('❌ Erreur d\'écriture : ' + e.message, 'errorBox3'); }
+        catch (e) { sink = null; return error("❌ Erreur d'écriture : " + e.message, 'errorBox3'); }
       }
       receivedSize += part.byteLength;
       updateProgress(receivedSize, expectedSize, started);
@@ -492,12 +465,17 @@ async function finishReceive(channel) {
       const file = await sink.close();
       const url = URL.createObjectURL(file);
       const link = $('downloadLink');
-      if (link) { link.href = url; link.download = expectedName; link.classList.remove('hidden'); link.textContent = '⬇️ Télécharger ' + expectedName + ' (' + bytes(file.size) + ')'; }
+      if (link) {
+        link.href = url;
+        link.download = expectedName;
+        link.classList.remove('hidden');
+        link.textContent = '⬇️ Télécharger ' + expectedName + ' (' + bytes(file.size) + ')';
+      }
     } catch (e) { error('❌ Finalisation : ' + e.message, 'errorBox3'); }
     sink = null;
   }
   try { channel.send(JSON.stringify({ msgType: 'complete' })); } catch (e) {}
-  if (socket?.connected && roomId) socket.emit('download-complete', { roomId });
+  if (socket && socket.connected && roomId) socket.emit('download-complete', { roomId });
   showStep('step-done');
   const sub = $('doneSubtitle'); if (sub) sub.textContent = expectedName + ' — transfert terminé';
 }
@@ -505,13 +483,12 @@ async function finishReceive(channel) {
 /* ---------- FLUX EXPÉDITEUR ---------- */
 async function startSender() {
   if (!selectedFile) return error('❌ Sélectionnez un fichier');
-  if (!socket?.connected) return error('❌ Connexion au serveur en cours, réessayez dans un instant');
+  if (!socket || !socket.connected) return error('❌ Connexion au serveur en cours, réessayez dans un instant');
   clearErrors();
   const ttlSel = $('expirySelect');
   const ttl = ttlSel ? parseInt(ttlSel.value, 10) || 86400000 : 86400000;
   const pinRaw = $('pinInput') ? $('pinInput').value.trim() : '';
   if (pinRaw && !/^\d{4,8}$/.test(pinRaw)) return error('❌ Le code PIN doit contenir 4 à 8 chiffres');
-
   role = 'sender';
   transferAborted = false;
   window.addEventListener('beforeunload', handleBeforeUnload);
@@ -519,15 +496,14 @@ async function startSender() {
   downloadCount = 0;
   showStep('step-waiting');
   const wm = $('waitingMsg'); if (wm) wm.textContent = 'Connexion…';
-
   socket.emit('create-room', { ttl, pin: pinRaw || null }, async (reply) => {
-    if (!reply?.success || !reply.roomId) {
+    if (!reply || !reply.success || !reply.roomId) {
       showStep('step-select');
       return error('❌ ' + ((reply && reply.error) || 'Impossible de créer la room'), 'errorBox');
     }
     roomId = reply.roomId;
     currentTransfer = {
-      roomId,
+      roomId: roomId,
       expiresAt: reply.expiresAt || (Date.now() + ttl),
       fileName: selectedFile.name,
       fileSize: selectedFile.size,
@@ -539,13 +515,12 @@ async function startSender() {
     const link = location.origin + '?room=' + encodeURIComponent(roomId);
     const out = $('linkOutput'); if (out) out.value = link;
     await renderQR(link);
-
     const badge = $('pinBadge');
     if (badge) {
       if (pinRaw) { badge.textContent = '🔢 PIN à communiquer séparément : ' + pinRaw; badge.classList.remove('hidden'); }
       else badge.classList.add('hidden');
     }
-    const wm2 = $('waitingMsg'); if (wm2) wm2.textContent = '⏳ Partagez le lien — il reste actif jusqu\'à expiration';
+    const wm2 = $('waitingMsg'); if (wm2) wm2.textContent = "⏳ Partagez le lien — il reste actif jusqu'à expiration";
     updateDashboard();
     startTimeLeftTicker();
   });
@@ -553,7 +528,7 @@ async function startSender() {
 
 /* ---------- FLUX DESTINATAIRE ---------- */
 function joinRoom(pin) {
-  if (!socket?.connected || !roomId) return;
+  if (!socket || !socket.connected || !roomId) return;
   socket.emit('join-room', { roomId, pin: pin || null }, (reply) => {
     if (reply && reply.pinRequired) {
       const t = $('transferTitle'); if (t) t.textContent = '🔒 Code PIN requis';
@@ -564,16 +539,15 @@ function joinRoom(pin) {
       }
       return;
     }
-    if (!reply?.success) {
+    if (!reply || !reply.success) {
       error('❌ ' + ((reply && reply.error) || 'Lien invalide ou expiré'), 'errorBox3');
       showStep('step-select');
       return;
     }
     const pinBox = $('pinBox'); if (pinBox) pinBox.classList.add('hidden');
-    requestQueuedIce();
+    requestQueuedIce(null);
   });
 }
-
 async function startReceiver() {
   role = 'receiver';
   window.addEventListener('beforeunload', handleBeforeUnload);
@@ -581,7 +555,7 @@ async function startReceiver() {
   const t = $('transferTitle'); if (t) t.textContent = 'Connexion au pair…';
   try {
     pc = await newPeerConnection();
-    wirePeer(pc);
+    wirePeer(pc, null);
     setupReceiverChannel();
     joinRoom(null);
   } catch (e) { error('❌ Erreur connexion : ' + e.message, 'errorBox3'); }
@@ -593,13 +567,12 @@ function resetConnection() {
   pendingIce = [];
   remoteDescriptionSet = false;
   if (sink) { sink.abort(); sink = null; }
-  activePeerConnections.forEach(({ pc: peer }) => { try { peer.close(); } catch (e) {} });
+  activePeerConnections.forEach((peer) => { try { peer.pc.close(); } catch (e) {} });
   activePeerConnections.clear();
   try { if (pc) pc.close(); } catch (e) {}
   pc = null;
   if (timeLeftInterval) { clearInterval(timeLeftInterval); timeLeftInterval = null; }
 }
-
 function resetUI() {
   selectedFile = null;
   currentTransfer = null;
@@ -618,16 +591,21 @@ function resetUI() {
   const pe = $('pinEntry'); if (pe) pe.value = '';
   const pbox = $('pinBox'); if (pbox) pbox.classList.add('hidden');
 }
-
 function cancelTransfer() {
   window.removeEventListener('beforeunload', handleBeforeUnload);
   transferAborted = true;
-  if (roomId && socket?.connected) socket.emit('cancel-transfer', { roomId });
+  if (roomId && socket && socket.connected) socket.emit('cancel-transfer', { roomId });
   resetConnection();
   roomId = null;
   role = null;
   resetUI();
   showStep('step-select');
+}
+function handleBeforeUnload(e) {
+  if (role && !transferAborted && expectedSize && receivedSize < expectedSize) {
+    e.preventDefault();
+    e.returnValue = 'Transfert en cours. Quitter ?';
+  }
 }
 
 /* ---------- SOCKET ---------- */
@@ -646,27 +624,29 @@ function initSocket() {
   });
   socket.on('connect_error', () => setSocketReady(false));
 
-  socket.on('offer-received', async ({ offer }) => {
+  socket.on('offer-received', async (data) => {
     if (role !== 'receiver' || !pc) return;
     try {
-      await pc.setRemoteDescription(offer);
+      await pc.setRemoteDescription(data.offer);
       remoteDescriptionSet = true;
-      await flushIce(pc);
+      const queued = pendingIce.splice(0);
+      for (const c of queued) { try { await pc.addIceCandidate(c); } catch (e) {} }
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       socket.emit('send-answer', { roomId, answer: pc.localDescription });
-      requestQueuedIce();
+      requestQueuedIce(null);
     } catch (e) { error('❌ Offre invalide : ' + e.message, 'errorBox3'); }
   });
 
-  socket.on('answer-received', async ({ answer, receiverId }) => {
-    const targetPc = receiverId ? (activePeerConnections.get(receiverId)?.pc) : pc;
-    if (!targetPc) return;
+  socket.on('answer-received', async (data) => {
+    if (role !== 'sender') return;
+    const peer = activePeerConnections.get(data.receiverId);
+    if (!peer) return;
     try {
-      await targetPc.setRemoteDescription(answer);
-      if (!receiverId) remoteDescriptionSet = true;
-      await flushIce(targetPc);
-      requestQueuedIce(receiverId);
+      await peer.pc.setRemoteDescription(data.answer);
+      const queued = peer.pending.splice(0);
+      for (const c of queued) peer.pc.addIceCandidate(c).catch(() => {});
+      requestQueuedIce(data.receiverId);
     } catch (e) { error('❌ Réponse invalide : ' + e.message, 'errorBox2'); }
   });
 
@@ -680,25 +660,27 @@ function initSocket() {
       else pc.addIceCandidate(candidate).catch(() => {});
     } else if (role === 'sender') {
       const peer = activePeerConnections.get(from);
-      if (peer && peer.pc) peer.pc.addIceCandidate(candidate).catch(() => {});
+      if (!peer) return;
+      if (peer.pc.remoteDescription) peer.pc.addIceCandidate(candidate).catch(() => {});
+      else peer.pending.push(candidate);
     }
   });
 
   socket.on('receiver-joined', (data) => {
     if (role !== 'sender') return;
-    if (data?.receiverId) createPeerForReceiver(data.receiverId);
+    if (data && data.receiverId) createPeerForReceiver(data.receiverId);
     else { const wm = $('waitingMsg'); if (wm) wm.textContent = '✅ Destinataire connecté !'; }
   });
 
   socket.on('receiver-left', (data) => {
     if (role !== 'sender') return;
-    if (data?.receiverId) {
+    if (data && data.receiverId) {
       const peer = activePeerConnections.get(data.receiverId);
       if (peer) { try { peer.pc.close(); } catch (e) {} activePeerConnections.delete(data.receiverId); }
     }
     updateDashboard();
     const wm = $('waitingMsg');
-    if (wm && !transferAborted) wm.textContent = '⏳ Lien toujours actif — en attente d\'autres destinataires…';
+    if (wm && !transferAborted) wm.textContent = "⏳ Lien toujours actif — en attente d'autres destinataires…";
   });
 
   socket.on('download-notification', (data) => {
@@ -716,7 +698,6 @@ function initSocket() {
       showStep('step-select');
     }
   });
-
   socket.on('peer-cancelled', () => {
     error('❌ Expéditeur annulé', 'errorBox3');
     resetConnection();
@@ -766,59 +747,42 @@ function bindUI() {
     if (!files.length) return;
     const total = files.reduce((s, f) => s + (f.size || 0), 0);
     if (total > MAX_FILE_SIZE) { error('❌ Dossier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')'); e.target.value = ''; return; }
-
     const titleEl = $('transferTitle');
     const rootName = ((files[0].webkitRelativePath || 'dossier').split('/')[0]) || 'dossier';
-
     try {
       if (titleEl) titleEl.textContent = 'Préparation du dossier en cours...';
-
       await need('jszip');
       const zip = new JSZip();
       files.forEach(f => zip.file(f.webkitRelativePath || f.name, f));
-
       let finalFile;
 
-      // 1️⃣ SOLUTION ROBUSTE : écriture sur disque (OPFS) avec vraie contre-pression
+      // 1️⃣ OPFS : écriture sur disque avec contre-pression
       if (navigator.storage && navigator.storage.getDirectory) {
         const rootDir = await navigator.storage.getDirectory();
         const handle = await rootDir.getFileHandle('transferx_sender.zip', { create: true });
         const writable = await handle.createWritable();
-
         try {
           await new Promise((resolve, reject) => {
-            const stream = zip.generateInternalStream({
-              type: 'uint8array',
-              compression: 'STORE'
-            });
-
+            const stream = zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' });
             stream.on('data', (chunk) => {
               stream.pause();
               writable.write(chunk)
                 .then(() => stream.resume())
                 .catch((err) => { stream.pause(); reject(err); });
             });
-
             stream.on('error', reject);
             stream.on('end', resolve);
             stream.resume();
           });
         } catch (streamErr) {
-          try { await writable.abort(); } catch (e) {}
+          try { await writable.abort(); } catch (e2) {}
           throw streamErr;
         }
-
         await writable.close();
         finalFile = await handle.getFile();
-
-        Object.defineProperty(finalFile, 'name', {
-          writable: true,
-          value: rootName + '.zip'
-        });
-
+        Object.defineProperty(finalFile, 'name', { writable: true, value: rootName + '.zip' });
       } else {
-        // 2️⃣ FALLBACK : RAM uniquement, strictement limité
-        const MEM_ZIP_LIMIT = 200 * 1024 * 1024;
+        // 2️⃣ Fallback RAM limité
         if (total > MEM_ZIP_LIMIT) {
           throw new Error('Ce navigateur ne supporte pas le stockage disque (OPFS). Dossier limité à ' + bytes(MEM_ZIP_LIMIT) + ' — utilisez Chrome ou Edge récent.');
         }
@@ -841,14 +805,12 @@ function bindUI() {
         });
         finalFile = new File(parts, rootName + '.zip', { type: 'application/zip' });
       }
-
       selectedFile = finalFile;
       if (titleEl) titleEl.textContent = 'Transfert Sécurisé';
       showPreview(selectedFile);
     } catch (err) {
       error('❌ Erreur préparation : ' + err.message);
-      // Nettoyage du fichier temporaire OPFS
-      if (navigator.storage?.getDirectory) {
+      if (navigator.storage && navigator.storage.getDirectory) {
         try {
           const rootDir = await navigator.storage.getDirectory();
           await rootDir.removeEntry('transferx_sender.zip');
@@ -872,7 +834,6 @@ function bindUI() {
     setTimeout(() => { bcl.textContent = '📋 Copier'; }, 2000);
   };
   const bse = $('btnSendEmail'); if (bse) bse.onclick = sendEmail;
-
   const bsh = $('btnShowHistory'); if (bsh) bsh.onclick = showHistory;
   const bbh = $('btnBackFromHistory'); if (bbh) bbh.onclick = hideHistory;
   const beh = $('btnExportHistory'); if (beh) beh.onclick = exportHistory;
@@ -895,19 +856,11 @@ function bindUI() {
 /* ---------- CYCLE DE VIE ---------- */
 document.addEventListener('visibilitychange', () => { if (!document.hidden && socket && !socket.connected) socket.connect(); });
 window.addEventListener('pageshow', () => { if (socket && !socket.connected) socket.connect(); });
-
-function handleBeforeUnload(e) {
-  if (role && !transferAborted && expectedSize && receivedSize < expectedSize) {
-    e.preventDefault();
-    e.returnValue = 'Transfert en cours. Quitter ?';
-  }
-}
-
-setInterval(() => { if (socket?.connected) socket.emit('ping-keepalive'); }, 20000);
+setInterval(() => { if (socket && socket.connected) socket.emit('ping-keepalive'); }, 20000);
 
 document.addEventListener('DOMContentLoaded', () => {
-  // ✅ Nettoyage robuste des fichiers temporaires OPFS
-  if (window.isSecureContext && navigator.storage?.getDirectory) {
+  // ✅ Nettoyage des fichiers temporaires OPFS
+  if (window.isSecureContext && navigator.storage && navigator.storage.getDirectory) {
     navigator.storage.getDirectory().then(root => {
       root.removeEntry('transferx.tmp').catch(() => {});
       root.removeEntry('transferx_sender.zip').catch(() => {});

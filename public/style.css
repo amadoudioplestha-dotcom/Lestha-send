@@ -322,6 +322,14 @@ footer { text-align: center; border-top: 1px solid var(--line); padding-top: 20p
 }
 .receiver-speed { font-size: 11px; color: var(--muted); text-align: right; }
 
+.receiver-item{background:var(--card);border-radius:8px;padding:10px 12px;font-size:13px}
+.receiver-item-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.receiver-id{color:var(--muted);font-family:monospace;font-size:11px}
+.receiver-status{font-weight:700;color:var(--teal)}
+.receiver-progress-bar{height:6px;background:#0c1424;border-radius:6px;overflow:hidden}
+.receiver-progress-fill{height:100%;background:linear-gradient(90deg,var(--cyan),var(--teal));transition:width .2s}
+.receiver-speed{color:var(--muted);font-size:11px;margin-top:4px}
+
 /* RESPONSIVE COMPLET */
 @media (max-width: 480px) {
   body { padding: 0; display: block; }
