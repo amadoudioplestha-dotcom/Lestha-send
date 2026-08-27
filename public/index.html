@@ -1,6 +1,127 @@
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0f172a"><meta name="description" content="Transfert P2P chiffré sans stockage"><title>TransferX — P2P</title><link rel="manifest" href="manifest.json"><link rel="icon" href="icon-192.png"><link rel="stylesheet" href="style.css"></head><body><main class="container"><header><div class="eyebrow">TRANSFERX / P2P</div><h1>Transfert <span>Sécurisé</span></h1><p>Direct, chiffré, sans stockage serveur.</p></header>
-<section id="step-select" class="step active"><div id="dropZone" class="drop-zone"><input id="fileInput" type="file" hidden><input id="folderInput" type="file" webkitdirectory directory multiple hidden><div class="upload-icon">↥</div><strong>Choisir ou déposer un fichier</strong><small>Un dossier sera compressé en ZIP dans votre navigateur</small></div><div id="filePreview" class="file-preview hidden"><div id="fileInfo"></div></div><div class="options"><label>Expiration du lien<select id="expirySelect"><option value="3600">1 heure</option><option value="21600">6 heures</option><option value="86400" selected>24 heures</option><option value="259200">3 jours</option><option value="604800">7 jours</option></select></label><label>PIN optionnel<input id="pinInput" inputmode="numeric" maxlength="12" placeholder="Ex. 4829"></label></div><button id="btnModeFolder" class="btn secondary">＋ Sélectionner un dossier</button><button id="btnStartSend" class="btn primary" disabled>Générer le lien sécurisé</button><div id="errorBox" class="error-box hidden"></div></section>
-<section id="step-waiting" class="step"><div class="section-mark">LIEN PRÊT</div><h2>Partagez votre lien</h2><div class="link-box"><input id="linkOutput" readonly><button id="btnCopyLink" class="btn secondary">Copier</button></div><div id="qrCode" class="qr"></div><p id="expiryLabel" class="notice"></p><div class="email-box"><input id="emailInput" type="email" placeholder="Email du destinataire (optionnel)"><button id="btnSendEmail" class="btn secondary">Envoyer</button></div><p id="waitingMsg" class="notice">En attente du destinataire…</p><button id="btnCancelSend" class="btn ghost">Annuler</button><div id="errorBox2" class="error-box hidden"></div></section>
-<section id="step-transfer" class="step"><div class="section-mark">CONNEXION CHIFFRÉE</div><h2 id="transferTitle">Préparation…</h2><div class="progress-container"><div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div><div class="progress-stats"><b id="progressText">0 %</b><span id="speedText"></span><span id="etaText"></span></div></div><button id="btnCancelTransfer" class="btn danger">Arrêter</button><div id="errorBox3" class="error-box hidden"></div></section>
-<section id="step-done" class="step"><div class="success-icon">✓</div><h2>Transfert terminé</h2><p id="doneSubtitle" class="notice">Votre fichier est prêt.</p><a id="downloadLink" class="btn primary hidden">Télécharger</a><button id="btnRestart" class="btn secondary">Nouveau transfert</button></section><footer>🔒 WebRTC · chiffrement de bout en bout · aucun stockage</footer></main><script src="/socket.io/socket.io.js"></script><script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script><script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script><script src="app.js"></script><script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e1781791509496" integrity="sha512-ZE9pZaUXND66v380QUtch/5sE9tPFh2zg45pR2PB0CVkCtOREv2AJKkSidISWkysEuQ0EH8faUU5du78bx87UQ==" data-cf-beacon='{"version":"2024.11.0","token":"8607d2a720d14b038279025b2b5a82e5"}' crossorigin="anonymous"></script>
-</body></html>
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="description" content="Transfert de fichiers P2P ultra-sécurisé. Aucun stockage, transfert direct et chiffré.">
+    <meta name="theme-color" content="#0066FF">
+   <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    
+    <title>TransferX - Transfert Sécurisé P2P</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Icons -->
+    <link rel="icon" type="image/png" href="icon-192.png">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <link rel="manifest" href="manifest.json">
+    
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- ÉTAPE 1: SÉLECTION -->
+        <div id="step-select" class="step active">
+            <h1>🚀 TransferX</h1>
+            <p class="subtitle">Transfert P2P direct, chiffré, sans stockage serveur</p>
+            
+            <div class="mode-choice">
+                <button id="btnModeFile" class="btn-mode">
+                    <span class="btn-mode-icon">📄</span>
+                    <span class="btn-mode-text">Envoyer un fichier</span>
+                </button>
+                <button id="btnModeFolder" class="btn-mode">
+                    <span class="btn-mode-icon">📁</span>
+                    <span class="btn-mode-text">Envoyer un dossier</span>
+                </button>
+            </div>
+
+            <input type="file" id="fileInput" class="hidden" accept="*/*">
+            <input type="file" id="folderInput" class="hidden" webkitdirectory directory multiple>
+
+            <div id="filePreview" class="file-preview hidden">
+                <div id="fileInfo"></div>
+            </div>
+
+            <button id="btnStartSend" class="btn-primary">🔗 Générer le lien de transfert</button>
+            
+            <div class="error-box hidden" id="errorBox"></div>
+        </div>
+
+        <!-- ÉTAPE 2: ATTENTE -->
+        <div id="step-waiting" class="step">
+            <h1>🔗 Lien de transfert</h1>
+            <p class="subtitle">Partagez ce lien avec le destinataire</p>
+            
+            <div class="link-box">
+                <input type="text" id="linkOutput" readonly placeholder="Génération...">
+                <button id="btnCopyLink">📋 Copier</button>
+            </div>
+
+            <div class="email-box">
+                <input type="email" id="emailInput" placeholder="Email du destinataire (optionnel)">
+                <button id="btnSendEmail">✉️ Envoyer</button>
+            </div>
+
+            <p id="waitingMsg">⏳ En attente du destinataire...</p>
+
+            <button id="btnCancelSend" class="btn-danger">❌ Annuler le transfert</button>
+            
+            <div class="error-box hidden" id="errorBox2"></div>
+        </div>
+
+        <!-- ÉTAPE 3: TRANSFERT -->
+        <div id="step-transfer" class="step">
+            <h1>📡 Transfert en cours</h1>
+            <p id="transferTitle">Préparation...</p>
+
+            <div class="progress-container">
+                <div class="progress-bar">
+                    <div id="progressFill" class="progress-fill"></div>
+                </div>
+                <div class="progress-stats">
+                    <span id="progressText">0 %</span>
+                    <span id="speedText"></span>
+                </div>
+            </div>
+            
+            <button id="btnCancelTransfer" class="btn-danger">⛔ Annuler</button>
+            
+            <div class="error-box hidden" id="errorBox3"></div>
+        </div>
+
+        <!-- ÉTAPE 4: TERMINÉ -->
+        <div id="step-done" class="step">
+            <div class="success-icon">✅</div>
+            <h1>Transfert terminé !</h1>
+            <p class="subtitle" id="doneSubtitle">Votre fichier a été transféré avec succès</p>
+
+            <a id="downloadLink" class="btn-primary hidden" href="#">⬇️ Télécharger le fichier</a>
+            
+            <div class="security-badge">
+                🔒 Connexion chiffrée de bout en bout
+            </div>
+
+            <button id="btnRestart" class="btn-secondary">🔄 Nouveau transfert</button>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p>🔒 Aucun fichier stocké • Transfert direct P2P • 100% sécurisé</p>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/streamsaver@2.0.6/StreamSaver.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/web-streams-polyfill@3.2.1/dist/polyfill.min.js"></script>
+    
+    <script src="app.js"></script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e1781791509496" integrity="sha512-ZE9pZaUXND66v380QUtch/5sE9tPFh2zg45pR2PB0CVkCtOREv2AJKkSidISWkysEuQ0EH8faUU5du78bx87UQ==" data-cf-beacon='{"version":"2024.11.0","token":"8607d2a720d14b038279025b2b5a82e5"}' crossorigin="anonymous"></script>
+</body>
+</html>
