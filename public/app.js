@@ -17,6 +17,7 @@ let sendGeneration = 0;
 
 // ✅ Multi-connexions (session persistante)
 let activePeerConnections = new Map(); // receiverId -> {pc, dc}
+let activePeerConnections = new Map(); // receiverId -> {pc, dc, progress, speed}
 let currentTransfer = null; // {roomId, expiresAt, fileName, fileSize, pin}
 let downloadCount = 0;
 let timeLeftInterval = null;
@@ -193,9 +194,23 @@ async function sendFile(dc, receiverId) {
     try { dc.send(await read(selectedFile.slice(offset, end))); }
     catch (e) { return error('❌ Erreur d\'envoi : ' + e.message, 'errorBox2'); }
     offset = end;
-    updateProgress(offset, selectedFile.size, start);
+
+    // ⬅️ NOUVEAU : mémoriser la progression pour ce destinataire précis
+    const peerInfo = activePeerConnections.get(receiverId);
+    if (peerInfo) {
+      const pct = selectedFile.size ? Math.round((offset / selectedFile.size) * 100) : 0;
+      const spd = offset / Math.max((Date.now() - start) / 1000, 0.1);
+      peerInfo.progress = pct;
+      peerInfo.speedText = speed(spd);
+      renderReceiversList();
+    }
+    if (!isMultiView()) updateProgress(offset, selectedFile.size, start);
   }
-  if (offset >= selectedFile.size) console.log('✅ Envoi terminé (' + receiverId + ')');
+  if (offset >= selectedFile.size) {
+    const peerInfo = activePeerConnections.get(receiverId);
+    if (peerInfo) { peerInfo.progress = 100; peerInfo.speedText = ''; renderReceiversList(); }
+    console.log('✅ Envoi terminé (' + receiverId + ')');
+  }
 }
 
 async function createPeerForReceiver(receiverId) {
@@ -207,7 +222,7 @@ async function createPeerForReceiver(receiverId) {
     const offer = await peer.createOffer();
     await peer.setLocalDescription(offer);
     socket.emit('send-offer', { roomId, offer: peer.localDescription, receiverId });
-    activePeerConnections.set(receiverId, { pc: peer, dc });
+    activePeerConnections.set(receiverId, { pc: peer, dc, progress: 0, speedText: '' });
     requestQueuedIce(receiverId);
     updateDashboard();
   } catch (e) { console.error('❌ Erreur création PC:', e); }
@@ -225,7 +240,16 @@ function renderReceiversList() {
   if (activePeerConnections.size === 0) { list.innerHTML = ''; return; }
   let html = '';
   activePeerConnections.forEach((peer, id) => {
-    html += '<div class="receiver-item"><span class="receiver-id">👤 ' + id.slice(0, 8) + '…</span><span class="receiver-status">⬇️ En cours</span></div>';
+    const pct = peer.progress || 0;
+    const done = pct >= 100;
+    html += '<div class="receiver-item">' +
+      '<div class="receiver-item-top">' +
+        '<span class="receiver-id">👤 ' + id.slice(0, 8) + '…</span>' +
+        '<span class="receiver-status">' + (done ? '✅ Terminé' : '⬇️ ' + pct + ' %') + '</span>' +
+      '</div>' +
+      '<div class="receiver-progress-bar"><div class="receiver-progress-fill" style="width:' + pct + '%"></div></div>' +
+      (peer.speedText && !done ? '<div class="receiver-speed">' + peer.speedText + '</div>' : '') +
+    '</div>';
   });
   list.innerHTML = html;
 }
