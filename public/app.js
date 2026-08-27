@@ -415,6 +415,7 @@ function setupReceiverChannel() {
   };
 }
 async function finishReceive(channel) {
+  window.removeEventListener('beforeunload', handleBeforeUnload);
   if (sink) {
     try {
       const file = await sink.close();
@@ -443,6 +444,7 @@ async function startSender() {
 
   role = 'sender';
   transferAborted = false;
+  window.addEventListener('beforeunload', handleBeforeUnload);
   activePeerConnections = new Map();
   downloadCount = 0;
   showStep('step-waiting');
@@ -505,6 +507,7 @@ function joinRoom(pin) {
 }
 async function startReceiver() {
   role = 'receiver';
+  window.addEventListener('beforeunload', handleBeforeUnload);
   showStep('step-transfer');
   const t = $('transferTitle'); if (t) t.textContent = 'Connexion au pair…';
   try {
@@ -546,6 +549,7 @@ function resetUI() {
   const pbox = $('pinBox'); if (pbox) pbox.classList.add('hidden');
 }
 function cancelTransfer() {
+  window.removeEventListener('beforeunload', handleBeforeUnload);
   transferAborted = true;
   if (roomId && socket?.connected) socket.emit('cancel-transfer', { roomId });
   resetConnection();
@@ -760,11 +764,6 @@ if (fo) fo.onchange = async (e) => {
     error('❌ Erreur préparation : ' + err.message); 
   }
 };
-      const root = ((files[0].webkitRelativePath || 'dossier').split('/')[0]) || 'dossier';
-      selectedFile = new File(parts, root + '.zip', { type: 'application/zip' });
-      showPreview(selectedFile);
-    } catch (err) { error('❌ Erreur compression : ' + err.message); }
-  };
 
   const bs = $('btnStartSend'); if (bs) bs.onclick = startSender;
   const bcs = $('btnCancelSend'); if (bcs) bcs.onclick = cancelTransfer;
@@ -804,11 +803,16 @@ if (fo) fo.onchange = async (e) => {
 /* ---------- CYCLE DE VIE ---------- */
 document.addEventListener('visibilitychange', () => { if (!document.hidden && socket && !socket.connected) socket.connect(); });
 window.addEventListener('pageshow', () => { if (socket && !socket.connected) socket.connect(); });
-window.addEventListener('beforeunload', (e) => {
+// ✅ Attaché seulement pendant un transfert actif (voir startSender/startReceiver/cancelTransfer/finishReceive).
+// Un beforeunload branché en permanence empêche le bfcache : sur les appareils peu puissants,
+// ouvrir le sélecteur de fichier natif met la page en arrière-plan, l'OS peut alors tuer le
+// processus pour libérer de la RAM, et sans bfcache le retour déclenche un rechargement complet
+// qui perd le fichier tout juste choisi. Ne pas l'avoir actif pendant l'étape de sélection règle ça.
+function handleBeforeUnload(e) {
   if (role && !transferAborted && expectedSize && receivedSize < expectedSize) {
     e.preventDefault(); e.returnValue = 'Transfert en cours. Quitter ?';
   }
-});
+}
 setInterval(() => { if (socket?.connected) socket.emit('ping-keepalive'); }, 20000);
 
 document.addEventListener('DOMContentLoaded', () => {
