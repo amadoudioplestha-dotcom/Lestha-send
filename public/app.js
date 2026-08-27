@@ -310,7 +310,7 @@ function renderHistory() {
   }).join('');
 }
 function escapeHtmlLocal(t) {
-  return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(t).replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>');
 }
 window.__copyHistoryLink = (rid) => {
   const link = location.origin + '?room=' + encodeURIComponent(rid);
@@ -688,82 +688,109 @@ function bindUI() {
     selectedFile = file; showPreview(file);
   };
 
-const fo = $('folderInput');
-if (fo) fo.onchange = async (e) => {
-  const files = Array.from(e.target.files || []);
-  if (!files.length) return;
-  const total = files.reduce((s, f) => s + (f.size || 0), 0);
-  if (total > MAX_FILE_SIZE) { error('❌ Dossier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')'); e.target.value = ''; return; }
-  
-  try {
-    const rootName = ((files[0].webkitRelativePath || 'dossier').split('/')[0]) || 'dossier';
-    const t = $('transferTitle'); 
-    if (t) t.textContent = 'Préparation du dossier en cours...'; // Optionnel : indiquer que ça travaille
-    
-    await need('jszip');
-    const zip = new JSZip();
-    files.forEach(f => zip.file(f.webkitRelativePath || f.name, f));
-    
-    let finalFile;
+  const fo = $('folderInput');
+  if (fo) fo.onchange = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    const total = files.reduce((s, f) => s + (f.size || 0), 0);
+    if (total > MAX_FILE_SIZE) { error('❌ Dossier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')'); e.target.value = ''; return; }
 
-    // 1️⃣ SOLUTION ROBUSTE : Utilisation de OPFS (Écriture sur le disque au lieu de la RAM)
-    if (navigator.storage && navigator.storage.getDirectory) {
-      const rootDir = await navigator.storage.getDirectory();
-      const handle = await rootDir.getFileHandle('transferx_sender.zip', { create: true });
-      const writable = await handle.createWritable();
-      
-      await new Promise((resolve, reject) => {
-        const stream = zip.generateInternalStream({ 
-          type: 'uint8array', 
-          compression: 'STORE' // Pas de compression = beaucoup moins d'usage processeur et RAM sur mobile
+    const t = $('transferTitle');
+
+    try {
+      const rootName = ((files[0].webkitRelativePath || 'dossier').split('/')[0]) || 'dossier';
+      if (t) t.textContent = 'Préparation du dossier en cours...';
+
+      await need('jszip');
+      const zip = new JSZip();
+      files.forEach(f => zip.file(f.webkitRelativePath || f.name, f));
+
+      let finalFile;
+
+      // 1️⃣ SOLUTION ROBUSTE : écriture sur disque (OPFS) avec vraie contre-pression
+      if (navigator.storage && navigator.storage.getDirectory) {
+        const rootDir = await navigator.storage.getDirectory();
+        const handle = await rootDir.getFileHandle('transferx_sender.zip', { create: true });
+        const writable = await handle.createWritable();
+
+        try {
+          await new Promise((resolve, reject) => {
+            const stream = zip.generateInternalStream({
+              type: 'uint8array',
+              compression: 'STORE' // Pas de compression = beaucoup moins d'usage CPU/RAM sur mobile
+            });
+
+            stream.on('data', (chunk) => {
+              // ⬅️ CORRECTIF : on suspend JSZip tant que l'écriture précédente n'est pas finie.
+              // Sans ça, JSZip produit les chunks plus vite qu'on ne les écrit sur le disque,
+              // ils s'accumulent en RAM, et l'onglet Chrome mobile finit tué
+              // ("Mémoire insuffisante" / "Impossible de terminer l'opération précédente").
+              stream.pause();
+              writable.write(chunk)
+                .then(() => stream.resume())
+                .catch((err) => { stream.pause(); reject(err); });
+            });
+
+            stream.on('error', reject);
+            stream.on('end', resolve);
+            stream.resume();
+          });
+        } catch (streamErr) {
+          try { await writable.abort(); } catch (e) {}
+          throw streamErr;
+        }
+
+        await writable.close();
+        finalFile = await handle.getFile();
+
+        // On renomme le fichier localement pour l'interface
+        Object.defineProperty(finalFile, 'name', {
+          writable: true,
+          value: rootName + '.zip'
         });
-        
-        // Utiliser une file d'attente pour ne pas saturer l'écriture asynchrone
-        let writePromise = Promise.resolve();
-        
-        stream.on('data', (chunk) => {
-          // On écrit directement sur le disque (OPFS), on ne garde rien en RAM
-          writePromise = writePromise.then(() => writable.write(chunk));
+
+      } else {
+        // 2️⃣ FALLBACK (navigateurs sans OPFS) : RAM uniquement, strictement limitée
+        const MEM_ZIP_LIMIT = 200 * 1024 * 1024; // 200 Mo, quel que soit l'appareil
+        if (total > MEM_ZIP_LIMIT) {
+          throw new Error('Ce navigateur ne supporte pas le stockage disque (OPFS). Dossier limité à ' + bytes(MEM_ZIP_LIMIT) + ' sur cet appareil — utilisez Chrome ou Edge récent pour des dossiers plus volumineux.');
+        }
+        const parts = [];
+        let accumulated = 0;
+        await new Promise((resolve, reject) => {
+          const stream = zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' });
+          stream.on('data', (chunk) => {
+            accumulated += chunk.byteLength;
+            if (accumulated > MEM_ZIP_LIMIT) {
+              stream.pause();
+              reject(new Error('Dossier trop volumineux pour la mémoire de cet appareil (max ' + bytes(MEM_ZIP_LIMIT) + ')'));
+              return;
+            }
+            parts.push(new Blob([chunk]));
+          });
+          stream.on('error', reject);
+          stream.on('end', resolve);
+          stream.resume();
         });
-        
-        stream.on('error', reject);
-        stream.on('end', () => {
-          writePromise.then(resolve).catch(reject);
-        });
-        
-        stream.resume();
-      });
-      
-      await writable.close();
-      finalFile = await handle.getFile();
-      
-      // On renomme le fichier localement pour l'interface
-      Object.defineProperty(finalFile, 'name', {
-        writable: true,
-        value: rootName + '.zip'
-      });
-      
-    } else {
-      // 2️⃣ FALLBACK (vieux navigateurs) : On utilise la RAM, mais limité en taille
-      if (isMobile && total > 200 * 1024 * 1024) throw new Error("Navigateur obsolète : dossier trop lourd pour la RAM.");
-      const parts = [];
-      await new Promise((resolve, reject) => {
-        const stream = zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' });
-        stream.on('data', (chunk) => { parts.push(new Blob([chunk])); });
-        stream.on('error', reject);
-        stream.on('end', resolve);
-        stream.resume();
-      });
-      finalFile = new File(parts, rootName + '.zip', { type: 'application/zip' });
+        finalFile = new File(parts, rootName + '.zip', { type: 'application/zip' });
+      }
+
+      selectedFile = finalFile;
+      if (t) t.textContent = 'Transfert Sécurisé';
+      showPreview(selectedFile);
+    } catch (err) {
+      error('❌ Erreur préparation : ' + err.message);
+      // Nettoyage du fichier temporaire OPFS si la préparation a échoué en cours de route
+      if (navigator.storage?.getDirectory) {
+        try {
+          const rootDir = await navigator.storage.getDirectory();
+          await rootDir.removeEntry('transferx_sender.zip');
+        } catch (cleanupErr) {}
+      }
+    } finally {
+      e.target.value = ''; // permet de resélectionner le même dossier si besoin
     }
-
-    selectedFile = finalFile;
-    if (t) t.textContent = 'Transfert Sécurisé';
-    showPreview(selectedFile);
-  } catch (err) { 
-    error('❌ Erreur préparation : ' + err.message); 
-  }
-};
+  };
 
   const bs = $('btnStartSend'); if (bs) bs.onclick = startSender;
   const bcs = $('btnCancelSend'); if (bcs) bcs.onclick = cancelTransfer;
@@ -820,6 +847,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (window.isSecureContext && navigator.storage?.getDirectory) {
     navigator.storage.getDirectory().then(root => {
       root.removeEntry('transferx.tmp').catch(() => {});
+      root.removeEntry('transferx_sender.zip').catch(() => {});
     }).catch(() => {});
   }
   bindUI();
