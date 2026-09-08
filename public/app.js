@@ -10,6 +10,34 @@ const MAX_FILE_SIZE = (isMobile ? 2 : 5) * 1024 * 1024 * 1024;
 const MEM_SINK_LIMIT = 400 * 1024 * 1024;
 const MEM_ZIP_LIMIT = 200 * 1024 * 1024;
 
+// ✅ Détection RÉELLE du support d'écriture disque (OPFS).
+// navigator.storage.getDirectory existe sur Safari/iOS, mais
+// FileSystemFileHandle.createWritable() n'y est PAS implémenté (WebKit).
+// Sans ce test, le code plantait avec une erreur technique confuse au lieu
+// de basculer proprement sur le mode mémoire limité.
+function supportsOPFSWritable() {
+  try {
+    return !!(
+      navigator.storage && typeof navigator.storage.getDirectory === 'function' &&
+      window.FileSystemFileHandle && FileSystemFileHandle.prototype &&
+      typeof FileSystemFileHandle.prototype.createWritable === 'function'
+    );
+  } catch (e) { return false; }
+}
+
+// ✅ Navigateurs intégrés (WhatsApp, Facebook, Instagram, Messenger…) :
+// souvent des WebView allégées, sans OPFS, avec très peu de mémoire allouée —
+// cause fréquente des échecs "mémoire insuffisante" à l'envoi sur mobile.
+function isRestrictedWebView() {
+  const ua = navigator.userAgent || '';
+  return /FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|; ?wv\)/i.test(ua);
+}
+
+// ✅ Indice (Chrome/Android uniquement) de RAM totale de l'appareil.
+function lowMemoryDevice() {
+  return typeof navigator.deviceMemory === 'number' && navigator.deviceMemory <= 2;
+}
+
 let socket = null;
 let role = null, roomId = null;
 let selectedFile = null;
@@ -61,7 +89,8 @@ function error(message, box) {
   el.textContent = message;
   el.classList.remove('hidden');
   console.error(message);
-  setTimeout(() => { if (el.textContent === message) el.classList.add('hidden'); }, 8000);
+  const duration = Math.min(20000, Math.max(8000, message.length * 90));
+  setTimeout(() => { if (el.textContent === message) el.classList.add('hidden'); }, duration);
 }
 function clearErrors() {
   document.querySelectorAll('.error-box').forEach(el => { el.textContent = ''; el.classList.add('hidden'); });
@@ -375,7 +404,7 @@ function exportHistory() {
 /* ---------- SINK OPFS (réception) ---------- */
 async function createSink() {
   try {
-    if (navigator.storage && navigator.storage.getDirectory) {
+    if (supportsOPFSWritable()) {
       try { await navigator.storage.persist(); } catch (e) {}
       const root = await navigator.storage.getDirectory();
       const handle = await root.getFileHandle('transferx.tmp', { create: true });
@@ -394,7 +423,7 @@ async function createSink() {
     disk: false,
     write: async (p) => {
       size += p.byteLength;
-      if (size > MEM_SINK_LIMIT) throw new Error('appareil sans stockage disque : fichier trop volumineux (max ' + bytes(MEM_SINK_LIMIT) + ')');
+      if (size > MEM_SINK_LIMIT) throw new Error('cet appareil/navigateur ne permet pas l\'écriture temporaire sur disque : fichier trop volumineux pour être reçu en mémoire (max ' + bytes(MEM_SINK_LIMIT) + '). Essayez avec Chrome à jour plutôt que le navigateur intégré d\'une autre application.');
       chunks.push(p);
     },
     close: async () => new Blob(chunks),
@@ -728,21 +757,24 @@ async function sendEmail() {
 /* ---------- UI ---------- */
 function bindUI() {
   const bmf = $('btnModeFile');
-  if (bmf) bmf.onclick = () => { clearErrors(); const i = $('fileInput'); if (i) i.click(); };
+  if (bmf) bmf.onclick = () => { clearErrors(); try { sessionStorage.setItem('transferx_picking', String(Date.now())); } catch (e) {} const i = $('fileInput'); if (i) i.click(); };
   const bmf2 = $('btnModeFolder');
-  if (bmf2) bmf2.onclick = () => { clearErrors(); const i = $('folderInput'); if (i) i.click(); };
+  if (bmf2) bmf2.onclick = () => { clearErrors(); try { sessionStorage.setItem('transferx_picking', String(Date.now())); } catch (e) {} const i = $('folderInput'); if (i) i.click(); };
 
   const fi = $('fileInput');
   if (fi) fi.onchange = (e) => {
+    try { sessionStorage.removeItem('transferx_picking'); } catch (err) {}
     const file = e.target.files && e.target.files[0];
     if (!file) return;
     if (file.size > MAX_FILE_SIZE) { error('❌ Fichier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')'); e.target.value = ''; return; }
     selectedFile = file;
     showPreview(file);
+    ensureSocket();
   };
 
   const fo = $('folderInput');
   if (fo) fo.onchange = async (e) => {
+    try { sessionStorage.removeItem('transferx_picking'); } catch (err) {}
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
     const total = files.reduce((s, f) => s + (f.size || 0), 0);
@@ -757,7 +789,7 @@ function bindUI() {
       let finalFile;
 
       // 1️⃣ OPFS : écriture sur disque avec contre-pression
-      if (navigator.storage && navigator.storage.getDirectory) {
+      if (supportsOPFSWritable()) {
         const rootDir = await navigator.storage.getDirectory();
         const handle = await rootDir.getFileHandle('transferx_sender.zip', { create: true });
         const writable = await handle.createWritable();
@@ -784,7 +816,10 @@ function bindUI() {
       } else {
         // 2️⃣ Fallback RAM limité
         if (total > MEM_ZIP_LIMIT) {
-          throw new Error('Ce navigateur ne supporte pas le stockage disque (OPFS). Dossier limité à ' + bytes(MEM_ZIP_LIMIT) + ' — utilisez Chrome ou Edge récent.');
+          const raison = isRestrictedWebView()
+            ? "le navigateur intégré utilisé (WhatsApp, Facebook, Instagram…) ne le permet pas"
+            : "ce navigateur/appareil ne permet pas l'écriture temporaire sur disque (OPFS)";
+          throw new Error('Dossier trop volumineux (' + bytes(total) + ') pour être préparé en mémoire car ' + raison + '. Solutions : ouvrez ce lien dans Chrome à jour, envoyez les fichiers un par un plutôt qu\'en dossier, ou compressez le dossier en un seul fichier avant de l\'envoyer (limite actuelle : ' + bytes(MEM_ZIP_LIMIT) + ').');
         }
         const parts = [];
         let accumulated = 0;
@@ -808,6 +843,7 @@ function bindUI() {
       selectedFile = finalFile;
       if (titleEl) titleEl.textContent = 'Transfert Sécurisé';
       showPreview(selectedFile);
+      ensureSocket();
     } catch (err) {
       error('❌ Erreur préparation : ' + err.message);
       if (navigator.storage && navigator.storage.getDirectory) {
@@ -856,22 +892,60 @@ function bindUI() {
 /* ---------- CYCLE DE VIE ---------- */
 document.addEventListener('visibilitychange', () => { if (!document.hidden && socket && !socket.connected) socket.connect(); });
 window.addEventListener('pageshow', () => { if (socket && !socket.connected) socket.connect(); });
-setInterval(() => { if (socket && socket.connected) socket.emit('ping-keepalive'); }, 20000);
+setInterval(() => { if (!document.hidden && socket && socket.connected) socket.emit('ping-keepalive'); }, 20000);
 
 document.addEventListener('DOMContentLoaded', () => {
   // ✅ Nettoyage des fichiers temporaires OPFS
-  if (window.isSecureContext && navigator.storage && navigator.storage.getDirectory) {
+  if (window.isSecureContext && supportsOPFSWritable()) {
     navigator.storage.getDirectory().then(root => {
       root.removeEntry('transferx.tmp').catch(() => {});
       root.removeEntry('transferx_sender.zip').catch(() => {});
     }).catch(() => {});
   }
+
+  // ✅ Détection d'un redémarrage de page pendant une sélection de fichier :
+  // sur les appareils mobiles peu puissants, ouvrir la galerie/le gestionnaire
+  // de fichiers peut pousser le système à décharger l'onglet pour libérer de
+  // la mémoire ; au retour, la page se recharge et le fichier choisi est perdu.
+  // On explique clairement ce qui s'est passé au lieu de laisser l'utilisateur
+  // face à un écran vide ou un message système confus.
+  try {
+    if (sessionStorage.getItem('transferx_picking')) {
+      sessionStorage.removeItem('transferx_picking');
+      const ramInfo = lowMemoryDevice() ? (' (RAM détectée : ' + navigator.deviceMemory + ' Go — appareil sensible à ce problème)') : '';
+      setTimeout(() => {
+        error("⚠️ La sélection a été interrompue, probablement par manque de mémoire sur l'appareil" + ramInfo + " (l'application a été déchargée pendant l'ouverture du sélecteur). Fermez les autres applications ouvertes, puis réessayez — idéalement avec un fichier plus léger ou en le sélectionnant depuis le gestionnaire de fichiers plutôt que la galerie photo.");
+      }, 300);
+    }
+  } catch (e) {}
+
+  // ✅ Avertissement pour les navigateurs intégrés (WhatsApp, Facebook, Instagram…),
+  // souvent en cause dans les échecs d'envoi par manque de mémoire ou d'API manquantes.
+  if (isRestrictedWebView()) {
+    setTimeout(() => {
+      error("ℹ️ Vous semblez utiliser le navigateur intégré d'une autre application (WhatsApp, Facebook…). Pour un envoi fiable, ouvrez ce lien dans Chrome (menu ⋮ → « Ouvrir dans le navigateur »).");
+    }, 600);
+  }
+
   bindUI();
   setSocketReady(false);
   if (!window.RTCPeerConnection) return error('❌ WebRTC non supporté');
+
+  // ✅ Connexion WebSocket différée : on ne l'établit pas systématiquement au
+  // chargement de la page. Un destinataire (lien ?room=) en a besoin tout de
+  // suite ; un expéditeur potentiel n'en a besoin qu'une fois un fichier
+  // effectivement choisi. Ne pas maintenir de connexion active pendant que
+  // le sélecteur natif (galerie/fichiers) est ouvert réduit l'empreinte
+  // mémoire de la page pendant cette fenêtre critique.
+  const urlRoom = new URLSearchParams(location.search).get('room');
+  if (urlRoom) ensureSocket();
+});
+
+function ensureSocket() {
+  if (socket) return;
   const wait = setInterval(() => {
     if (typeof io !== 'undefined') { clearInterval(wait); initSocket(); }
   }, 100);
   setTimeout(() => clearInterval(wait), 15000);
-});
+}
 })();
