@@ -10,11 +10,6 @@ const MAX_FILE_SIZE = (isMobile ? 2 : 5) * 1024 * 1024 * 1024;
 const MEM_SINK_LIMIT = 400 * 1024 * 1024;
 const MEM_ZIP_LIMIT = 200 * 1024 * 1024;
 
-// ✅ Détection RÉELLE du support d'écriture disque (OPFS).
-// navigator.storage.getDirectory existe sur Safari/iOS, mais
-// FileSystemFileHandle.createWritable() n'y est PAS implémenté (WebKit).
-// Sans ce test, le code plantait avec une erreur technique confuse au lieu
-// de basculer proprement sur le mode mémoire limité.
 function supportsOPFSWritable() {
   try {
     return !!(
@@ -25,15 +20,11 @@ function supportsOPFSWritable() {
   } catch (e) { return false; }
 }
 
-// ✅ Navigateurs intégrés (WhatsApp, Facebook, Instagram, Messenger…) :
-// souvent des WebView allégées, sans OPFS, avec très peu de mémoire allouée —
-// cause fréquente des échecs "mémoire insuffisante" à l'envoi sur mobile.
 function isRestrictedWebView() {
   const ua = navigator.userAgent || '';
   return /FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|; ?wv\)/i.test(ua);
 }
 
-// ✅ Indice (Chrome/Android uniquement) de RAM totale de l'appareil.
 function lowMemoryDevice() {
   return typeof navigator.deviceMemory === 'number' && navigator.deviceMemory <= 2;
 }
@@ -45,19 +36,20 @@ let transferAborted = false;
 let iceServers = null;
 let sendGeneration = 0;
 
-// ✅ Multi-connexions (session persistante)
-let activePeerConnections = new Map(); // receiverId -> {pc, dc, pending, progress, speedText}
+let activePeerConnections = new Map();
 let currentTransfer = null;
 let downloadCount = 0;
 let timeLeftInterval = null;
 let historyInterval = null;
 
-// ✅ Réception (destinataire)
 let expectedName = '', expectedSize = 0, receivedSize = 0, transferStart = 0;
 let remoteDescriptionSet = false;
 let pendingIce = [];
 let pc = null;
 let sink = null;
+
+let selectedFiles = [];
+let useMultipleFiles = false;
 
 const LIBS = {
   jszip: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
@@ -71,7 +63,7 @@ function need(name) {
     const s = document.createElement('script');
     s.src = LIBS[name]; s.async = true;
     s.onload = resolve;
-    s.onerror = () => reject(new Error('Bibliothèque non chargée : ' + name));
+    s.onerror = () => reject(new Error('Bibliotheque non chargee : ' + name));
     document.head.appendChild(s);
   });
 }
@@ -104,7 +96,7 @@ function bytes(n) {
 function speed(n) { return n > 0 ? bytes(n) + '/s' : ''; }
 function setSocketReady(ready) {
   const btn = $('btnStartSend');
-  if (btn) { btn.disabled = !ready; btn.title = ready ? '' : 'Connexion au serveur en cours…'; }
+  if (btn) { btn.disabled = !ready; btn.title = ready ? '' : 'Connexion au serveur en cours...'; }
 }
 function updateProgress(current, total, started) {
   const start = started || transferStart;
@@ -122,7 +114,7 @@ function showPreview(file) {
   box.classList.remove('hidden');
 }
 function formatTimeLeft(ms) {
-  if (ms <= 0) return 'Expiré';
+  if (ms <= 0) return 'Expire';
   const d = Math.floor(ms / 86400000);
   const h = Math.floor((ms % 86400000) / 3600000);
   const m = Math.floor((ms % 3600000) / 60000);
@@ -137,7 +129,7 @@ async function renderQR(text) {
   try {
     await need('qr');
     if (window.QRCode) new QRCode(box, { text, width: 168, height: 168, correctLevel: QRCode.CorrectLevel.M });
-  } catch (e) { console.warn('QR non généré :', e.message); }
+  } catch (e) { console.warn('QR non genere :', e.message); }
 }
 
 /* ---------- ICE / PeerConnection ---------- */
@@ -184,19 +176,18 @@ function requestQueuedIce(receiverId) {
   });
 }
 
-/* ---------- EXPÉDITEUR (multi-connexions) ---------- */
+/* ---------- EXPEDITEUR ---------- */
 function setupSenderChannel(dc, receiverId) {
   dc.binaryType = 'arraybuffer';
   dc.onopen = () => {
     const t = $('transferTitle');
-    if (t && role === 'sender' && activePeerConnections.size === 1) t.textContent = 'Envoi en cours…';
+    if (t && role === 'sender' && activePeerConnections.size === 1) t.textContent = 'Envoi en cours...';
     sendFile(dc, receiverId);
   };
   dc.onmessage = (event) => {
     try {
       const msg = JSON.parse(event.data);
       if (msg.msgType === 'complete') {
-        console.log('✅ Destinataire ' + receiverId + ' a terminé');
         const peer = activePeerConnections.get(receiverId);
         if (peer) { try { peer.pc.close(); } catch (e) {} activePeerConnections.delete(receiverId); }
         updateDashboard();
@@ -209,7 +200,7 @@ function setupSenderChannel(dc, receiverId) {
 
 async function sendFile(dc, receiverId) {
   const generation = ++sendGeneration;
-  if (!selectedFile || dc.readyState !== 'open') return error("❌ Canal de transfert non prêt", 'errorBox2');
+  if (!selectedFile || dc.readyState !== 'open') return error("❌ Canal non pret", 'errorBox2');
   const start = Date.now();
   dc.send(JSON.stringify({
     msgType: 'metadata',
@@ -244,7 +235,6 @@ async function sendFile(dc, receiverId) {
   if (offset >= selectedFile.size) {
     const peerInfo = activePeerConnections.get(receiverId);
     if (peerInfo) { peerInfo.progress = 100; peerInfo.speedText = ''; renderReceiversList(); }
-    console.log('✅ Envoi terminé (' + receiverId + ')');
   }
 }
 
@@ -260,7 +250,7 @@ async function createPeerForReceiver(receiverId) {
     activePeerConnections.set(receiverId, { pc: peer, dc, pending: [], progress: 0, speedText: '' });
     requestQueuedIce(receiverId);
     updateDashboard();
-  } catch (e) { console.error('❌ Erreur création PC :', e); }
+  } catch (e) { console.error('❌ Erreur PC :', e); }
 }
 
 /* ---------- DASHBOARD ---------- */
@@ -278,10 +268,10 @@ function renderReceiversList() {
     const pct = peer.progress || 0;
     const done = pct >= 100;
     html += '<div class="receiver-item">' +
-      '<div class="receiver-item-top"><span class="receiver-id">👤 ' + id.slice(0, 8) + '…</span>' +
-      '<span class="receiver-status">' + (done ? '✅ Terminé' : '⬇️ ' + pct + ' %') + '</span></div>' +
+      '<div class="receiver-item-top"><span class="receiver-id">👤 ' + escapeHtmlLocal(id.slice(0, 8)) + '...</span>' +
+      '<span class="receiver-status">' + (done ? '✅ Termine' : '⬇️ ' + pct + ' %') + '</span></div>' +
       '<div class="receiver-progress-bar"><div class="receiver-progress-fill" style="width:' + pct + '%"></div></div>' +
-      (peer.speedText && !done ? '<div class="receiver-speed">' + peer.speedText + '</div>' : '') +
+      (peer.speedText && !done ? '<div class="receiver-speed">' + escapeHtmlLocal(peer.speedText) + '</div>' : '') +
       '</div>';
   });
   list.innerHTML = html;
@@ -295,13 +285,13 @@ function startTimeLeftTicker() {
     const left = currentTransfer.expiresAt - Date.now();
     el.textContent = formatTimeLeft(left);
     if (badge) {
-      if (left <= 0) { badge.textContent = '🔴 Expiré'; badge.classList.add('expired'); }
+      if (left <= 0) { badge.textContent = '🔴 Expire'; badge.classList.add('expired'); }
       else { badge.textContent = '🟢 Actif'; badge.classList.remove('expired'); }
     }
   }, 30000);
 }
 
-/* ---------- HISTORIQUE (localStorage) ---------- */
+/* ---------- HISTORIQUE ---------- */
 function getHistory() {
   try { return JSON.parse(localStorage.getItem('transferx_history') || '[]'); } catch (e) { return []; }
 }
@@ -344,22 +334,31 @@ function renderHistory() {
     const totalDl = h.reduce((s, x) => s + (x.downloadCount || 0), 0);
     const totalSize = h.reduce((s, x) => s + (x.fileSize || 0), 0);
     stats.innerHTML =
-      '<div class="stat-card"><span class="stat-number">' + h.length + '</span><span class="stat-label">Liens créés</span></div>' +
+      '<div class="stat-card"><span class="stat-number">' + h.length + '</span><span class="stat-label">Liens crees</span></div>' +
       '<div class="stat-card"><span class="stat-number">' + active + '</span><span class="stat-label">Actifs</span></div>' +
-      '<div class="stat-card"><span class="stat-number">' + totalDl + '</span><span class="stat-label">Téléchargements</span></div>' +
+      '<div class="stat-card"><span class="stat-number">' + totalDl + '</span><span class="stat-label">Telechargements</span></div>' +
       '<div class="stat-card"><span class="stat-number">' + bytes(totalSize) + '</span><span class="stat-label">Total</span></div>';
   }
   const list = $('historyList');
   if (!list) return;
+  list.onclick = (event) => {
+    const button = event.target.closest('button[data-history-action][data-room-id]');
+    if (!button) return;
+    const rid = button.dataset.roomId;
+    const action = button.dataset.historyAction;
+    if (action === 'copy') window.__copyHistoryLink(rid);
+    else if (action === 'qr') window.__showHistoryQR(rid);
+    else if (action === 'delete') window.__deleteHistory(rid);
+  };
   if (h.length === 0) {
-    list.innerHTML = '<p style="text-align:center;color:var(--muted);padding:30px;">Aucun lien créé pour le moment</p>';
+    list.innerHTML = '<p style="text-align:center;color:var(--muted);padding:30px;">Aucun lien cree</p>';
     return;
   }
   list.innerHTML = h.map(item => {
     const isActive = item.expiresAt > now;
     return '<div class="history-item ' + (isActive ? '' : 'expired') + '">' +
       '<div class="history-item-header"><span class="history-item-name">📎 ' + escapeHtmlLocal(item.fileName) + '</span>' +
-      '<span class="history-item-status ' + (isActive ? 'active' : 'expired') + '">' + (isActive ? 'Actif' : 'Expiré') + '</span></div>' +
+      '<span class="history-item-status ' + (isActive ? 'active' : 'expired') + '">' + (isActive ? 'Actif' : 'Expire') + '</span></div>' +
       '<div class="history-item-details">' +
       '<span>📦 ' + bytes(item.fileSize) + '</span>' +
       '<span>📅 ' + new Date(item.createdAt).toLocaleDateString('fr-FR') + '</span>' +
@@ -368,16 +367,16 @@ function renderHistory() {
       '<span>⬇️ ' + (item.downloadCount || 0) + '</span>' +
       '</div>' +
       '<div class="history-item-actions">' +
-      (isActive ? '<button class="btn secondary" onclick="window.__copyHistoryLink(\'' + item.roomId + '\')">📋 Copier</button>' +
-        '<button class="btn secondary" onclick="window.__showHistoryQR(\'' + item.roomId + '\')">📱 QR</button>' : '') +
-      '<button class="btn ghost" onclick="window.__deleteHistory(\'' + item.roomId + '\')">🗑️</button>' +
+      (isActive ? '<button class="btn secondary" type="button" data-history-action="copy" data-room-id="' + escapeHtmlLocal(item.roomId) + '\">📋 Copier</button>' +
+        '<button class="btn secondary" type="button" data-history-action="qr" data-room-id="' + escapeHtmlLocal(item.roomId) + '\">📱 QR</button>' : '') +
+      '<button class="btn ghost" type="button" data-history-action="delete" data-room-id="' + escapeHtmlLocal(item.roomId) + '\">🗑️</button>' +
       '</div></div>';
   }).join('');
 }
 window.__copyHistoryLink = (rid) => {
   const link = location.origin + '?room=' + encodeURIComponent(rid);
   if (navigator.clipboard) navigator.clipboard.writeText(link).catch(() => {});
-  alert('✅ Lien copié !');
+  alert('✅ Lien copie !');
 };
 window.__showHistoryQR = (rid) => {
   const link = location.origin + '?room=' + encodeURIComponent(rid);
@@ -387,7 +386,7 @@ window.__showHistoryQR = (rid) => {
   renderQR(link);
 };
 window.__deleteHistory = (rid) => {
-  if (!confirm("Supprimer ce lien de l'historique ?")) return;
+  if (!confirm("Supprimer ce lien ?")) return;
   setHistory(getHistory().filter(x => x.roomId !== rid));
   renderHistory();
 };
@@ -396,12 +395,14 @@ function exportHistory() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'transferx-historique-' + new Date().toISOString().split('T')[0] + '.json';
+  a.download = 'transferx-history-' + new Date().toISOString().slice(0, 10) + '.json';
+  document.body.appendChild(a);
   a.click();
+  document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
-/* ---------- SINK OPFS (réception) ---------- */
+/* ---------- SINK OPFS ---------- */
 async function createSink() {
   try {
     if (supportsOPFSWritable()) {
@@ -423,7 +424,7 @@ async function createSink() {
     disk: false,
     write: async (p) => {
       size += p.byteLength;
-      if (size > MEM_SINK_LIMIT) throw new Error('cet appareil/navigateur ne permet pas l\'écriture temporaire sur disque : fichier trop volumineux pour être reçu en mémoire (max ' + bytes(MEM_SINK_LIMIT) + '). Essayez avec Chrome à jour plutôt que le navigateur intégré d\'une autre application.');
+      if (size > MEM_SINK_LIMIT) throw new Error('Fichier trop volumineux pour la memoire');
       chunks.push(p);
     },
     close: async () => new Blob(chunks),
@@ -440,7 +441,7 @@ function setupReceiverChannel() {
     let started = 0;
     channel.onopen = () => {
       const t = $('transferTitle');
-      if (t) t.textContent = 'Réception en cours…';
+      if (t) t.textContent = 'Reception en cours...';
       started = Date.now();
       transferStart = started;
     };
@@ -456,17 +457,8 @@ function setupReceiverChannel() {
             expectedSize = Number(meta.size) || 0;
             receivedSize = 0;
             if (expectedSize > MAX_FILE_SIZE) {
-              try { channel.send(JSON.stringify({ msgType: 'error', message: 'Fichier trop volumineux (max ' + bytes(MAX_FILE_SIZE) + ')' })); } catch (e) {}
-              return error('❌ Fichier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')', 'errorBox3');
-            }
-            if (navigator.storage && navigator.storage.estimate) {
-              try {
-                const est = await navigator.storage.estimate();
-                const available = Math.max(0, (est.quota || 0) - (est.usage || 0));
-                if (est.quota && expectedSize > available * 0.9) {
-                  return error('❌ Espace de stockage insuffisant sur cet appareil', 'errorBox3');
-                }
-              } catch (e) { console.warn('Estimation du stockage indisponible :', e); }
+              try { channel.send(JSON.stringify({ msgType: 'error', message: 'Fichier trop volumineux' })); } catch (e) {}
+              return error('❌ Fichier trop volumineux', 'errorBox3');
             }
             try { sink = await createSink(); }
             catch (e) { sink = null; return error('❌ ' + e.message, 'errorBox3'); }
@@ -478,7 +470,7 @@ function setupReceiverChannel() {
       const part = new Uint8Array(msgEvent.data);
       if (sink) {
         try { await sink.write(part); }
-        catch (e) { sink = null; return error("❌ Erreur d'écriture : " + e.message, 'errorBox3'); }
+        catch (e) { sink = null; return error("❌ Erreur d'ecriture : " + e.message, 'errorBox3'); }
       }
       receivedSize += part.byteLength;
       updateProgress(receivedSize, expectedSize, started);
@@ -498,7 +490,7 @@ async function finishReceive(channel) {
         link.href = url;
         link.download = expectedName;
         link.classList.remove('hidden');
-        link.textContent = '⬇️ Télécharger ' + expectedName + ' (' + bytes(file.size) + ')';
+        link.textContent = '⬇️ Telecharger ' + expectedName + ' (' + bytes(file.size) + ')';
       }
     } catch (e) { error('❌ Finalisation : ' + e.message, 'errorBox3'); }
     sink = null;
@@ -506,29 +498,30 @@ async function finishReceive(channel) {
   try { channel.send(JSON.stringify({ msgType: 'complete' })); } catch (e) {}
   if (socket && socket.connected && roomId) socket.emit('download-complete', { roomId });
   showStep('step-done');
-  const sub = $('doneSubtitle'); if (sub) sub.textContent = expectedName + ' — transfert terminé';
+  const sub = $('doneSubtitle'); if (sub) sub.textContent = expectedName + ' — transfert termine';
 }
 
-/* ---------- FLUX EXPÉDITEUR ---------- */
+
+/* ---------- FLUX EXPEDITEUR ---------- */
 async function startSender() {
-  if (!selectedFile) return error('❌ Sélectionnez un fichier');
-  if (!socket || !socket.connected) return error('❌ Connexion au serveur en cours, réessayez dans un instant');
+  if (!selectedFile) return error('❌ Selectionnez un fichier');
+  if (!socket || !socket.connected) return error('❌ Connexion en cours, reessayez');
   clearErrors();
   const ttlSel = $('expirySelect');
   const ttl = ttlSel ? parseInt(ttlSel.value, 10) || 86400000 : 86400000;
   const pinRaw = $('pinInput') ? $('pinInput').value.trim() : '';
-  if (pinRaw && !/^\d{4,8}$/.test(pinRaw)) return error('❌ Le code PIN doit contenir 4 à 8 chiffres');
+  if (pinRaw && !/^\d{4,8}$/.test(pinRaw)) return error('❌ PIN : 4 a 8 chiffres');
   role = 'sender';
   transferAborted = false;
   window.addEventListener('beforeunload', handleBeforeUnload);
   activePeerConnections = new Map();
   downloadCount = 0;
   showStep('step-waiting');
-  const wm = $('waitingMsg'); if (wm) wm.textContent = 'Connexion…';
+  const wm = $('waitingMsg'); if (wm) wm.textContent = 'Connexion...';
   socket.emit('create-room', { ttl, pin: pinRaw || null }, async (reply) => {
     if (!reply || !reply.success || !reply.roomId) {
       showStep('step-select');
-      return error('❌ ' + ((reply && reply.error) || 'Impossible de créer la room'), 'errorBox');
+      return error('❌ ' + ((reply && reply.error) || 'Impossible de creer la room'), 'errorBox');
     }
     roomId = reply.roomId;
     currentTransfer = {
@@ -543,16 +536,184 @@ async function startSender() {
     saveToHistory(currentTransfer);
     const link = location.origin + '?room=' + encodeURIComponent(roomId);
     const out = $('linkOutput'); if (out) out.value = link;
-    await renderQR(link);
-    const badge = $('pinBadge');
-    if (badge) {
-      if (pinRaw) { badge.textContent = '🔢 PIN à communiquer séparément : ' + pinRaw; badge.classList.remove('hidden'); }
-      else badge.classList.add('hidden');
+    const pinBadge = $('pinBadge');
+    if (pinBadge) {
+      if (pinRaw) { pinBadge.textContent = '🔒 PIN : ' + pinRaw; pinBadge.classList.remove('hidden'); }
+      else pinBadge.classList.add('hidden');
     }
-    const wm2 = $('waitingMsg'); if (wm2) wm2.textContent = "⏳ Partagez le lien — il reste actif jusqu'à expiration";
-    updateDashboard();
+    renderQR(link);
     startTimeLeftTicker();
+    updateDashboard();
+    const wm2 = $('waitingMsg');
+    if (wm2) wm2.textContent = "⏳ Lien actif — en attente du destinataire...";
   });
+}
+
+/* ---------- ZIP : dossier ET multi-fichiers ---------- */
+async function prepareFolderZip(files) {
+  const total = files.reduce((s, f) => s + (f.size || 0), 0);
+  if (total > MAX_FILE_SIZE) return error('❌ Dossier trop volumineux (max ' + bytes(MAX_FILE_SIZE) + ')');
+  const titleEl = $('transferTitle');
+  const rootName = ((files[0].webkitRelativePath || 'dossier').split('/')[0]) || 'dossier';
+  try {
+    if (titleEl) titleEl.textContent = 'Preparation du dossier...';
+    await need('jszip');
+    const zip = new JSZip();
+    files.forEach(f => zip.file(f.webkitRelativePath || f.name, f));
+    let finalFile;
+    if (supportsOPFSWritable()) {
+      const rootDir = await navigator.storage.getDirectory();
+      const handle = await rootDir.getFileHandle('transferx_sender.zip', { create: true });
+      const writable = await handle.createWritable();
+      try {
+        await new Promise((resolve, reject) => {
+          const stream = zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' });
+          stream.on('data', (chunk) => {
+            stream.pause();
+            writable.write(chunk)
+              .then(() => stream.resume())
+              .catch((err) => { stream.pause(); reject(err); });
+          });
+          stream.on('error', reject);
+          stream.on('end', resolve);
+          stream.resume();
+        });
+      } catch (streamErr) {
+        try { await writable.abort(); } catch (e2) {}
+        throw streamErr;
+      }
+      await writable.close();
+      finalFile = await handle.getFile();
+      Object.defineProperty(finalFile, 'name', { writable: true, value: rootName + '.zip' });
+    } else {
+      if (total > MEM_ZIP_LIMIT) {
+        const raison = isRestrictedWebView()
+          ? "navigateur integre (WhatsApp, Facebook, Instagram...)"
+          : "navigateur sans OPFS";
+        throw new Error('Dossier trop volumineux (' + bytes(total) + ') pour la memoire car ' + raison + '. Ouvrez dans Chrome ou compressez avant.');
+      }
+      const parts = [];
+      let accumulated = 0;
+      await new Promise((resolve, reject) => {
+        const stream = zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' });
+        stream.on('data', (chunk) => {
+          accumulated += chunk.byteLength;
+          if (accumulated > MEM_ZIP_LIMIT) {
+            stream.pause();
+            reject(new Error('Dossier trop volumineux pour la memoire'));
+            return;
+          }
+          parts.push(new Blob([chunk]));
+        });
+        stream.on('error', reject);
+        stream.on('end', resolve);
+        stream.resume();
+      });
+      finalFile = new File(parts, rootName + '.zip', { type: 'application/zip' });
+    }
+    selectedFile = finalFile;
+    selectedFiles = [finalFile];
+    useMultipleFiles = false;
+    if (titleEl) titleEl.textContent = 'Transfert Securise';
+    showPreview(selectedFile);
+    renderStrip();
+    updateFilePreview();
+    clearErrors();
+    ensureSocket();
+  } catch (err) {
+    error('❌ Erreur preparation : ' + err.message);
+    selectedFiles = [];
+    selectedFile = null;
+    renderStrip();
+    updateFilePreview();
+    if (navigator.storage && navigator.storage.getDirectory) {
+      try {
+        const rootDir = await navigator.storage.getDirectory();
+        await rootDir.removeEntry('transferx_sender.zip');
+      } catch (cleanupErr) {}
+    }
+  }
+}
+
+async function prepareMultiFilesZip(files) {
+  const total = files.reduce((s, f) => s + (f.size || 0), 0);
+  if (total > MAX_FILE_SIZE) return error('❌ Taille totale trop volumineuse (max ' + bytes(MAX_FILE_SIZE) + ')');
+  const titleEl = $('transferTitle');
+  try {
+    if (titleEl) titleEl.textContent = 'Preparation de l\'archive...';
+    await need('jszip');
+    const zip = new JSZip();
+    files.forEach(f => zip.file(f.name, f));
+    let finalFile;
+    if (supportsOPFSWritable()) {
+      const rootDir = await navigator.storage.getDirectory();
+      const handle = await rootDir.getFileHandle('transferx_multi.zip', { create: true });
+      const writable = await handle.createWritable();
+      try {
+        await new Promise((resolve, reject) => {
+          const stream = zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' });
+          stream.on('data', (chunk) => {
+            stream.pause();
+            writable.write(chunk)
+              .then(() => stream.resume())
+              .catch((err) => { stream.pause(); reject(err); });
+          });
+          stream.on('error', reject);
+          stream.on('end', resolve);
+          stream.resume();
+        });
+      } catch (streamErr) {
+        try { await writable.abort(); } catch (e2) {}
+        throw streamErr;
+      }
+      await writable.close();
+      finalFile = await handle.getFile();
+      Object.defineProperty(finalFile, 'name', { writable: true, value: 'archive-' + new Date().toLocaleDateString('fr-FR') + '.zip' });
+    } else {
+      if (total > MEM_ZIP_LIMIT) {
+        throw new Error('Archive trop volumineuse pour la memoire (max ' + bytes(MEM_ZIP_LIMIT) + '). Ouvrez dans Chrome.');
+      }
+      const parts = [];
+      let accumulated = 0;
+      await new Promise((resolve, reject) => {
+        const stream = zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' });
+        stream.on('data', (chunk) => {
+          accumulated += chunk.byteLength;
+          if (accumulated > MEM_ZIP_LIMIT) {
+            stream.pause();
+            reject(new Error('Archive trop volumineuse'));
+            return;
+          }
+          parts.push(new Blob([chunk]));
+        });
+        stream.on('error', reject);
+        stream.on('end', resolve);
+        stream.resume();
+      });
+      finalFile = new File(parts, 'archive-' + new Date().toLocaleDateString('fr-FR') + '.zip', { type: 'application/zip' });
+    }
+    selectedFile = finalFile;
+    selectedFiles = [finalFile];
+    useMultipleFiles = false;
+    if (titleEl) titleEl.textContent = 'Transfert Securise';
+    showPreview(selectedFile);
+    renderStrip();
+    updateFilePreview();
+    clearErrors();
+    ensureSocket();
+  } catch (err) {
+    error('❌ Erreur preparation : ' + err.message);
+    selectedFiles = [];
+    selectedFile = null;
+    renderStrip();
+    updateFilePreview();
+    if (navigator.storage && navigator.storage.getDirectory) {
+      try {
+        const rootDir = await navigator.storage.getDirectory();
+        await rootDir.removeEntry('transferx_multi.zip');
+      } catch (cleanupErr) {}
+    }
+  }
 }
 
 /* ---------- FLUX DESTINATAIRE ---------- */
@@ -560,7 +721,7 @@ function joinRoom(pin) {
   if (!socket || !socket.connected || !roomId) return;
   socket.emit('join-room', { roomId, pin: pin || null }, (reply) => {
     if (reply && reply.pinRequired) {
-      const t = $('transferTitle'); if (t) t.textContent = '🔒 Code PIN requis';
+      const t = $('transferTitle'); if (t) t.textContent = '🔒 PIN requis';
       const pinBox = $('pinBox'); if (pinBox) pinBox.classList.remove('hidden');
       if (reply.error) {
         error('❌ ' + reply.error, 'errorBox3');
@@ -569,7 +730,7 @@ function joinRoom(pin) {
       return;
     }
     if (!reply || !reply.success) {
-      error('❌ ' + ((reply && reply.error) || 'Lien invalide ou expiré'), 'errorBox3');
+      error('❌ ' + ((reply && reply.error) || 'Lien invalide ou expire'), 'errorBox3');
       showStep('step-select');
       return;
     }
@@ -577,11 +738,12 @@ function joinRoom(pin) {
     requestQueuedIce(null);
   });
 }
+
 async function startReceiver() {
   role = 'receiver';
   window.addEventListener('beforeunload', handleBeforeUnload);
   showStep('step-transfer');
-  const t = $('transferTitle'); if (t) t.textContent = 'Connexion au pair…';
+  const t = $('transferTitle'); if (t) t.textContent = 'Connexion au pair...';
   try {
     pc = await newPeerConnection();
     wirePeer(pc, null);
@@ -604,6 +766,8 @@ function resetConnection() {
 }
 function resetUI() {
   selectedFile = null;
+  selectedFiles = [];
+  useMultipleFiles = false;
   currentTransfer = null;
   downloadCount = 0;
   const fi = $('fileInput'); if (fi) fi.value = '';
@@ -619,6 +783,7 @@ function resetUI() {
   const pi = $('pinInput'); if (pi) pi.value = '';
   const pe = $('pinEntry'); if (pe) pe.value = '';
   const pbox = $('pinBox'); if (pbox) pbox.classList.add('hidden');
+  const strip = $('selectedStrip'); if (strip) { strip.innerHTML = ''; strip.classList.add('hidden'); }
 }
 function cancelTransfer() {
   window.removeEventListener('beforeunload', handleBeforeUnload);
@@ -649,7 +814,7 @@ function initSocket() {
   });
   socket.on('disconnect', () => {
     setSocketReady(false);
-    if (role && !transferAborted) error('⚠️ Connexion signalisation perdue — reconnexion…', role === 'sender' ? 'errorBox2' : 'errorBox3');
+    if (role && !transferAborted) error('⚠️ Connexion perdue — reconnexion...', role === 'sender' ? 'errorBox2' : 'errorBox3');
   });
   socket.on('connect_error', () => setSocketReady(false));
 
@@ -666,7 +831,6 @@ function initSocket() {
       requestQueuedIce(null);
     } catch (e) { error('❌ Offre invalide : ' + e.message, 'errorBox3'); }
   });
-
   socket.on('answer-received', async (data) => {
     if (role !== 'sender') return;
     const peer = activePeerConnections.get(data.receiverId);
@@ -676,7 +840,7 @@ function initSocket() {
       const queued = peer.pending.splice(0);
       for (const c of queued) peer.pc.addIceCandidate(c).catch(() => {});
       requestQueuedIce(data.receiverId);
-    } catch (e) { error('❌ Réponse invalide : ' + e.message, 'errorBox2'); }
+    } catch (e) { error('❌ Reponse invalide : ' + e.message, 'errorBox2'); }
   });
 
   socket.on('ice-candidate', (data) => {
@@ -698,9 +862,8 @@ function initSocket() {
   socket.on('receiver-joined', (data) => {
     if (role !== 'sender') return;
     if (data && data.receiverId) createPeerForReceiver(data.receiverId);
-    else { const wm = $('waitingMsg'); if (wm) wm.textContent = '✅ Destinataire connecté !'; }
+    else { const wm = $('waitingMsg'); if (wm) wm.textContent = '✅ Destinataire connecte !'; }
   });
-
   socket.on('receiver-left', (data) => {
     if (role !== 'sender') return;
     if (data && data.receiverId) {
@@ -709,7 +872,7 @@ function initSocket() {
     }
     updateDashboard();
     const wm = $('waitingMsg');
-    if (wm && !transferAborted) wm.textContent = "⏳ Lien toujours actif — en attente d'autres destinataires…";
+    if (wm && !transferAborted) wm.textContent = "⏳ Lien actif — en attente...";
   });
 
   socket.on('download-notification', (data) => {
@@ -717,18 +880,18 @@ function initSocket() {
     updateDashboard();
     if (currentTransfer) updateHistoryDownloads(currentTransfer.roomId, downloadCount);
     const wm = $('waitingMsg');
-    if (wm) wm.textContent = '✅ Téléchargement #' + downloadCount + ' terminé — lien toujours actif';
+    if (wm) wm.textContent = '✅ Telechargement #' + downloadCount + ' termine';
   });
 
   socket.on('peer-disconnected', () => {
     if (!transferAborted) {
-      error('❌ Pair déconnecté', role === 'sender' ? 'errorBox2' : 'errorBox3');
+      error('❌ Pair deconnecte', role === 'sender' ? 'errorBox2' : 'errorBox3');
       resetConnection();
       showStep('step-select');
     }
   });
   socket.on('peer-cancelled', () => {
-    error('❌ Expéditeur annulé', 'errorBox3');
+    error('❌ Expediteur annule', 'errorBox3');
     resetConnection();
     showStep('step-select');
   });
@@ -739,7 +902,7 @@ async function sendEmail() {
   const toEl = $('emailInput'); const to = toEl ? toEl.value.trim() : '';
   const linkEl = $('linkOutput'); const link = linkEl ? linkEl.value : '';
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return error('❌ Email invalide', 'errorBox2');
-  if (!link) return error('❌ Aucun lien à envoyer', 'errorBox2');
+  if (!link) return error('❌ Aucun lien', 'errorBox2');
   const btn = $('btnSendEmail'); if (btn) btn.disabled = true;
   try {
     const res = await fetch('/api/send-email', {
@@ -747,116 +910,62 @@ async function sendEmail() {
       body: JSON.stringify({ to, link, fileName: selectedFile ? selectedFile.name : '' })
     });
     const data = await res.json();
-    if (!res.ok || !data.success) throw new Error(data.error || 'Échec');
-    if (btn) btn.textContent = '✅ Envoyé';
+    if (!res.ok || !data.success) throw new Error(data.error || 'Echec');
+    if (btn) btn.textContent = '✅ Envoye';
     if (toEl) toEl.value = '';
   } catch (e) { error('❌ ' + e.message, 'errorBox2'); }
   finally { setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = '✉️ Envoyer'; } }, 2500); }
 }
 
-/* ---------- UI ---------- */
-function bindUI() {
-  const bmf = $('btnModeFile');
-  if (bmf) bmf.onclick = () => { clearErrors(); try { sessionStorage.setItem('transferx_picking', String(Date.now())); } catch (e) {} const i = $('fileInput'); if (i) i.click(); };
-  const bmf2 = $('btnModeFolder');
-  if (bmf2) bmf2.onclick = () => { clearErrors(); try { sessionStorage.setItem('transferx_picking', String(Date.now())); } catch (e) {} const i = $('folderInput'); if (i) i.click(); };
+/* ========== UI : BOUTONS ORIGINAUX + NOUVEAU SELECTEUR ========== */
 
+function bindUI() {
+  // Boutons originaux
+  const bmf = $('btnModeFile');
+  if (bmf) bmf.onclick = () => {
+    clearErrors();
+    try { sessionStorage.setItem('transferx_picking', String(Date.now())); } catch (e) {}
+    const i = $('fileInput');
+    if (i) i.click();
+  };
+
+  const bmf2 = $('btnModeFolder');
+  if (bmf2) bmf2.onclick = () => {
+    clearErrors();
+    try { sessionStorage.setItem('transferx_picking', String(Date.now())); } catch (e) {}
+    const i = $('folderInput');
+    if (i) i.click();
+  };
+
+  // Input original file
   const fi = $('fileInput');
   if (fi) fi.onchange = (e) => {
     try { sessionStorage.removeItem('transferx_picking'); } catch (err) {}
     const file = e.target.files && e.target.files[0];
     if (!file) return;
-    if (file.size > MAX_FILE_SIZE) { error('❌ Fichier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')'); e.target.value = ''; return; }
+    if (file.size > MAX_FILE_SIZE) { error('❌ Fichier trop volumineux'); e.target.value = ''; return; }
     selectedFile = file;
+    selectedFiles = [file];
+    useMultipleFiles = false;
     showPreview(file);
     ensureSocket();
   };
 
+  // Input original folder
   const fo = $('folderInput');
   if (fo) fo.onchange = async (e) => {
     try { sessionStorage.removeItem('transferx_picking'); } catch (err) {}
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
-    const total = files.reduce((s, f) => s + (f.size || 0), 0);
-    if (total > MAX_FILE_SIZE) { error('❌ Dossier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')'); e.target.value = ''; return; }
-    const titleEl = $('transferTitle');
-    const rootName = ((files[0].webkitRelativePath || 'dossier').split('/')[0]) || 'dossier';
-    try {
-      if (titleEl) titleEl.textContent = 'Préparation du dossier en cours...';
-      await need('jszip');
-      const zip = new JSZip();
-      files.forEach(f => zip.file(f.webkitRelativePath || f.name, f));
-      let finalFile;
-
-      // 1️⃣ OPFS : écriture sur disque avec contre-pression
-      if (supportsOPFSWritable()) {
-        const rootDir = await navigator.storage.getDirectory();
-        const handle = await rootDir.getFileHandle('transferx_sender.zip', { create: true });
-        const writable = await handle.createWritable();
-        try {
-          await new Promise((resolve, reject) => {
-            const stream = zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' });
-            stream.on('data', (chunk) => {
-              stream.pause();
-              writable.write(chunk)
-                .then(() => stream.resume())
-                .catch((err) => { stream.pause(); reject(err); });
-            });
-            stream.on('error', reject);
-            stream.on('end', resolve);
-            stream.resume();
-          });
-        } catch (streamErr) {
-          try { await writable.abort(); } catch (e2) {}
-          throw streamErr;
-        }
-        await writable.close();
-        finalFile = await handle.getFile();
-        Object.defineProperty(finalFile, 'name', { writable: true, value: rootName + '.zip' });
-      } else {
-        // 2️⃣ Fallback RAM limité
-        if (total > MEM_ZIP_LIMIT) {
-          const raison = isRestrictedWebView()
-            ? "le navigateur intégré utilisé (WhatsApp, Facebook, Instagram…) ne le permet pas"
-            : "ce navigateur/appareil ne permet pas l'écriture temporaire sur disque (OPFS)";
-          throw new Error('Dossier trop volumineux (' + bytes(total) + ') pour être préparé en mémoire car ' + raison + '. Solutions : ouvrez ce lien dans Chrome à jour, envoyez les fichiers un par un plutôt qu\'en dossier, ou compressez le dossier en un seul fichier avant de l\'envoyer (limite actuelle : ' + bytes(MEM_ZIP_LIMIT) + ').');
-        }
-        const parts = [];
-        let accumulated = 0;
-        await new Promise((resolve, reject) => {
-          const stream = zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' });
-          stream.on('data', (chunk) => {
-            accumulated += chunk.byteLength;
-            if (accumulated > MEM_ZIP_LIMIT) {
-              stream.pause();
-              reject(new Error('Dossier trop volumineux pour la mémoire (max ' + bytes(MEM_ZIP_LIMIT) + ')'));
-              return;
-            }
-            parts.push(new Blob([chunk]));
-          });
-          stream.on('error', reject);
-          stream.on('end', resolve);
-          stream.resume();
-        });
-        finalFile = new File(parts, rootName + '.zip', { type: 'application/zip' });
-      }
-      selectedFile = finalFile;
-      if (titleEl) titleEl.textContent = 'Transfert Sécurisé';
-      showPreview(selectedFile);
-      ensureSocket();
-    } catch (err) {
-      error('❌ Erreur préparation : ' + err.message);
-      if (navigator.storage && navigator.storage.getDirectory) {
-        try {
-          const rootDir = await navigator.storage.getDirectory();
-          await rootDir.removeEntry('transferx_sender.zip');
-        } catch (cleanupErr) {}
-      }
-    } finally {
-      e.target.value = '';
-    }
+    await prepareFolderZip(files);
+    e.target.value = '';
   };
 
+  // Bouton nouveau selecteur
+  const bop = $('btnOpenPicker');
+  if (bop) bop.onclick = () => { clearErrors(); openSheet(); };
+
+  // Reste des boutons
   const bs = $('btnStartSend'); if (bs) bs.onclick = startSender;
   const bcs = $('btnCancelSend'); if (bcs) bcs.onclick = cancelTransfer;
   const bct = $('btnCancelTransfer'); if (bct) bct.onclick = cancelTransfer;
@@ -866,7 +975,7 @@ function bindUI() {
     const out = $('linkOutput'); if (!out) return;
     try { await navigator.clipboard.writeText(out.value); }
     catch (e) { out.select(); document.execCommand('copy'); }
-    bcl.textContent = '✅ Copié';
+    bcl.textContent = '✅ Copie';
     setTimeout(() => { bcl.textContent = '📋 Copier'; }, 2000);
   };
   const bse = $('btnSendEmail'); if (bse) bse.onclick = sendEmail;
@@ -878,9 +987,9 @@ function bindUI() {
   if (bsp) bsp.onclick = () => {
     const pe = $('pinEntry');
     const pin = pe ? pe.value.trim() : '';
-    if (!/^\d{4,8}$/.test(pin)) { error('❌ Le code PIN doit contenir 4 à 8 chiffres', 'errorBox3'); return; }
+    if (!/^\d{4,8}$/.test(pin)) { error('❌ PIN : 4 a 8 chiffres', 'errorBox3'); return; }
     clearErrors();
-    const t = $('transferTitle'); if (t) t.textContent = 'Vérification du PIN…';
+    const t = $('transferTitle'); if (t) t.textContent = 'Verification du PIN...';
     joinRoom(pin);
   };
   const pe = $('pinEntry');
@@ -889,54 +998,239 @@ function bindUI() {
   });
 }
 
+/* ========== BOTTOM SHEET TELEGRAM ========== */
+
+function openSheet() {
+  const ov = $('pickerOverlay');
+  const s = $('pickerSheet');
+  if (ov) ov.classList.remove('hidden');
+  if (s) s.classList.remove('hidden', 'closing');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeSheet() {
+  const s = $('pickerSheet');
+  if (s) s.classList.add('closing');
+  setTimeout(() => {
+    if (s) s.classList.add('hidden');
+    const ov = $('pickerOverlay');
+    if (ov) ov.classList.add('hidden');
+    document.body.style.overflow = '';
+  }, 240);
+}
+
+function bindPicker() {
+  const inputs = {
+    gallery: $('galleryInput'),
+    file:    $('fileInputSheet'),
+    folder:  $('folderInputSheet'),
+    camera:  $('cameraInput')
+  };
+
+  const bclose = $('btnCloseSheet');
+  if (bclose) bclose.addEventListener('click', closeSheet);
+  const ov = $('pickerOverlay');
+  if (ov) ov.addEventListener('click', closeSheet);
+
+  document.querySelectorAll('.sheet-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.sheet-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const input = inputs[tab.dataset.action];
+      if (!input) return;
+      input.value = '';
+      try { sessionStorage.setItem('transferx_picking', String(Date.now())); } catch (e) {}
+      input.click();
+    });
+  });
+
+  ['gallery', 'file', 'camera'].forEach(key => {
+    const input = inputs[key];
+    if (!input) return;
+    input.addEventListener('change', () => {
+      try { sessionStorage.removeItem('transferx_picking'); } catch (e) {}
+      if (input.files && input.files.length) {
+        addFiles([...input.files]);
+        closeSheet();
+      }
+    });
+  });
+
+  const fso = inputs.folder;
+  if (fso) fso.addEventListener('change', async (e) => {
+    try { sessionStorage.removeItem('transferx_picking'); } catch (err) {}
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    closeSheet();
+    await prepareFolderZip(files);
+    e.target.value = '';
+  });
+}
+
+/* ---------- Fonctions du nouveau selecteur ---------- */
+
+function addFiles(files) {
+  selectedFiles.push(...files);
+  useMultipleFiles = true;
+  syncSelectedFile();
+}
+
+function syncSelectedFile() {
+  if (!selectedFiles.length) {
+    selectedFile = null;
+    return;
+  }
+
+  const total = selectedFiles.reduce((s, f) => s + f.size, 0);
+  if (total > MAX_FILE_SIZE) {
+    error('❌ Taille totale trop volumineuse (max ' + bytes(MAX_FILE_SIZE) + ')');
+    selectedFiles = [];
+    selectedFile = null;
+    renderStrip();
+    return;
+  }
+
+  if (selectedFiles.length === 1) {
+    selectedFile = selectedFiles[0];
+    showPreview(selectedFile);
+  } else {
+    prepareMultiFilesZip(selectedFiles);
+    return;
+  }
+
+  renderStrip();
+  updateFilePreview();
+  clearErrors();
+  ensureSocket();
+}
+
+function renderStrip() {
+  const strip = $('selectedStrip');
+  if (!strip) return;
+  strip.innerHTML = '';
+  strip.classList.toggle('hidden', selectedFiles.length === 0);
+
+  selectedFiles.forEach((file, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'selected-chip';
+
+    const thumb = document.createElement('div');
+    thumb.className = 'thumb';
+
+    if (file.type.startsWith('image/')) {
+      const img = document.createElement('img');
+      img.src = URL.createObjectURL(file);
+      thumb.appendChild(img);
+    } else if (file.type.startsWith('video/')) {
+      thumb.textContent = '🎬';
+    } else if (file.type.includes('pdf')) {
+      thumb.textContent = '📕';
+    } else if (file.name.match(/\.(zip|rar|7z)$/i)) {
+      thumb.textContent = '🗜️';
+    } else if (file.type.startsWith('audio/')) {
+      thumb.textContent = '🎵';
+    } else {
+      thumb.textContent = '📄';
+    }
+
+    const name = document.createElement('span');
+    name.className = 'chip-name';
+    name.textContent = file.name;
+
+    const size = document.createElement('span');
+    size.className = 'chip-size';
+    size.textContent = formatSize(file.size);
+
+    const remove = document.createElement('button');
+    remove.className = 'chip-remove';
+    remove.type = 'button';
+    remove.textContent = '✕';
+    remove.onclick = () => {
+      selectedFiles.splice(i, 1);
+      if (selectedFiles.length === 0) {
+        selectedFile = null;
+        useMultipleFiles = false;
+      } else {
+        syncSelectedFile();
+      }
+      renderStrip();
+      updateFilePreview();
+    };
+
+    chip.append(thumb, name, size, remove);
+    strip.appendChild(chip);
+  });
+}
+
+function formatSize(b) {
+  if (b < 1024) return b + ' o';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' Ko';
+  if (b < 1073741824) return (b / 1048576).toFixed(1) + ' Mo';
+  return (b / 1073741824).toFixed(2) + ' Go';
+}
+
+function updateFilePreview() {
+  const preview = $('filePreview');
+  const info = $('fileInfo');
+  if (!preview || !info) return;
+
+  if (!selectedFiles.length) {
+    preview.classList.add('hidden');
+    return;
+  }
+
+  preview.classList.remove('hidden');
+  const total = selectedFiles.reduce((s, f) => s + f.size, 0);
+
+  const nameEl = document.createElement('div');
+  nameEl.className = 'file-preview-name';
+  const sizeEl = document.createElement('div');
+  sizeEl.className = 'file-preview-size';
+  if (selectedFiles.length === 1) {
+    nameEl.textContent = '📎 ' + selectedFiles[0].name;
+    sizeEl.textContent = bytes(total);
+  } else {
+    nameEl.textContent = '📦 ' + selectedFiles.length + ' fichiers';
+    sizeEl.textContent = bytes(total) + ' au total';
+  }
+  info.replaceChildren(nameEl, sizeEl);
+}
+
 /* ---------- CYCLE DE VIE ---------- */
 document.addEventListener('visibilitychange', () => { if (!document.hidden && socket && !socket.connected) socket.connect(); });
 window.addEventListener('pageshow', () => { if (socket && !socket.connected) socket.connect(); });
 setInterval(() => { if (!document.hidden && socket && socket.connected) socket.emit('ping-keepalive'); }, 20000);
 
 document.addEventListener('DOMContentLoaded', () => {
-  // ✅ Nettoyage des fichiers temporaires OPFS
   if (window.isSecureContext && supportsOPFSWritable()) {
     navigator.storage.getDirectory().then(root => {
       root.removeEntry('transferx.tmp').catch(() => {});
       root.removeEntry('transferx_sender.zip').catch(() => {});
+      root.removeEntry('transferx_multi.zip').catch(() => {});
     }).catch(() => {});
   }
 
-  // ✅ Détection d'un redémarrage de page pendant une sélection de fichier :
-  // sur les appareils mobiles peu puissants, ouvrir la galerie/le gestionnaire
-  // de fichiers peut pousser le système à décharger l'onglet pour libérer de
-  // la mémoire ; au retour, la page se recharge et le fichier choisi est perdu.
-  // On explique clairement ce qui s'est passé au lieu de laisser l'utilisateur
-  // face à un écran vide ou un message système confus.
   try {
     if (sessionStorage.getItem('transferx_picking')) {
       sessionStorage.removeItem('transferx_picking');
-      const ramInfo = lowMemoryDevice() ? (' (RAM détectée : ' + navigator.deviceMemory + ' Go — appareil sensible à ce problème)') : '';
+      const ramInfo = lowMemoryDevice() ? (' (RAM : ' + navigator.deviceMemory + ' Go)') : '';
       setTimeout(() => {
-        error("⚠️ La sélection a été interrompue, probablement par manque de mémoire sur l'appareil" + ramInfo + " (l'application a été déchargée pendant l'ouverture du sélecteur). Fermez les autres applications ouvertes, puis réessayez — idéalement avec un fichier plus léger ou en le sélectionnant depuis le gestionnaire de fichiers plutôt que la galerie photo.");
+        error("⚠️ Selection interrompue" + ramInfo);
       }, 300);
     }
   } catch (e) {}
 
-  // ✅ Avertissement pour les navigateurs intégrés (WhatsApp, Facebook, Instagram…),
-  // souvent en cause dans les échecs d'envoi par manque de mémoire ou d'API manquantes.
   if (isRestrictedWebView()) {
     setTimeout(() => {
-      error("ℹ️ Vous semblez utiliser le navigateur intégré d'une autre application (WhatsApp, Facebook…). Pour un envoi fiable, ouvrez ce lien dans Chrome (menu ⋮ → « Ouvrir dans le navigateur »).");
+      error("ℹ️ Navigateur integre detecte. Ouvrez dans Chrome pour fiabilite.");
     }, 600);
   }
 
   bindUI();
+  bindPicker();
   setSocketReady(false);
-  if (!window.RTCPeerConnection) return error('❌ WebRTC non supporté');
+  if (!window.RTCPeerConnection) return error('❌ WebRTC non supporte');
 
-  // ✅ Connexion WebSocket différée : on ne l'établit pas systématiquement au
-  // chargement de la page. Un destinataire (lien ?room=) en a besoin tout de
-  // suite ; un expéditeur potentiel n'en a besoin qu'une fois un fichier
-  // effectivement choisi. Ne pas maintenir de connexion active pendant que
-  // le sélecteur natif (galerie/fichiers) est ouvert réduit l'empreinte
-  // mémoire de la page pendant cette fenêtre critique.
   const urlRoom = new URLSearchParams(location.search).get('room');
   if (urlRoom) ensureSocket();
 });
@@ -948,4 +1242,5 @@ function ensureSocket() {
   }, 100);
   setTimeout(() => clearInterval(wait), 15000);
 }
-})();
+
+})(); // FIN DE L'IIFE
