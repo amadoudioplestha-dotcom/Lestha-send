@@ -1,3 +1,13 @@
+
+// Variables globales
+window.socket = null;
+window.role = null;
+window.roomId = null;
+window.selectedFile = null;
+window.transferAborted = false;
+window.iceServers = null;
+window.sendGeneration = 0;
+
 window.__blobUrls = window.__blobUrls || [];
 function trackedObjectURL(blob) {
   const u = URL.createObjectURL(blob);
