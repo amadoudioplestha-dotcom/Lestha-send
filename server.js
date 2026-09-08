@@ -95,34 +95,67 @@ app.post('/api/send-email', async (req, res) => {
     if (!sgMail || !process.env.SENDGRID_API_KEY) {
         return res.status(503).json({ error: 'Service email non configuré.' });
     }
-    const fromEmail = process.env.SENDGRID_FROM_EMAIL || 'amadoudioplestha@gmail.com';
-    try {
-        sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-        await sgMail.send({
-            to: to.trim(),
-            from: { email: fromEmail, name: 'TransferX' },
-            subject: `📦 Vous avez reçu un fichier : ${escapeHtml(fileName) || 'sans nom'}`,
-            html: `
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; background: #f9fafb; padding: 20px; border-radius: 8px;">
-                    <h2 style="color: #1f2937;">📦 Fichier prêt à être récupéré</h2>
-                    <p style="color: #374151;">Un fichier <strong>${escapeHtml(fileName) || 'sans nom'}</strong> vous a été envoyé de manière sécurisée via TransferX.</p>
-                    <p style="margin: 24px 0; text-align: center;">
-                        <a href="${escapeHtml(link)}" style="background: #2563eb; color: #fff; padding: 14px 28px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: bold; font-size: 16px;">⬇️ Récupérer le fichier</a>
-                    </p>
-                    <p style="color: #6b7280; font-size: 13px; border-top: 1px solid #e5e7eb; padding-top: 12px;">
-                        ⚠️ Ce lien fonctionne uniquement pendant que l'expéditeur reste connecté.<br>
-                        🔒 Transfert P2P direct et chiffré — aucun fichier stocké sur un serveur.
-                    </p>
-                </div>`
-        });
-        console.log(`✅ Email envoyé à ${to} via SendGrid`);
-        return res.json({ success: true, provider: 'sendgrid' });
-    } catch (error) {
-        console.error('❌ Erreur SendGrid:', error.response?.body || error.message);
-        return res.status(500).json({
-            error: 'Échec envoi: ' + (error.response?.body?.errors?.[0]?.message || error.message)
-        });
-    }
+const fromEmail = process.env.SENDGRID_FROM_EMAIL;
+if (!fromEmail) {
+    return res.status(503).json({ error: 'Expéditeur non configuré.' });
+}
+
+const safeName = escapeHtml(fileName) || 'sans nom';
+const safeLink = escapeHtml(link);
+
+try {
+    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+    await sgMail.send({
+        to: to.trim(),
+        from: { email: fromEmail, name: 'TransferX' },
+        replyTo: fromEmail,
+        subject: `Un fichier vous attend : ${safeName}`,
+        text:
+`Bonjour,
+
+Un fichier vous a été envoyé via TransferX : ${fileName || 'sans nom'}
+
+Pour le récupérer, ouvrez ce lien :
+${link}
+
+Le lien reste valide pendant que l'expéditeur est connecté.
+Le transfert est direct et chiffré de bout en bout : aucun fichier n'est stocké sur nos serveurs.
+
+— TransferX`,
+        html: `<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f6f7f9;">
+  <div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+    <h2 style="color:#1f2937;font-size:20px;margin:0 0 16px;">Un fichier vous attend</h2>
+    <p style="color:#374151;font-size:15px;line-height:1.5;margin:0 0 24px;">
+      Le fichier <strong>${safeName}</strong> vous a été envoyé via TransferX.
+    </p>
+    <p style="text-align:center;margin:0 0 24px;">
+      <a href="${safeLink}" style="background:#2563eb;color:#ffffff;padding:14px 28px;text-decoration:none;border-radius:6px;display:inline-block;font-weight:bold;font-size:16px;">Récupérer le fichier</a>
+    </p>
+    <p style="color:#6b7280;font-size:13px;line-height:1.6;border-top:1px solid #e5e7eb;padding-top:16px;margin:0;">
+      Le lien reste valide pendant que l'expéditeur est connecté.<br>
+      Transfert direct et chiffré de bout en bout : aucun fichier n'est stocké sur nos serveurs.
+    </p>
+  </div>
+</body></html>`,
+        trackingSettings: {
+            clickTracking: { enable: false, enableText: false },
+            openTracking:  { enable: false }
+        },
+        mailSettings: {
+            sandboxMode: { enable: false }
+        }
+    });
+    console.log(`✅ Email envoyé à ${to}`);
+    return res.json({ success: true, provider: 'sendgrid' });
+} catch (error) {
+    console.error('❌ Erreur SendGrid:', error.response?.body || error.message);
+    return res.status(500).json({
+        error: 'Échec envoi: ' + (error.response?.body?.errors?.[0]?.message || error.message)
+    });
+}
 });
 
 // ========================================
