@@ -984,18 +984,22 @@ function ensureSocket() {
 })();
 
 async function releaseMemoryBeforePicker() {
-  if (socket && socket.connected) { try { socket.disconnect(); } catch (e) {} }
-  const qr = $('qrBox'); if (qr) qr.innerHTML = '';
+  clearErrors();
+  saveDraft();
+  
+  // Fermer le socket s'il existe et est vraiment connecté
+  if (socket && socket.connected === true) { 
+    try { socket.disconnect(); } catch (e) {} 
+  }
+  
+  const qr = $('qrBox'); 
+  if (qr) qr.innerHTML = '';
+  
   revokeAllBlobUrls();
   selectedFile = null;
-  if (navigator.storage && navigator.storage.getDirectory) {
-    try {
-      const root = await navigator.storage.getDirectory();
-      await root.removeEntry('transferx.tmp').catch(() => {});
-      await root.removeEntry('transferx_sender.zip').catch(() => {});
-    } catch (e) {}
-  }
-  await new Promise(r => setTimeout(r, 120));
+  
+  restoreDraft();
+  bindUI();
 }
 
 async function pickFilesRobust() {
