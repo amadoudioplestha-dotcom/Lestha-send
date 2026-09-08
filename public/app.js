@@ -949,3 +949,129 @@ function ensureSocket() {
   setTimeout(() => clearInterval(wait), 15000);
 }
 })();
+
+const overlay   = document.getElementById('pickerOverlay');
+const sheet     = document.getElementById('pickerSheet');
+const strip     = document.getElementById('selectedStrip');
+let selectedFiles = []; // tableau maître des fichiers choisis
+
+// --- Ouvrir / fermer le panneau ---
+document.getElementById('btnOpenPicker').addEventListener('click', openSheet);
+document.getElementById('btnCloseSheet').addEventListener('click', closeSheet);
+overlay.addEventListener('click', closeSheet);
+
+function openSheet() {
+  overlay.classList.remove('hidden');
+  sheet.classList.remove('hidden', 'closing');
+  document.body.style.overflow = 'hidden';
+}
+function closeSheet() {
+  sheet.classList.add('closing');
+  setTimeout(() => {
+    sheet.classList.add('hidden');
+    overlay.classList.add('hidden');
+    document.body.style.overflow = '';
+  }, 240);
+}
+
+// --- Onglets : chaque onglet déclenche SON input ---
+const inputs = {
+  gallery: document.getElementById('galleryInput'),
+  file:    document.getElementById('fileInput'),
+  folder:  document.getElementById('folderInput'),
+  camera:  document.getElementById('cameraInput')
+};
+
+document.querySelectorAll('.sheet-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const input = inputs[tab.dataset.action];
+    input.value = '';              // ← FIX : permet de rechoisir le même fichier
+    input.click();                 // ← dans le geste utilisateur : OK mobile
+  });
+});
+
+// --- Réception des fichiers (un seul handler pour tous les inputs) ---
+Object.values(inputs).forEach(input => {
+  input.addEventListener('change', () => {
+    if (input.files.length) {
+      addFiles([...input.files]);
+      closeSheet();
+    }
+  });
+});
+
+// --- Ajout + aperçu vignettes (comme la strip de Telegram) ---
+function addFiles(files) {
+  selectedFiles.push(...files);
+  renderStrip();
+  updateFilePreview();
+}
+
+function renderStrip() {
+  strip.innerHTML = '';
+  strip.classList.toggle('hidden', selectedFiles.length === 0);
+
+  selectedFiles.forEach((file, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'selected-chip';
+
+    const thumb = document.createElement('div');
+    thumb.className = 'thumb';
+
+    // Vignette réelle pour images/vidéos, icône sinon
+    if (file.type.startsWith('image/')) {
+      const img = document.createElement('img');
+      img.src = URL.createObjectURL(file);
+      thumb.appendChild(img);
+    } else if (file.type.startsWith('video/')) {
+      thumb.textContent = '🎬';
+    } else if (file.type.includes('pdf')) {
+      thumb.textContent = '📕';
+    } else {
+      thumb.textContent = '📄';
+    }
+
+    const name = document.createElement('span');
+    name.className = 'chip-name';
+    name.textContent = file.name;
+
+    const size = document.createElement('span');
+    size.className = 'chip-size';
+    size.textContent = formatSize(file.size);
+
+    const remove = document.createElement('button');
+    remove.className = 'chip-remove';
+    remove.type = 'button';
+    remove.textContent = '✕';
+    remove.addEventListener('click', () => {
+      selectedFiles.splice(i, 1);
+      renderStrip();
+      updateFilePreview();
+    });
+
+    chip.append(thumb, name, size, remove);
+    strip.appendChild(chip);
+  });
+}
+
+// --- Résumé dans la zone filePreview existante ---
+function updateFilePreview() {
+  const preview = document.getElementById('filePreview');
+  const info = document.getElementById('fileInfo');
+  if (!selectedFiles.length) {
+    preview.classList.add('hidden');
+    return;
+  }
+  preview.classList.remove('hidden');
+  const total = selectedFiles.reduce((s, f) => s + f.size, 0);
+  info.innerHTML = selectedFiles.length === 1
+    ? `<b>${selectedFiles[0].name}</b><small>${formatSize(total)}</small>`
+    : `<b>📦 ${selectedFiles.length} fichiers</b><small>${formatSize(total)} au total</small>`;
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' o';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' Ko';
+  if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' Mo';
+  return (bytes / 1073741824).toFixed(2) + ' Go';
+}

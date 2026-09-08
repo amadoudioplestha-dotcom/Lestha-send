@@ -137,6 +137,36 @@
   <footer>🔒 WebRTC · chiffrement de bout en bout · aucun stockage</footer>
 </div>
 
+<!-- Bouton unique qui ouvre le panneau -->
+<button id="btnOpenPicker" class="btn primary" type="button">📎 Joindre un fichier</button>
+
+<!-- PANNEAU COULISSANT STYLE TELEGRAM -->
+<div id="pickerOverlay" class="picker-overlay hidden"></div>
+<div id="pickerSheet" class="picker-sheet hidden">
+  <div class="sheet-handle"></div>
+  <div class="sheet-header">
+    <h3>Envoyer</h3>
+    <button id="btnCloseSheet" class="sheet-close" type="button">✕</button>
+  </div>
+
+  <!-- Aperçu des fichiers choisis -->
+  <div id="selectedStrip" class="selected-strip hidden"></div>
+
+  <!-- Onglets style Telegram -->
+  <div class="sheet-tabs">
+    <button class="sheet-tab active" data-action="gallery" type="button">🖼️<span>Galerie</span></button>
+    <button class="sheet-tab" data-action="file" type="button">📄<span>Fichier</span></button>
+    <button class="sheet-tab" data-action="folder" type="button">📁<span>Dossier</span></button>
+    <button class="sheet-tab" data-action="camera" type="button">📷<span>Caméra</span></button>
+  </div>
+</div>
+
+<!-- Inputs cachés (un par type : c'est LA clé du fix mobile) -->
+<input type="file" id="galleryInput" class="hidden" accept="image/*,video/*" multiple>
+<input type="file" id="fileInput" class="hidden" multiple>
+<input type="file" id="folderInput" class="hidden" webkitdirectory multiple>
+<input type="file" id="cameraInput" class="hidden" accept="image/*" capture="environment">
+
 <script defer src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script defer src="/app.js"></script>
 </body>
