@@ -1,24 +1,3 @@
-
-// Variables globales
-window.socket = null;
-window.role = null;
-window.roomId = null;
-window.selectedFile = null;
-window.transferAborted = false;
-window.iceServers = null;
-window.sendGeneration = 0;
-
-window.__blobUrls = window.__blobUrls || [];
-function trackedObjectURL(blob) {
-  const u = URL.createObjectURL(blob);
-  window.__blobUrls.push(u);
-  return u;
-}
-function revokeAllBlobUrls() {
-  window.__blobUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch (e) {} });
-  window.__blobUrls = [];
-}
-
 /* TransferX — client final (session persistante + historique + dashboard + OPFS) */
 (() => {
 'use strict';
@@ -414,7 +393,7 @@ window.__deleteHistory = (rid) => {
 };
 function exportHistory() {
   const blob = new Blob([JSON.stringify(getHistory(), null, 2)], { type: 'application/json' });
-  const url = trackedObjectURL(blob);
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = 'transferx-historique-' + new Date().toISOString().split('T')[0] + '.json';
@@ -513,7 +492,7 @@ async function finishReceive(channel) {
   if (sink) {
     try {
       const file = await sink.close();
-      const url = trackedObjectURL(file); // au lieu de URL.createObjectURL(file)
+      const url = URL.createObjectURL(file);
       const link = $('downloadLink');
       if (link) {
         link.href = url;
@@ -777,30 +756,10 @@ async function sendEmail() {
 
 /* ---------- UI ---------- */
 function bindUI() {
-const bmf = $('btnModeFile');
-if (bmf) bmf.onclick = async () => {
-  clearErrors();
-  saveDraft();
-  try { sessionStorage.setItem('transferx_picking', String(Date.now())); } catch (e) {}
-  await releaseMemoryBeforePicker();
-  const files = await pickFilesRobust();
-  try { sessionStorage.removeItem('transferx_picking'); } catch (e) {}
-  if (!files || !files.length) return;
-  const file = files[0];
-  if (file.size > MAX_FILE_SIZE) { error('❌ Fichier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')'); return; }
-  selectedFile = file;
-  showPreview(file);
-  ensureSocket();
-};
-const bmf2 = $('btnModeFolder');
-if (bmf2) bmf2.onclick = async () => {
-  clearErrors();
-  saveDraft();
-  try { sessionStorage.setItem('transferx_picking', String(Date.now())); } catch (e) {}
-  await releaseMemoryBeforePicker();
-  const i = $('folderInput');
-  if (i) i.click();
-};
+  const bmf = $('btnModeFile');
+  if (bmf) bmf.onclick = () => { clearErrors(); try { sessionStorage.setItem('transferx_picking', String(Date.now())); } catch (e) {} const i = $('fileInput'); if (i) i.click(); };
+  const bmf2 = $('btnModeFolder');
+  if (bmf2) bmf2.onclick = () => { clearErrors(); try { sessionStorage.setItem('transferx_picking', String(Date.now())); } catch (e) {} const i = $('folderInput'); if (i) i.click(); };
 
   const fi = $('fileInput');
   if (fi) fi.onchange = (e) => {
@@ -936,14 +895,13 @@ window.addEventListener('pageshow', () => { if (socket && !socket.connected) soc
 setInterval(() => { if (!document.hidden && socket && socket.connected) socket.emit('ping-keepalive'); }, 20000);
 
 document.addEventListener('DOMContentLoaded', () => {
-  if (window.isSecureContext && navigator.storage && navigator.storage.getDirectory) {
+  // ✅ Nettoyage des fichiers temporaires OPFS
+  if (window.isSecureContext && supportsOPFSWritable()) {
     navigator.storage.getDirectory().then(root => {
       root.removeEntry('transferx.tmp').catch(() => {});
       root.removeEntry('transferx_sender.zip').catch(() => {});
     }).catch(() => {});
   }
-  restoreDraft(); // ← ajouté
-  bindUI();
 
   // ✅ Détection d'un redémarrage de page pendant une sélection de fichier :
   // sur les appareils mobiles peu puissants, ouvrir la galerie/le gestionnaire
@@ -951,16 +909,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // la mémoire ; au retour, la page se recharge et le fichier choisi est perdu.
   // On explique clairement ce qui s'est passé au lieu de laisser l'utilisateur
   // face à un écran vide ou un message système confus.
-try {
-  if (sessionStorage.getItem('transferx_picking')) {
-    sessionStorage.removeItem('transferx_picking');
-    setTimeout(() => {
-      error("⚠️ Android a interrompu la sélection par manque de mémoire vive. "
-          + "Fermez les onglets Chrome inutilisés (icône ⧉ en haut), puis réessayez. "
-          + "Astuce : choisissez « Fichiers » plutôt que « Appareil photo » dans le sélecteur.");
-    }, 300);
-  }
-} catch (e) {}
+  try {
+    if (sessionStorage.getItem('transferx_picking')) {
+      sessionStorage.removeItem('transferx_picking');
+      const ramInfo = lowMemoryDevice() ? (' (RAM détectée : ' + navigator.deviceMemory + ' Go — appareil sensible à ce problème)') : '';
+      setTimeout(() => {
+        error("⚠️ La sélection a été interrompue, probablement par manque de mémoire sur l'appareil" + ramInfo + " (l'application a été déchargée pendant l'ouverture du sélecteur). Fermez les autres applications ouvertes, puis réessayez — idéalement avec un fichier plus léger ou en le sélectionnant depuis le gestionnaire de fichiers plutôt que la galerie photo.");
+      }, 300);
+    }
+  } catch (e) {}
 
   // ✅ Avertissement pour les navigateurs intégrés (WhatsApp, Facebook, Instagram…),
   // souvent en cause dans les échecs d'envoi par manque de mémoire ou d'API manquantes.
@@ -992,65 +949,3 @@ function ensureSocket() {
   setTimeout(() => clearInterval(wait), 15000);
 }
 })();
-
-async function releaseMemoryBeforePicker() {
-  saveDraft();
-  
-  // Fermer le socket s'il existe et est vraiment connecté
-  if (window.socket && window.socket.connected === true) { 
-    try { window.socket.disconnect(); } catch (e) {} 
-  }
-  
-  const qr = document.getElementById('qrBox'); 
-  if (qr) qr.innerHTML = '';
-  
-  revokeAllBlobUrls();
-  window.selectedFile = null;
-  
-  restoreDraft();
-  bindUI();
-}
-
-async function pickFilesRobust() {
-  if (window.showOpenFilePicker) {
-    try {
-      const handles = await window.showOpenFilePicker({ multiple: true });
-      return await Promise.all(handles.map(h => h.getFile()));
-    } catch (e) {
-      if (e.name === 'AbortError') return null;
-      console.warn('showOpenFilePicker indisponible, fallback input:', e.message);
-    }
-  }
-  return new Promise((resolve) => {
-    const i = $('fileInput');
-    if (!i) return resolve(null);
-    const onChange = () => {
-      i.removeEventListener('change', onChange);
-      resolve(Array.from(i.files || []));
-    };
-    i.addEventListener('change', onChange);
-    i.click();
-  });
-}
-
-function saveDraft() {
-  try {
-    sessionStorage.setItem('transferx_draft', JSON.stringify({
-      ttl: $('expirySelect') ? $('expirySelect').value : null,
-      pin: $('pinInput') ? $('pinInput').value : '',
-      ts: Date.now()
-    }));
-  } catch (e) {}
-}
-
-function restoreDraft() {
-  try {
-    const raw = sessionStorage.getItem('transferx_draft');
-    if (!raw) return;
-    const d = JSON.parse(raw);
-    if (Date.now() - d.ts > 600000) { sessionStorage.removeItem('transferx_draft'); return; }
-    if (d.ttl && $('expirySelect')) $('expirySelect').value = d.ttl;
-    if (d.pin && $('pinInput')) $('pinInput').value = d.pin;
-    sessionStorage.removeItem('transferx_draft');
-  } catch (e) {}
-}
