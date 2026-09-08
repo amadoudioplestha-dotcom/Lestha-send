@@ -31,7 +31,7 @@ function lowMemoryDevice() {
 
 let socket = null;
 let role = null, roomId = null;
-let selectedFile = null;        // ← utilisé par startSender() — NE PAS TOUCHER
+let selectedFile = null;
 let transferAborted = false;
 let iceServers = null;
 let sendGeneration = 0;
@@ -48,9 +48,8 @@ let pendingIce = [];
 let pc = null;
 let sink = null;
 
-// ========== NOUVEAU : système de fichiers multiples (style Telegram) ==========
-let selectedFiles = [];         // ← pour le nouveau sélecteur
-let useMultipleFiles = false;   // ← flag : est-ce qu'on utilise le nouveau système ?
+let selectedFiles = [];
+let useMultipleFiles = false;
 
 const LIBS = {
   jszip: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
@@ -389,12 +388,14 @@ function exportHistory() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'transferx-historique-' + new Date().toISOString().split('T')[0] + '.json';
+  a.download = 'transferx-history-' + new Date().toISOString().slice(0, 10) + '.json';
+  document.body.appendChild(a);
   a.click();
+  document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
-/* ---------- SINK OPFS ---------- */
+/* ---------- SINK OPFS (réception) ---------- */
 async function createSink() {
   try {
     if (supportsOPFSWritable()) {
@@ -548,20 +549,24 @@ async function startSender() {
   });
 }
 
-/* ---------- ZIP DOSSIER (logique originale extraite) ---------- */
+/* ---------- PRÉPARATION ZIP ---------- */
 async function prepareFolderZip(files) {
   const total = files.reduce((s, f) => s + (f.size || 0), 0);
-  if (total > MAX_FILE_SIZE) return error('❌ Dossier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')');
+  if (total > MAX_FILE_SIZE) {
+    error('❌ Dossier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')');
+    return;
+  }
   const titleEl = $('transferTitle');
-  const rootName = ((files[0].webkitRelativePath || 'dossier').split('/')[0]) || 'dossier';
+  const rootName = files[0].webkitRelativePath
+    ? (files[0].webkitRelativePath.split('/')[0] || 'dossier')
+    : 'dossier';
   try {
-    if (titleEl) titleEl.textContent = 'Préparation du dossier en cours...';
+    if (titleEl) titleEl.textContent = 'Préparation du dossier...';
     await need('jszip');
     const zip = new JSZip();
     files.forEach(f => zip.file(f.webkitRelativePath || f.name, f));
     let finalFile;
 
-    // 1️⃣ OPFS
     if (supportsOPFSWritable()) {
       const rootDir = await navigator.storage.getDirectory();
       const handle = await rootDir.getFileHandle('transferx_sender.zip', { create: true });
@@ -587,7 +592,6 @@ async function prepareFolderZip(files) {
       finalFile = await handle.getFile();
       Object.defineProperty(finalFile, 'name', { writable: true, value: rootName + '.zip' });
     } else {
-      // 2️⃣ Fallback RAM
       if (total > MEM_ZIP_LIMIT) {
         const raison = isRestrictedWebView()
           ? "le navigateur intégré utilisé (WhatsApp, Facebook, Instagram…) ne le permet pas"
@@ -619,6 +623,7 @@ async function prepareFolderZip(files) {
     useMultipleFiles = false;
     if (titleEl) titleEl.textContent = 'Transfert Sécurisé';
     showPreview(selectedFile);
+    clearErrors();
     ensureSocket();
   } catch (err) {
     error('❌ Erreur préparation : ' + err.message);
@@ -631,7 +636,6 @@ async function prepareFolderZip(files) {
   }
 }
 
-/* ---------- NOUVEAU : ZIP MULTI-FICHIERS (style Telegram) ---------- */
 async function prepareMultiFilesZip(files) {
   const total = files.reduce((s, f) => s + (f.size || 0), 0);
   if (total > MAX_FILE_SIZE) {
@@ -641,16 +645,12 @@ async function prepareMultiFilesZip(files) {
     renderStrip();
     return;
   }
-
   const titleEl = $('transferTitle');
-  const rootName = 'archive-' + new Date().toLocaleDateString('fr-FR');
-
   try {
-    if (titleEl) titleEl.textContent = 'Préparation des fichiers...';
+    if (titleEl) titleEl.textContent = 'Préparation de l\'archive...';
     await need('jszip');
     const zip = new JSZip();
     files.forEach(f => zip.file(f.name, f));
-    
     let finalFile;
 
     if (supportsOPFSWritable()) {
@@ -676,10 +676,13 @@ async function prepareMultiFilesZip(files) {
       }
       await writable.close();
       finalFile = await handle.getFile();
-      Object.defineProperty(finalFile, 'name', { writable: true, value: rootName + '.zip' });
+      Object.defineProperty(finalFile, 'name', { writable: true, value: 'archive-' + new Date().toLocaleDateString('fr-FR') + '.zip' });
     } else {
       if (total > MEM_ZIP_LIMIT) {
-        throw new Error('Trop volumineux pour la mémoire (max ' + bytes(MEM_ZIP_LIMIT) + '). Utilisez Chrome à jour.');
+        const raison = isRestrictedWebView()
+          ? "le navigateur intégré utilisé (WhatsApp, Facebook, Instagram…) ne le permet pas"
+          : "ce navigateur/appareil ne permet pas l'écriture temporaire sur disque (OPFS)";
+        throw new Error('Archive trop volumineuse (' + bytes(total) + ') pour être préparée en mémoire car ' + raison + '. Solutions : ouvrez ce lien dans Chrome à jour, ou envoyez les fichiers un par un (limite actuelle : ' + bytes(MEM_ZIP_LIMIT) + ').');
       }
       const parts = [];
       let accumulated = 0;
@@ -689,7 +692,7 @@ async function prepareMultiFilesZip(files) {
           accumulated += chunk.byteLength;
           if (accumulated > MEM_ZIP_LIMIT) {
             stream.pause();
-            reject(new Error('Trop volumineux pour la mémoire (max ' + bytes(MEM_ZIP_LIMIT) + ')'));
+            reject(new Error('Archive trop volumineuse pour la mémoire (max ' + bytes(MEM_ZIP_LIMIT) + ')'));
             return;
           }
           parts.push(new Blob([chunk]));
@@ -698,7 +701,7 @@ async function prepareMultiFilesZip(files) {
         stream.on('end', resolve);
         stream.resume();
       });
-      finalFile = new File(parts, rootName + '.zip', { type: 'application/zip' });
+      finalFile = new File(parts, 'archive-' + new Date().toLocaleDateString('fr-FR') + '.zip', { type: 'application/zip' });
     }
 
     selectedFile = finalFile;
@@ -710,12 +713,18 @@ async function prepareMultiFilesZip(files) {
     updateFilePreview();
     clearErrors();
     ensureSocket();
-
   } catch (err) {
     error('❌ Erreur préparation : ' + err.message);
     selectedFiles = [];
     selectedFile = null;
     renderStrip();
+    updateFilePreview();
+    if (navigator.storage && navigator.storage.getDirectory) {
+      try {
+        const rootDir = await navigator.storage.getDirectory();
+        await rootDir.removeEntry('transferx_multi.zip');
+      } catch (cleanupErr) {}
+    }
   }
 }
 
@@ -741,6 +750,7 @@ function joinRoom(pin) {
     requestQueuedIce(null);
   });
 }
+
 async function startReceiver() {
   role = 'receiver';
   window.addEventListener('beforeunload', handleBeforeUnload);
@@ -775,8 +785,6 @@ function resetUI() {
   const fi = $('fileInput'); if (fi) fi.value = '';
   const fo = $('folderInput'); if (fo) fo.value = '';
   const fp = $('filePreview'); if (fp) fp.classList.add('hidden');
-  const strip = $('selectedStrip'); if (strip) { strip.innerHTML = ''; strip.classList.add('hidden'); }
-  const stripSheet = $('selectedStripSheet'); if (stripSheet) { stripSheet.innerHTML = ''; stripSheet.classList.add('hidden'); }
   const fill = $('progressFill'); if (fill) fill.style.width = '0%';
   const pt = $('progressText'); if (pt) pt.textContent = '0 %';
   const st = $('speedText'); if (st) st.textContent = '';
@@ -787,6 +795,7 @@ function resetUI() {
   const pi = $('pinInput'); if (pi) pi.value = '';
   const pe = $('pinEntry'); if (pe) pe.value = '';
   const pbox = $('pinBox'); if (pbox) pbox.classList.add('hidden');
+  const strip = $('selectedStrip'); if (strip) { strip.innerHTML = ''; strip.classList.add('hidden'); }
 }
 function cancelTransfer() {
   window.removeEventListener('beforeunload', handleBeforeUnload);
@@ -940,7 +949,7 @@ function bindUI() {
     if (i) i.click();
   };
 
-  // ✅ INPUT ORIGINAUX (même logique qu'avant)
+  // ✅ INPUT ORIGINAL FILE
   const fi = $('fileInput');
   if (fi) fi.onchange = (e) => {
     try { sessionStorage.removeItem('transferx_picking'); } catch (err) {}
@@ -954,6 +963,7 @@ function bindUI() {
     ensureSocket();
   };
 
+  // ✅ INPUT ORIGINAL FOLDER
   const fo = $('folderInput');
   if (fo) fo.onchange = async (e) => {
     try { sessionStorage.removeItem('transferx_picking'); } catch (err) {}
@@ -1024,8 +1034,8 @@ function closeSheet() {
 function bindPicker() {
   const inputs = {
     gallery: $('galleryInput'),
-    file:    $('fileInputSheet'),      // ← input séparé pour le sheet
-    folder:  $('folderInputSheet'),    // ← input séparé pour le sheet
+    file:    $('fileInputSheet'),
+    folder:  $('folderInputSheet'),
     camera:  $('cameraInput')
   };
 
@@ -1062,8 +1072,8 @@ function bindPicker() {
   });
 
   // Folder dans le sheet → ZIP direct
-  const fo = inputs.folder;
-  if (fo) fo.addEventListener('change', async (e) => {
+  const fso = inputs.folder;
+  if (fso) fso.addEventListener('change', async (e) => {
     try { sessionStorage.removeItem('transferx_picking'); } catch (err) {}
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
@@ -1103,7 +1113,7 @@ function syncSelectedFile() {
   } else {
     // Plusieurs fichiers → préparer ZIP
     prepareMultiFilesZip(selectedFiles);
-    return; // async, sera mis à jour quand prêt
+    return;
   }
 
   renderStrip();
@@ -1247,4 +1257,4 @@ function ensureSocket() {
   setTimeout(() => clearInterval(wait), 15000);
 }
 
-})(); // ← FIN DE L'IIFE — RIEN APRÈS !
+})(); // ← FIN DE L'IIFE
