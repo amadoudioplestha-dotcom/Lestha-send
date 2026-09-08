@@ -997,15 +997,15 @@ async function releaseMemoryBeforePicker() {
   saveDraft();
   
   // Fermer le socket s'il existe et est vraiment connecté
-  if (socket && socket.connected === true) { 
-    try { socket.disconnect(); } catch (e) {} 
+  if (window.socket && window.socket.connected === true) { 
+    try { window.socket.disconnect(); } catch (e) {} 
   }
   
-  const qr = $('qrBox'); 
+  const qr = document.getElementById('qrBox'); 
   if (qr) qr.innerHTML = '';
   
   revokeAllBlobUrls();
-  selectedFile = null;
+  window.selectedFile = null;
   
   restoreDraft();
   bindUI();
