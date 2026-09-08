@@ -984,7 +984,6 @@ function ensureSocket() {
 })();
 
 async function releaseMemoryBeforePicker() {
-  clearErrors();
   saveDraft();
   
   // Fermer le socket s'il existe et est vraiment connecté
