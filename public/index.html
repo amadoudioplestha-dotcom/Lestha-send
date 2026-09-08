@@ -25,6 +25,7 @@
       <p>Direct, chiffré, sans stockage serveur.</p>
     </header>
 
+    <!-- Les 2 boutons originaux qui MARCHENT -->
     <div class="mode-choice">
       <button id="btnModeFile" class="btn-mode" type="button">
         <span class="icon">📄</span><span>Envoyer un fichier</span>
@@ -34,10 +35,15 @@
       </button>
     </div>
 
+    <!-- Inputs originaux -->
     <input type="file" id="fileInput" class="hidden" multiple>
     <input type="file" id="folderInput" class="hidden" webkitdirectory directory multiple>
 
+    <!-- Aperçu du fichier sélectionné -->
     <div id="filePreview" class="file-preview hidden"><div id="fileInfo"></div></div>
+
+    <!-- Strip de vignettes (style Telegram) - apparaît quand on utilise le nouveau sélecteur -->
+    <div id="selectedStrip" class="selected-strip hidden"></div>
 
     <div class="options">
       <label>⏳ Expiration du lien
@@ -57,6 +63,9 @@
     <button id="btnStartSend" class="btn primary" type="button">🔗 Générer le lien sécurisé</button>
     <button id="btnShowHistory" class="btn ghost" type="button">📋 Historique des liens</button>
     <div id="errorBox" class="error-box hidden"></div>
+
+    <!-- NOUVEAU : Bouton "Joindre un fichier" en bas, style Telegram -->
+    <button id="btnOpenPicker" class="btn primary btn-attach" type="button">📎 Joindre un fichier</button>
   </section>
 
   <!-- HISTORIQUE -->
@@ -137,9 +146,6 @@
   <footer>🔒 WebRTC · chiffrement de bout en bout · aucun stockage</footer>
 </div>
 
-<!-- Bouton unique qui ouvre le panneau -->
-<button id="btnOpenPicker" class="btn primary" type="button">📎 Joindre un fichier</button>
-
 <!-- PANNEAU COULISSANT STYLE TELEGRAM -->
 <div id="pickerOverlay" class="picker-overlay hidden"></div>
 <div id="pickerSheet" class="picker-sheet hidden">
@@ -149,23 +155,22 @@
     <button id="btnCloseSheet" class="sheet-close" type="button">✕</button>
   </div>
 
-  <!-- Aperçu des fichiers choisis -->
-  <div id="selectedStrip" class="selected-strip hidden"></div>
+  <div id="selectedStripSheet" class="selected-strip hidden"></div>
 
-  <!-- Onglets style Telegram -->
   <div class="sheet-tabs">
-    <button class="sheet-tab active" data-action="gallery" type="button">🖼️<span>Galerie</span></button>
+    <button class="sheet-tab" data-action="gallery" type="button">🖼️<span>Galerie</span></button>
     <button class="sheet-tab" data-action="file" type="button">📄<span>Fichier</span></button>
     <button class="sheet-tab" data-action="folder" type="button">📁<span>Dossier</span></button>
     <button class="sheet-tab" data-action="camera" type="button">📷<span>Caméra</span></button>
   </div>
 </div>
 
-<!-- Inputs cachés (un par type : c'est LA clé du fix mobile) -->
+<!-- Inputs cachés pour le bottom sheet -->
 <input type="file" id="galleryInput" class="hidden" accept="image/*,video/*" multiple>
-<input type="file" id="fileInput" class="hidden" accept="*/*" multiple>
-<input type="file" id="folderInput" class="hidden" webkitdirectory multiple>
+<input type="file" id="fileInputSheet" class="hidden" accept="*/*" multiple>
+<input type="file" id="folderInputSheet" class="hidden" webkitdirectory multiple>
 <input type="file" id="cameraInput" class="hidden" accept="image/*" capture="environment">
+
 
 <script defer src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script defer src="/app.js"></script>

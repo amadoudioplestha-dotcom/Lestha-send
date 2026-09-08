@@ -10,11 +10,6 @@ const MAX_FILE_SIZE = (isMobile ? 2 : 5) * 1024 * 1024 * 1024;
 const MEM_SINK_LIMIT = 400 * 1024 * 1024;
 const MEM_ZIP_LIMIT = 200 * 1024 * 1024;
 
-// ✅ Détection RÉELLE du support d'écriture disque (OPFS).
-// navigator.storage.getDirectory existe sur Safari/iOS, mais
-// FileSystemFileHandle.createWritable() n'y est PAS implémenté (WebKit).
-// Sans ce test, le code plantait avec une erreur technique confuse au lieu
-// de basculer proprement sur le mode mémoire limité.
 function supportsOPFSWritable() {
   try {
     return !!(
@@ -25,39 +20,37 @@ function supportsOPFSWritable() {
   } catch (e) { return false; }
 }
 
-// ✅ Navigateurs intégrés (WhatsApp, Facebook, Instagram, Messenger…) :
-// souvent des WebView allégées, sans OPFS, avec très peu de mémoire allouée —
-// cause fréquente des échecs "mémoire insuffisante" à l'envoi sur mobile.
 function isRestrictedWebView() {
   const ua = navigator.userAgent || '';
   return /FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|; ?wv\)/i.test(ua);
 }
 
-// ✅ Indice (Chrome/Android uniquement) de RAM totale de l'appareil.
 function lowMemoryDevice() {
   return typeof navigator.deviceMemory === 'number' && navigator.deviceMemory <= 2;
 }
 
 let socket = null;
 let role = null, roomId = null;
-let selectedFile = null;
+let selectedFile = null;        // ← utilisé par startSender() — NE PAS TOUCHER
 let transferAborted = false;
 let iceServers = null;
 let sendGeneration = 0;
 
-// ✅ Multi-connexions (session persistante)
-let activePeerConnections = new Map(); // receiverId -> {pc, dc, pending, progress, speedText}
+let activePeerConnections = new Map();
 let currentTransfer = null;
 let downloadCount = 0;
 let timeLeftInterval = null;
 let historyInterval = null;
 
-// ✅ Réception (destinataire)
 let expectedName = '', expectedSize = 0, receivedSize = 0, transferStart = 0;
 let remoteDescriptionSet = false;
 let pendingIce = [];
 let pc = null;
 let sink = null;
+
+// ========== NOUVEAU : système de fichiers multiples (style Telegram) ==========
+let selectedFiles = [];         // ← pour le nouveau sélecteur
+let useMultipleFiles = false;   // ← flag : est-ce qu'on utilise le nouveau système ?
 
 const LIBS = {
   jszip: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
@@ -301,7 +294,7 @@ function startTimeLeftTicker() {
   }, 30000);
 }
 
-/* ---------- HISTORIQUE (localStorage) ---------- */
+/* ---------- HISTORIQUE ---------- */
 function getHistory() {
   try { return JSON.parse(localStorage.getItem('transferx_history') || '[]'); } catch (e) { return []; }
 }
@@ -329,11 +322,11 @@ function hideHistory() {
 }
 function escapeHtmlLocal(t) {
   return String(t)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+    .replace(/&/g, '&')
+    .replace(/</g, '<')
+    .replace(/>/g, '>')
+    .replace(/"/g, '"')
+    .replace(/'/g, ''');
 }
 function renderHistory() {
   const h = getHistory();
@@ -401,7 +394,7 @@ function exportHistory() {
   URL.revokeObjectURL(url);
 }
 
-/* ---------- SINK OPFS (réception) ---------- */
+/* ---------- SINK OPFS ---------- */
 async function createSink() {
   try {
     if (supportsOPFSWritable()) {
@@ -555,30 +548,174 @@ async function startSender() {
   });
 }
 
-
+/* ---------- ZIP DOSSIER (logique originale extraite) ---------- */
 async function prepareFolderZip(files) {
   const total = files.reduce((s, f) => s + (f.size || 0), 0);
   if (total > MAX_FILE_SIZE) return error('❌ Dossier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')');
   const titleEl = $('transferTitle');
   const rootName = ((files[0].webkitRelativePath || 'dossier').split('/')[0]) || 'dossier';
   try {
-    if (titleEl) titleEl.textContent = 'Préparation du dossier...';
+    if (titleEl) titleEl.textContent = 'Préparation du dossier en cours...';
     await need('jszip');
     const zip = new JSZip();
     files.forEach(f => zip.file(f.webkitRelativePath || f.name, f));
     let finalFile;
+
+    // 1️⃣ OPFS
     if (supportsOPFSWritable()) {
-      // ... (gardez votre code OPFS existant tel quel) ...
+      const rootDir = await navigator.storage.getDirectory();
+      const handle = await rootDir.getFileHandle('transferx_sender.zip', { create: true });
+      const writable = await handle.createWritable();
+      try {
+        await new Promise((resolve, reject) => {
+          const stream = zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' });
+          stream.on('data', (chunk) => {
+            stream.pause();
+            writable.write(chunk)
+              .then(() => stream.resume())
+              .catch((err) => { stream.pause(); reject(err); });
+          });
+          stream.on('error', reject);
+          stream.on('end', resolve);
+          stream.resume();
+        });
+      } catch (streamErr) {
+        try { await writable.abort(); } catch (e2) {}
+        throw streamErr;
+      }
+      await writable.close();
+      finalFile = await handle.getFile();
+      Object.defineProperty(finalFile, 'name', { writable: true, value: rootName + '.zip' });
     } else {
-      // ... (gardez votre code fallback mémoire existant tel quel) ...
+      // 2️⃣ Fallback RAM
+      if (total > MEM_ZIP_LIMIT) {
+        const raison = isRestrictedWebView()
+          ? "le navigateur intégré utilisé (WhatsApp, Facebook, Instagram…) ne le permet pas"
+          : "ce navigateur/appareil ne permet pas l'écriture temporaire sur disque (OPFS)";
+        throw new Error('Dossier trop volumineux (' + bytes(total) + ') pour être préparé en mémoire car ' + raison + '. Solutions : ouvrez ce lien dans Chrome à jour, envoyez les fichiers un par un plutôt qu\'en dossier, ou compressez le dossier en un seul fichier avant de l\'envoyer (limite actuelle : ' + bytes(MEM_ZIP_LIMIT) + ').');
+      }
+      const parts = [];
+      let accumulated = 0;
+      await new Promise((resolve, reject) => {
+        const stream = zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' });
+        stream.on('data', (chunk) => {
+          accumulated += chunk.byteLength;
+          if (accumulated > MEM_ZIP_LIMIT) {
+            stream.pause();
+            reject(new Error('Dossier trop volumineux pour la mémoire (max ' + bytes(MEM_ZIP_LIMIT) + ')'));
+            return;
+          }
+          parts.push(new Blob([chunk]));
+        });
+        stream.on('error', reject);
+        stream.on('end', resolve);
+        stream.resume();
+      });
+      finalFile = new File(parts, rootName + '.zip', { type: 'application/zip' });
     }
+
     selectedFile = finalFile;
     selectedFiles = [finalFile];
+    useMultipleFiles = false;
     if (titleEl) titleEl.textContent = 'Transfert Sécurisé';
     showPreview(selectedFile);
     ensureSocket();
   } catch (err) {
     error('❌ Erreur préparation : ' + err.message);
+    if (navigator.storage && navigator.storage.getDirectory) {
+      try {
+        const rootDir = await navigator.storage.getDirectory();
+        await rootDir.removeEntry('transferx_sender.zip');
+      } catch (cleanupErr) {}
+    }
+  }
+}
+
+/* ---------- NOUVEAU : ZIP MULTI-FICHIERS (style Telegram) ---------- */
+async function prepareMultiFilesZip(files) {
+  const total = files.reduce((s, f) => s + (f.size || 0), 0);
+  if (total > MAX_FILE_SIZE) {
+    error('❌ Taille totale trop volumineuse (maximum ' + bytes(MAX_FILE_SIZE) + ')');
+    selectedFiles = [];
+    selectedFile = null;
+    renderStrip();
+    return;
+  }
+
+  const titleEl = $('transferTitle');
+  const rootName = 'archive-' + new Date().toLocaleDateString('fr-FR');
+
+  try {
+    if (titleEl) titleEl.textContent = 'Préparation des fichiers...';
+    await need('jszip');
+    const zip = new JSZip();
+    files.forEach(f => zip.file(f.name, f));
+    
+    let finalFile;
+
+    if (supportsOPFSWritable()) {
+      const rootDir = await navigator.storage.getDirectory();
+      const handle = await rootDir.getFileHandle('transferx_multi.zip', { create: true });
+      const writable = await handle.createWritable();
+      try {
+        await new Promise((resolve, reject) => {
+          const stream = zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' });
+          stream.on('data', (chunk) => {
+            stream.pause();
+            writable.write(chunk)
+              .then(() => stream.resume())
+              .catch((err) => { stream.pause(); reject(err); });
+          });
+          stream.on('error', reject);
+          stream.on('end', resolve);
+          stream.resume();
+        });
+      } catch (streamErr) {
+        try { await writable.abort(); } catch (e2) {}
+        throw streamErr;
+      }
+      await writable.close();
+      finalFile = await handle.getFile();
+      Object.defineProperty(finalFile, 'name', { writable: true, value: rootName + '.zip' });
+    } else {
+      if (total > MEM_ZIP_LIMIT) {
+        throw new Error('Trop volumineux pour la mémoire (max ' + bytes(MEM_ZIP_LIMIT) + '). Utilisez Chrome à jour.');
+      }
+      const parts = [];
+      let accumulated = 0;
+      await new Promise((resolve, reject) => {
+        const stream = zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' });
+        stream.on('data', (chunk) => {
+          accumulated += chunk.byteLength;
+          if (accumulated > MEM_ZIP_LIMIT) {
+            stream.pause();
+            reject(new Error('Trop volumineux pour la mémoire (max ' + bytes(MEM_ZIP_LIMIT) + ')'));
+            return;
+          }
+          parts.push(new Blob([chunk]));
+        });
+        stream.on('error', reject);
+        stream.on('end', resolve);
+        stream.resume();
+      });
+      finalFile = new File(parts, rootName + '.zip', { type: 'application/zip' });
+    }
+
+    selectedFile = finalFile;
+    selectedFiles = [finalFile];
+    useMultipleFiles = false;
+    if (titleEl) titleEl.textContent = 'Transfert Sécurisé';
+    showPreview(selectedFile);
+    renderStrip();
+    updateFilePreview();
+    clearErrors();
+    ensureSocket();
+
+  } catch (err) {
+    error('❌ Erreur préparation : ' + err.message);
+    selectedFiles = [];
+    selectedFile = null;
+    renderStrip();
   }
 }
 
@@ -631,12 +768,15 @@ function resetConnection() {
 }
 function resetUI() {
   selectedFile = null;
-  selectedFiles = [];        // ← AJOUTER
+  selectedFiles = [];
+  useMultipleFiles = false;
   currentTransfer = null;
   downloadCount = 0;
   const fi = $('fileInput'); if (fi) fi.value = '';
   const fo = $('folderInput'); if (fo) fo.value = '';
   const fp = $('filePreview'); if (fp) fp.classList.add('hidden');
+  const strip = $('selectedStrip'); if (strip) { strip.innerHTML = ''; strip.classList.add('hidden'); }
+  const stripSheet = $('selectedStripSheet'); if (stripSheet) { stripSheet.innerHTML = ''; stripSheet.classList.add('hidden'); }
   const fill = $('progressFill'); if (fill) fill.style.width = '0%';
   const pt = $('progressText'); if (pt) pt.textContent = '0 %';
   const st = $('speedText'); if (st) st.textContent = '';
@@ -694,7 +834,6 @@ function initSocket() {
       requestQueuedIce(null);
     } catch (e) { error('❌ Offre invalide : ' + e.message, 'errorBox3'); }
   });
-
   socket.on('answer-received', async (data) => {
     if (role !== 'sender') return;
     const peer = activePeerConnections.get(data.receiverId);
@@ -728,7 +867,6 @@ function initSocket() {
     if (data && data.receiverId) createPeerForReceiver(data.receiverId);
     else { const wm = $('waitingMsg'); if (wm) wm.textContent = '✅ Destinataire connecté !'; }
   });
-
   socket.on('receiver-left', (data) => {
     if (role !== 'sender') return;
     if (data && data.receiverId) {
@@ -782,14 +920,54 @@ async function sendEmail() {
   finally { setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = '✉️ Envoyer'; } }, 2500); }
 }
 
-/* ---------- UI ---------- */
+/* ========== UI : BOUTONS ORIGINAUX + NOUVEAU SÉLECTEUR ========== */
+
 function bindUI() {
-  // ✅ GARDÉ : bouton principal d'ouverture du sélecteur Telegram
-  // (remplace les anciens btnModeFile/btnModeFolder)
+  // ✅ BOUTONS ORIGINAUX (fonctionnent comme avant)
+  const bmf = $('btnModeFile');
+  if (bmf) bmf.onclick = () => {
+    clearErrors();
+    try { sessionStorage.setItem('transferx_picking', String(Date.now())); } catch (e) {}
+    const i = $('fileInput');
+    if (i) i.click();
+  };
+
+  const bmf2 = $('btnModeFolder');
+  if (bmf2) bmf2.onclick = () => {
+    clearErrors();
+    try { sessionStorage.setItem('transferx_picking', String(Date.now())); } catch (e) {}
+    const i = $('folderInput');
+    if (i) i.click();
+  };
+
+  // ✅ INPUT ORIGINAUX (même logique qu'avant)
+  const fi = $('fileInput');
+  if (fi) fi.onchange = (e) => {
+    try { sessionStorage.removeItem('transferx_picking'); } catch (err) {}
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (file.size > MAX_FILE_SIZE) { error('❌ Fichier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')'); e.target.value = ''; return; }
+    selectedFile = file;
+    selectedFiles = [file];
+    useMultipleFiles = false;
+    showPreview(file);
+    ensureSocket();
+  };
+
+  const fo = $('folderInput');
+  if (fo) fo.onchange = async (e) => {
+    try { sessionStorage.removeItem('transferx_picking'); } catch (err) {}
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    await prepareFolderZip(files);
+    e.target.value = '';
+  };
+
+  // ✅ BOUTON NOUVEAU SÉLECTEUR (Telegram)
   const bop = $('btnOpenPicker');
   if (bop) bop.onclick = () => { clearErrors(); openSheet(); };
 
-  // ✅ GARDÉ : tous les boutons d'action (envoyer, copier, annuler, etc.)
+  // ✅ RESTE DES BOUTONS (inchangé)
   const bs = $('btnStartSend'); if (bs) bs.onclick = startSender;
   const bcs = $('btnCancelSend'); if (bcs) bcs.onclick = cancelTransfer;
   const bct = $('btnCancelTransfer'); if (bct) bct.onclick = cancelTransfer;
@@ -822,35 +1000,93 @@ function bindUI() {
   });
 }
 
-// ========== NOUVEAU : SÉLECTEUR STYLE TELEGRAM ==========
-
-let selectedFiles = [];
+/* ========== BOTTOM SHEET TELEGRAM ========== */
 
 function openSheet() {
-  $('pickerOverlay').classList.remove('hidden');
+  const ov = $('pickerOverlay');
   const s = $('pickerSheet');
-  s.classList.remove('hidden', 'closing');
+  if (ov) ov.classList.remove('hidden');
+  if (s) s.classList.remove('hidden', 'closing');
   document.body.style.overflow = 'hidden';
 }
 
 function closeSheet() {
   const s = $('pickerSheet');
-  s.classList.add('closing');
+  if (s) s.classList.add('closing');
   setTimeout(() => {
-    s.classList.add('hidden');
-    $('pickerOverlay').classList.add('hidden');
+    if (s) s.classList.add('hidden');
+    const ov = $('pickerOverlay');
+    if (ov) ov.classList.add('hidden');
     document.body.style.overflow = '';
   }, 240);
 }
 
-// ✅ CŒUR DU FIX : synchronize selectedFiles → selectedFile
+function bindPicker() {
+  const inputs = {
+    gallery: $('galleryInput'),
+    file:    $('fileInputSheet'),      // ← input séparé pour le sheet
+    folder:  $('folderInputSheet'),    // ← input séparé pour le sheet
+    camera:  $('cameraInput')
+  };
+
+  // Fermeture
+  const bclose = $('btnCloseSheet');
+  if (bclose) bclose.addEventListener('click', closeSheet);
+  const ov = $('pickerOverlay');
+  if (ov) ov.addEventListener('click', closeSheet);
+
+  // Onglets
+  document.querySelectorAll('.sheet-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.sheet-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const input = inputs[tab.dataset.action];
+      if (!input) return;
+      input.value = '';
+      try { sessionStorage.setItem('transferx_picking', String(Date.now())); } catch (e) {}
+      input.click();
+    });
+  });
+
+  // Gallery / File / Camera → ajout multi-fichiers
+  ['gallery', 'file', 'camera'].forEach(key => {
+    const input = inputs[key];
+    if (!input) return;
+    input.addEventListener('change', () => {
+      try { sessionStorage.removeItem('transferx_picking'); } catch (e) {}
+      if (input.files && input.files.length) {
+        addFiles([...input.files]);
+        closeSheet();
+      }
+    });
+  });
+
+  // Folder dans le sheet → ZIP direct
+  const fo = inputs.folder;
+  if (fo) fo.addEventListener('change', async (e) => {
+    try { sessionStorage.removeItem('transferx_picking'); } catch (err) {}
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    closeSheet();
+    await prepareFolderZip(files);
+    e.target.value = '';
+  });
+}
+
+/* ---------- Fonctions du nouveau sélecteur ---------- */
+
+function addFiles(files) {
+  selectedFiles.push(...files);
+  useMultipleFiles = true;
+  syncSelectedFile();
+}
+
 function syncSelectedFile() {
   if (!selectedFiles.length) {
     selectedFile = null;
     return;
   }
-  
-  // Vérification taille globale
+
   const total = selectedFiles.reduce((s, f) => s + f.size, 0);
   if (total > MAX_FILE_SIZE) {
     error('❌ Taille totale trop volumineuse (maximum ' + bytes(MAX_FILE_SIZE) + ')');
@@ -861,13 +1097,13 @@ function syncSelectedFile() {
   }
 
   // Un seul fichier → direct
-  // Plusieurs fichiers → on prépare un ZIP (sauf si déjà fait)
-  if (selectedFiles.length === 1 && !selectedFiles[0].webkitRelativePath?.includes('/')) {
+  if (selectedFiles.length === 1) {
     selectedFile = selectedFiles[0];
+    showPreview(selectedFile);
   } else {
-    // Déclenche la préparation ZIP asynchrone
-    prepareFilesZip(selectedFiles);
-    return; // selectedFile sera set quand le ZIP est prêt
+    // Plusieurs fichiers → préparer ZIP
+    prepareMultiFilesZip(selectedFiles);
+    return; // async, sera mis à jour quand prêt
   }
 
   renderStrip();
@@ -897,8 +1133,10 @@ function renderStrip() {
       thumb.textContent = '🎬';
     } else if (file.type.includes('pdf')) {
       thumb.textContent = '📕';
-    } else if (file.name.endsWith('.zip') || file.type.includes('zip')) {
+    } else if (file.name.match(/\.(zip|rar|7z)$/i)) {
       thumb.textContent = '🗜️';
+    } else if (file.type.startsWith('audio/')) {
+      thumb.textContent = '🎵';
     } else {
       thumb.textContent = '📄';
     }
@@ -917,8 +1155,12 @@ function renderStrip() {
     remove.textContent = '✕';
     remove.onclick = () => {
       selectedFiles.splice(i, 1);
-      if (selectedFiles.length === 0) selectedFile = null;
-      else syncSelectedFile(); // recalcule
+      if (selectedFiles.length === 0) {
+        selectedFile = null;
+        useMultipleFiles = false;
+      } else {
+        syncSelectedFile();
+      }
       renderStrip();
       updateFilePreview();
     };
@@ -935,172 +1177,24 @@ function formatSize(b) {
   return (b / 1073741824).toFixed(2) + ' Go';
 }
 
-// ✅ NOUVEAU : updateFilePreview adapté pour selectedFiles
 function updateFilePreview() {
   const preview = $('filePreview');
   const info = $('fileInfo');
   if (!preview || !info) return;
-  
+
   if (!selectedFiles.length) {
     preview.classList.add('hidden');
     return;
   }
-  
+
   preview.classList.remove('hidden');
   const total = selectedFiles.reduce((s, f) => s + f.size, 0);
-  
+
   if (selectedFiles.length === 1) {
-    info.innerHTML = `<b>${selectedFiles[0].name}</b><small>${formatSize(total)}</small>`;
+    info.innerHTML = '<div class="file-preview-name">📎 ' + selectedFiles[0].name + '</div><div class="file-preview-size">' + bytes(total) + '</div>';
   } else {
-    info.innerHTML = `<b>📦 ${selectedFiles.length} fichiers</b><small>${formatSize(total)} au total</small>`;
+    info.innerHTML = '<div class="file-preview-name">📦 ' + selectedFiles.length + ' fichiers</div><div class="file-preview-size">' + bytes(total) + ' au total — seront envoyés en ZIP</div>';
   }
-}
-
-// ========== PRÉPARATION ZIP (votre code existant, extrait) ==========
-
-async function prepareFilesZip(files) {
-  const total = files.reduce((s, f) => s + (f.size || 0), 0);
-  if (total > MAX_FILE_SIZE) {
-    error('❌ Dossier trop volumineux (maximum ' + bytes(MAX_FILE_SIZE) + ')');
-    selectedFiles = [];
-    selectedFile = null;
-    renderStrip();
-    return;
-  }
-
-  const titleEl = $('transferTitle');
-  const rootName = files[0].webkitRelativePath 
-    ? ((files[0].webkitRelativePath || 'dossier').split('/')[0]) 
-    : ('archive-' + new Date().toLocaleDateString('fr-FR'));
-
-  try {
-    if (titleEl) titleEl.textContent = 'Préparation du dossier en cours...';
-    await need('jszip');
-    const zip = new JSZip();
-    files.forEach(f => zip.file(f.webkitRelativePath || f.name, f));
-    
-    let finalFile;
-
-    // 1️⃣ OPFS : écriture sur disque avec contre-pression
-    if (supportsOPFSWritable()) {
-      const rootDir = await navigator.storage.getDirectory();
-      const handle = await rootDir.getFileHandle('transferx_sender.zip', { create: true });
-      const writable = await handle.createWritable();
-      try {
-        await new Promise((resolve, reject) => {
-          const stream = zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' });
-          stream.on('data', (chunk) => {
-            stream.pause();
-            writable.write(chunk)
-              .then(() => stream.resume())
-              .catch((err) => { stream.pause(); reject(err); });
-          });
-          stream.on('error', reject);
-          stream.on('end', resolve);
-          stream.resume();
-        });
-      } catch (streamErr) {
-        try { await writable.abort(); } catch (e2) {}
-        throw streamErr;
-      }
-      await writable.close();
-      finalFile = await handle.getFile();
-      Object.defineProperty(finalFile, 'name', { writable: true, value: rootName + '.zip' });
-    } else {
-      // 2️⃣ Fallback RAM limité
-      if (total > MEM_ZIP_LIMIT) {
-        const raison = isRestrictedWebView()
-          ? "le navigateur intégré utilisé (WhatsApp, Facebook, Instagram…) ne le permet pas"
-          : "ce navigateur/appareil ne permet pas l'écriture temporaire sur disque (OPFS)";
-        throw new Error('Dossier trop volumineux (' + bytes(total) + ') pour être préparé en mémoire car ' + raison + '. Solutions : ouvrez ce lien dans Chrome à jour, envoyez les fichiers un par un plutôt qu\'en dossier, ou compressez le dossier en un seul fichier avant de l\'envoyer (limite actuelle : ' + bytes(MEM_ZIP_LIMIT) + ').');
-      }
-      const parts = [];
-      let accumulated = 0;
-      await new Promise((resolve, reject) => {
-        const stream = zip.generateInternalStream({ type: 'uint8array', compression: 'STORE' });
-        stream.on('data', (chunk) => {
-          accumulated += chunk.byteLength;
-          if (accumulated > MEM_ZIP_LIMIT) {
-            stream.pause();
-            reject(new Error('Dossier trop volumineux pour la mémoire (max ' + bytes(MEM_ZIP_LIMIT) + ')'));
-            return;
-          }
-          parts.push(new Blob([chunk]));
-        });
-        stream.on('error', reject);
-        stream.on('end', resolve);
-        stream.resume();
-      });
-      finalFile = new File(parts, rootName + '.zip', { type: 'application/zip' });
-    }
-
-    selectedFile = finalFile;
-    selectedFiles = [finalFile]; // remplace par le ZIP unique
-    if (titleEl) titleEl.textContent = 'Transfert Sécurisé';
-    renderStrip();
-    updateFilePreview();
-    showPreview(selectedFile);
-    clearErrors();
-    ensureSocket();
-
-  } catch (err) {
-    error('❌ Erreur préparation : ' + err.message);
-    selectedFiles = [];
-    selectedFile = null;
-    renderStrip();
-    if (navigator.storage && navigator.storage.getDirectory) {
-      try {
-        const rootDir = await navigator.storage.getDirectory();
-        await rootDir.removeEntry('transferx_sender.zip');
-      } catch (cleanupErr) {}
-    }
-  }
-}
-
-// ========== BIND PICKER (nouveau sélecteur Telegram) ==========
-
-function bindPicker() {
-  const inputs = {
-    gallery: $('galleryInput'),
-    file:    $('fileInput'),
-    folder:  $('folderInput'),
-    camera:  $('cameraInput')
-  };
-
-  // Onglets du bottom sheet
-  document.querySelectorAll('.sheet-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      const input = inputs[tab.dataset.action];
-      if (!input) return;
-      input.value = '';  // ← FIX : permet de rechoisir le même fichier
-      input.click();      // ← dans le geste utilisateur : OK mobile
-    });
-  });
-
-  // Réception des fichiers de chaque input
-  Object.values(inputs).forEach(input => {
-    input.addEventListener('change', () => {
-      if (!input.files.length) return;
-      
-      const files = [...input.files];
-      
-      // Input dossier → préparation ZIP directe
-      if (input.id === 'folderInput') {
-        prepareFilesZip(files);
-        closeSheet();
-        return;
-      }
-      
-      // Input simple → ajout au tableau
-      addFiles(files);
-      closeSheet();
-    });
-  });
-}
-
-function addFiles(files) {
-  selectedFiles.push(...files);
-  syncSelectedFile();
 }
 
 /* ---------- CYCLE DE VIE ---------- */
@@ -1109,49 +1203,38 @@ window.addEventListener('pageshow', () => { if (socket && !socket.connected) soc
 setInterval(() => { if (!document.hidden && socket && socket.connected) socket.emit('ping-keepalive'); }, 20000);
 
 document.addEventListener('DOMContentLoaded', () => {
-  // ✅ Nettoyage des fichiers temporaires OPFS
+  // Nettoyage OPFS
   if (window.isSecureContext && supportsOPFSWritable()) {
     navigator.storage.getDirectory().then(root => {
       root.removeEntry('transferx.tmp').catch(() => {});
       root.removeEntry('transferx_sender.zip').catch(() => {});
+      root.removeEntry('transferx_multi.zip').catch(() => {});
     }).catch(() => {});
   }
 
-  // ✅ Détection d'un redémarrage de page pendant une sélection de fichier :
-  // sur les appareils mobiles peu puissants, ouvrir la galerie/le gestionnaire
-  // de fichiers peut pousser le système à décharger l'onglet pour libérer de
-  // la mémoire ; au retour, la page se recharge et le fichier choisi est perdu.
-  // On explique clairement ce qui s'est passé au lieu de laisser l'utilisateur
-  // face à un écran vide ou un message système confus.
+  // Détection reload pendant sélection
   try {
     if (sessionStorage.getItem('transferx_picking')) {
       sessionStorage.removeItem('transferx_picking');
-      const ramInfo = lowMemoryDevice() ? (' (RAM détectée : ' + navigator.deviceMemory + ' Go — appareil sensible à ce problème)') : '';
+      const ramInfo = lowMemoryDevice() ? (' (RAM détectée : ' + navigator.deviceMemory + ' Go)') : '';
       setTimeout(() => {
-        error("⚠️ La sélection a été interrompue, probablement par manque de mémoire sur l'appareil" + ramInfo + " (l'application a été déchargée pendant l'ouverture du sélecteur). Fermez les autres applications ouvertes, puis réessayez — idéalement avec un fichier plus léger ou en le sélectionnant depuis le gestionnaire de fichiers plutôt que la galerie photo.");
+        error("⚠️ La sélection a été interrompue, probablement par manque de mémoire" + ramInfo);
       }, 300);
     }
   } catch (e) {}
 
-  // ✅ Avertissement pour les navigateurs intégrés (WhatsApp, Facebook, Instagram…),
-  // souvent en cause dans les échecs d'envoi par manque de mémoire ou d'API manquantes.
+  // Avertissement WebView
   if (isRestrictedWebView()) {
     setTimeout(() => {
-      error("ℹ️ Vous semblez utiliser le navigateur intégré d'une autre application (WhatsApp, Facebook…). Pour un envoi fiable, ouvrez ce lien dans Chrome (menu ⋮ → « Ouvrir dans le navigateur »).");
+      error("ℹ️ Vous semblez utiliser un navigateur intégré. Pour un envoi fiable, ouvrez dans Chrome.");
     }, 600);
   }
 
   bindUI();
-  bindPicker(); 
+  bindPicker();
   setSocketReady(false);
   if (!window.RTCPeerConnection) return error('❌ WebRTC non supporté');
 
-  // ✅ Connexion WebSocket différée : on ne l'établit pas systématiquement au
-  // chargement de la page. Un destinataire (lien ?room=) en a besoin tout de
-  // suite ; un expéditeur potentiel n'en a besoin qu'une fois un fichier
-  // effectivement choisi. Ne pas maintenir de connexion active pendant que
-  // le sélecteur natif (galerie/fichiers) est ouvert réduit l'empreinte
-  // mémoire de la page pendant cette fenêtre critique.
   const urlRoom = new URLSearchParams(location.search).get('room');
   if (urlRoom) ensureSocket();
 });
@@ -1163,170 +1246,5 @@ function ensureSocket() {
   }, 100);
   setTimeout(() => clearInterval(wait), 15000);
 }
-})();
 
-
-
-/* ---------- SÉLECTEUR STYLE TELEGRAM (bottom sheet) ---------- */
-let selectedFiles = [];
-
-function formatSize(b) {
-  if (b < 1024) return b + ' o';
-  if (b < 1048576) return (b / 1024).toFixed(1) + ' Ko';
-  if (b < 1073741824) return (b / 1048576).toFixed(1) + ' Mo';
-  return (b / 1073741824).toFixed(2) + ' Go';
-}
-
-function openSheet() {
-  $('pickerOverlay').classList.remove('hidden');
-  const s = $('pickerSheet');
-  s.classList.remove('hidden', 'closing');
-  document.body.style.overflow = 'hidden';
-}
-function closeSheet() {
-  const s = $('pickerSheet');
-  s.classList.add('closing');
-  setTimeout(() => {
-    s.classList.add('hidden');
-    $('pickerOverlay').classList.add('hidden');
-    document.body.style.overflow = '';
-  }, 240);
-}
-
-// ✅ CŒUR DU FIX : synchronise selectedFiles → selectedFile
-// (la variable que startSender() utilise réellement)
-function syncSelectedFile() {
-  if (!selectedFiles.length) {
-    selectedFile = null;
-    return;
-  }
-  if (selectedFiles.length === 1) {
-    selectedFile = selectedFiles[0];
-  } else {
-    // Plusieurs fichiers → on les zippera (voir plus bas)
-    selectedFile = selectedFiles[0]; // provisoire
-  }
-  const total = selectedFiles.reduce((s, f) => s + f.size, 0);
-  if (total > MAX_FILE_SIZE) {
-    error('❌ Taille totale trop volumineuse (maximum ' + bytes(MAX_FILE_SIZE) + ')');
-    selectedFiles = [];
-    selectedFile = null;
-  }
-  renderStrip();
-  updateFilePreview();
-  ensureSocket(); // prépare la connexion serveur pendant que l'utilisateur continue
-}
-
-function addFiles(files) {
-  selectedFiles.push(...files);
-  syncSelectedFile();
-}
-
-function renderStrip() {
-  const strip = $('selectedStrip');
-  if (!strip) return;
-  strip.innerHTML = '';
-  strip.classList.toggle('hidden', selectedFiles.length === 0);
-
-  selectedFiles.forEach((file, i) => {
-    const chip = document.createElement('div');
-    chip.className = 'selected-chip';
-    const thumb = document.createElement('div');
-    thumb.className = 'thumb';
-    if (file.type.startsWith('image/')) {
-      const img = document.createElement('img');
-      img.src = URL.createObjectURL(file);
-      thumb.appendChild(img);
-    } else if (file.type.startsWith('video/')) { thumb.textContent = '🎬'; }
-    else if (file.type.includes('pdf')) { thumb.textContent = '📕'; }
-    else if (file.name.match(/\.(zip|rar|7z)$/i)) { thumb.textContent = '🗜️'; }
-    else if (file.type.startsWith('audio/')) { thumb.textContent = '🎵'; }
-    else { thumb.textContent = '📄'; }
-
-    const name = document.createElement('span');
-    name.className = 'chip-name';
-    name.textContent = file.name;
-    const size = document.createElement('span');
-    size.className = 'chip-size';
-    size.textContent = formatSize(file.size);
-    const remove = document.createElement('button');
-    remove.className = 'chip-remove';
-    remove.type = 'button';
-    remove.textContent = '✕';
-    remove.addEventListener('click', () => {
-      selectedFiles.splice(i, 1);
-      syncSelectedFile();
-    });
-    chip.append(thumb, name, size, remove);
-    strip.appendChild(chip);
-  });
-}
-
-function updateFilePreview() {
-  const preview = $('filePreview'), info = $('fileInfo');
-  if (!preview || !info) return;
-  if (!selectedFiles.length) { preview.classList.add('hidden'); return; }
-  preview.classList.remove('hidden');
-  const total = selectedFiles.reduce((s, f) => s + f.size, 0);
-  info.innerHTML = selectedFiles.length === 1
-    ? '<div class="file-preview-name">📎 ' + selectedFiles[0].name + '</div><div class="file-preview-size">' + bytes(total) + '</div>'
-    : '<div class="file-preview-name">📦 ' + selectedFiles.length + ' fichiers</div><div class="file-preview-size">' + bytes(total) + ' au total — seront envoyés en ZIP</div>';
-}
-
-function bindPicker() {
-  const inputs = {
-    gallery: $('galleryInput'),
-    file:    $('fileInput'),
-    folder:  $('folderInput'),
-    camera:  $('cameraInput')
-  };
-
-  const bop = $('btnOpenPicker');
-  if (bop) bop.addEventListener('click', () => { clearErrors(); openSheet(); });
-  const bclose = $('btnCloseSheet');
-  if (bclose) bclose.addEventListener('click', closeSheet);
-  const ov = $('pickerOverlay');
-  if (ov) ov.addEventListener('click', closeSheet);
-
-  // Compatibilité : les anciens boutons mode ouvrent le panneau
-  const bmf = $('btnModeFile');
-  if (bmf) bmf.onclick = () => { clearErrors(); openSheet(); };
-  const bmf2 = $('btnModeFolder');
-  if (bmf2) bmf2.onclick = () => { clearErrors(); openSheet(); };
-
-  document.querySelectorAll('.sheet-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('.sheet-tab').forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      const input = inputs[tab.dataset.action];
-      if (!input) return;
-      input.value = ''; // ← permet de rechoisir le même fichier
-      try { sessionStorage.setItem('transferx_picking', String(Date.now())); } catch (e) {}
-      input.click();    // ← dans le geste utilisateur : OK mobile
-    });
-  });
-
-  // ✅ Handler unique : gallery / file / camera → même traitement
-  ['gallery', 'file', 'camera'].forEach(key => {
-    const input = inputs[key];
-    if (!input) return;
-    input.addEventListener('change', () => {
-      try { sessionStorage.removeItem('transferx_picking'); } catch (e) {}
-      if (input.files && input.files.length) {
-        addFiles([...input.files]);
-        closeSheet();
-      }
-    });
-  });
-
-  // Le dossier garde sa logique ZIP existante (on la déplace ici)
-  const fo = inputs.folder;
-  if (fo) fo.addEventListener('change', async (e) => {
-    try { sessionStorage.removeItem('transferx_picking'); } catch (err) {}
-    const files = Array.from(e.target.files || []);
-    if (!files.length) return;
-    closeSheet();
-    await prepareFolderZip(files); // fonction existante, voir ci-dessous
-    e.target.value = '';
-  });
-}
+})(); // ← FIN DE L'IIFE — RIEN APRÈS !
