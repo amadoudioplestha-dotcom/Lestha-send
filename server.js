@@ -95,34 +95,23 @@ app.post('/api/send-email', async (req, res) => {
     if (!sgMail || !process.env.SENDGRID_API_KEY) {
         return res.status(503).json({ error: 'Service email non configuré.' });
     }
-const fromEmail = process.env.SENDGRID_FROM_EMAIL;
-if (!fromEmail) {
-    return res.status(503).json({ error: 'Expéditeur non configuré.' });
-}
+    const fromEmail = process.env.SENDGRID_FROM_EMAIL;
+    if (!fromEmail) {
+        return res.status(503).json({ error: 'Expéditeur non configuré.' });
+    }
 
-const safeName = escapeHtml(fileName) || 'sans nom';
-const safeLink = escapeHtml(link);
+    const safeName = escapeHtml(fileName) || 'sans nom';
+    const safeLink = escapeHtml(link);
 
-try {
-    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-    await sgMail.send({
-        to: to.trim(),
-        from: { email: fromEmail, name: 'TransferX' },
-        replyTo: fromEmail,
-        subject: `Un fichier vous attend : ${safeName}`,
-        text:
-`Bonjour,
-
-Un fichier vous a été envoyé via TransferX : ${fileName || 'sans nom'}
-
-Pour le récupérer, ouvrez ce lien :
-${link}
-
-Le lien reste valide pendant que l'expéditeur est connecté.
-Le transfert est direct et chiffré de bout en bout : aucun fichier n'est stocké sur nos serveurs.
-
-— TransferX`,
-        html: `<!DOCTYPE html>
+    try {
+        sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+        await sgMail.send({
+            to: to.trim(),
+            from: { email: fromEmail, name: 'TransferX' },
+            replyTo: fromEmail,
+            subject: `Un fichier vous attend : ${safeName}`,
+            text: `Bonjour,\n\nUn fichier vous a été envoyé via TransferX : ${fileName || 'sans nom'}\n\nPour le récupérer, ouvrez ce lien :\n${link}\n\nLe lien reste valide pendant que l'expéditeur est connecté.\nLe transfert est direct et chiffré de bout en bout : aucun fichier n'est stocké sur nos serveurs.\n\n— TransferX`,
+            html: `<!DOCTYPE html>
 <html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;background:#f6f7f9;">
@@ -140,22 +129,22 @@ Le transfert est direct et chiffré de bout en bout : aucun fichier n'est stock�
     </p>
   </div>
 </body></html>`,
-        trackingSettings: {
-            clickTracking: { enable: false, enableText: false },
-            openTracking:  { enable: false }
-        },
-        mailSettings: {
-            sandboxMode: { enable: false }
-        }
-    });
-    console.log(`✅ Email envoyé à ${to}`);
-    return res.json({ success: true, provider: 'sendgrid' });
-} catch (error) {
-    console.error('❌ Erreur SendGrid:', error.response?.body || error.message);
-    return res.status(500).json({
-        error: 'Échec envoi: ' + (error.response?.body?.errors?.[0]?.message || error.message)
-    });
-}
+            trackingSettings: {
+                clickTracking: { enable: false, enableText: false },
+                openTracking:  { enable: false }
+            },
+            mailSettings: {
+                sandboxMode: { enable: false }
+            }
+        });
+        console.log(`✅ Email envoyé à ${to}`);
+        return res.json({ success: true, provider: 'sendgrid' });
+    } catch (error) {
+        console.error('❌ Erreur SendGrid:', error.response?.body || error.message);
+        return res.status(500).json({
+            error: 'Échec envoi: ' + (error.response?.body?.errors?.[0]?.message || error.message)
+        });
+    }
 });
 
 // ========================================
@@ -193,33 +182,19 @@ setInterval(() => {
 io.on('connection', (socket) => {
     console.log('✅ Connexion socket:', socket.id);
 
-    // ✅ create-room : TTL + PIN + compteur
+    // ✅ create-room : TTL + PIN + Auto-destruction
     socket.on('create-room', (payload, callback) => {
         if (typeof payload === 'function') { callback = payload; payload = {}; }
         payload = payload || {};
         const ttl = Math.min(Math.max(parseInt(payload.ttl, 10) || 3600000, 60000), 7 * 86400000);
         const pin = payload.pin ? String(payload.pin) : null;
+        const destroyOnDownload = payload.destroyOnDownload === true; // 🚨 NOUVEAU
 
         if (socket.roomId && rooms.has(socket.roomId)) {
             const oldRoom = rooms.get(socket.roomId);
             oldRoom.receivers.forEach(id => io.to(id).emit('peer-disconnected'));
             rooms.delete(socket.roomId);
         }
-
-        // Dans socket.on('create-room', ...)
-const destroyOnDownload = payload.destroyOnDownload === true; // 🚨 NOUVEAU
-rooms.set(roomId, {
-    senderSocketId: socket.id,
-    receivers: new Set(),
-    offers: new Map(),
-    answers: new Map(),
-    iceCandidates: new Map(),
-    createdAt: Date.now(),
-    expiresAt: Date.now() + ttl,
-    pinHash: pinHash,
-    downloadCount: 0,
-    destroyOnDownload: destroyOnDownload // 🚨 NOUVEAU
-});
 
         const roomId = generateRoomId();
         const pinHash = pin ? hashPin(pin) : null;
@@ -233,13 +208,18 @@ rooms.set(roomId, {
             createdAt: Date.now(),
             expiresAt: Date.now() + ttl,
             pinHash: pinHash,
-            downloadCount: 0
+            downloadCount: 0,
+            destroyOnDownload: destroyOnDownload // 🚨 NOUVEAU
         });
+        
         socket.join(roomId);
         socket.roomId = roomId;
         socket.role = 'sender';
-        console.log(`📍 Room créée: ${roomId} (TTL: ${Math.round(ttl / 3600000)}h, PIN: ${pinHash ? '✅' : '❌'})`);
-        if (typeof callback === 'function') callback({ roomId, success: true, expiresAt: Date.now() + ttl });
+        console.log(`📍 Room créée: ${roomId} (TTL: ${Math.round(ttl / 3600000)}h, PIN: ${pinHash ? '✅' : '❌'}, Auto-destroy: ${destroyOnDownload ? '✅' : '❌'})`);
+        
+        if (typeof callback === 'function') {
+            callback({ roomId, success: true, expiresAt: Date.now() + ttl });
+        }
     });
 
     // ✅ Offre SDP vers un destinataire précis
@@ -270,6 +250,7 @@ rooms.set(roomId, {
         socket.roomId = roomId;
         socket.role = 'receiver';
         console.log(`👤 Destinataire #${room.receivers.size} rejoint: ${roomId}`);
+        
         if (typeof callback === 'function') callback({ success: true });
         io.to(room.senderSocketId).emit('receiver-joined', { receiverId: socket.id, totalReceivers: room.receivers.size });
     });
@@ -288,8 +269,9 @@ rooms.set(roomId, {
             io.to(targetId).emit('ice-candidate', { candidate, from: socket.id });
         } else {
             const target = socket.id === room.senderSocketId ? null : room.senderSocketId;
-            if (target) io.to(target).emit('ice-candidate', { candidate, from: socket.id });
-            else {
+            if (target) {
+                io.to(target).emit('ice-candidate', { candidate, from: socket.id });
+            } else {
                 if (!room.iceCandidates.has(socket.id)) room.iceCandidates.set(socket.id, []);
                 room.iceCandidates.get(socket.id).push({ candidate, timestamp: Date.now() });
             }
@@ -308,27 +290,27 @@ rooms.set(roomId, {
         if (typeof callback === 'function') callback({ candidates });
     });
 
-// 🚨 MODIFIER l'événement download-complete :
-socket.on('download-complete', ({ roomId }) => {
-    const room = rooms.get(roomId);
-    if (!room) return;
-    
-    room.downloadCount = (room.downloadCount || 0) + 1;
-    io.to(room.senderSocketId).emit('download-notification', {
-        receiverId: socket.id,
-        totalDownloads: room.downloadCount,
-        timestamp: Date.now()
-    });
-    console.log(`✅ Téléchargement terminé: ${roomId} (total: ${room.downloadCount})`);
+    // ✅ download-complete : compteur + auto-destruction
+    socket.on('download-complete', ({ roomId }) => {
+        const room = rooms.get(roomId);
+        if (!room) return;
+        
+        room.downloadCount = (room.downloadCount || 0) + 1;
+        io.to(room.senderSocketId).emit('download-notification', {
+            receiverId: socket.id,
+            totalDownloads: room.downloadCount,
+            timestamp: Date.now()
+        });
+        console.log(`✅ Téléchargement terminé: ${roomId} (total: ${room.downloadCount})`);
 
-    // 🚨 NOUVEAU : Logique d'auto-destruction
-    if (room.destroyOnDownload) {
-        console.log(`🔥 Auto-destruction de la room: ${roomId}`);
-        room.receivers.forEach(id => io.to(id).emit('peer-disconnected'));
-        io.to(room.senderSocketId).emit('transfer-destroyed'); // Notifie l'expéditeur
-        rooms.delete(roomId);
-    }
-});
+        // 🚨 NOUVEAU : Logique d'auto-destruction
+        if (room.destroyOnDownload) {
+            console.log(`🔥 Auto-destruction de la room: ${roomId}`);
+            room.receivers.forEach(id => io.to(id).emit('peer-disconnected'));
+            io.to(room.senderSocketId).emit('transfer-destroyed'); // Notifie l'expéditeur
+            rooms.delete(roomId);
+        }
+    });
 
     socket.on('cancel-transfer', ({ roomId }) => {
         const room = rooms.get(roomId);
@@ -351,6 +333,7 @@ socket.on('download-complete', ({ roomId }) => {
         if (!roomId) return;
         const room = rooms.get(roomId);
         if (!room) return;
+        
         if (socket.id === room.senderSocketId) {
             room.receivers.forEach(id => io.to(id).emit('peer-disconnected'));
             rooms.delete(roomId);

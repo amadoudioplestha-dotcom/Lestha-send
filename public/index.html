@@ -17,7 +17,7 @@
 <body>
 <div class="container">
 
-  <!-- ÉTAPE 1 : SÉLECTION -->
+  <!-- ÉTAPE 1 : SÉLECTION (EXPÉDITEUR) -->
   <section id="step-select" class="step active">
     <header>
       <div class="eyebrow">TRANSFERX / P2P</div>
@@ -25,7 +25,7 @@
       <p>Direct, chiffré, sans stockage serveur.</p>
     </header>
 
-    <!-- Les 2 boutons originaux qui MARCHENT -->
+    <!-- Les 2 boutons originaux -->
     <div class="mode-choice">
       <button id="btnModeFile" class="btn-mode" type="button">
         <span class="icon">📄</span><span>Envoyer un fichier</span>
@@ -42,7 +42,7 @@
     <!-- Aperçu du fichier sélectionné -->
     <div id="filePreview" class="file-preview hidden"><div id="fileInfo"></div></div>
 
-    <!-- Strip de vignettes (style Telegram) - apparaît quand on utilise le nouveau sélecteur -->
+    <!-- Strip de vignettes (style Telegram) -->
     <div id="selectedStrip" class="selected-strip hidden"></div>
 
     <div class="options">
@@ -60,11 +60,17 @@
       </label>
     </div>
 
+    <!-- 🚨 NOUVEAU : Option d'auto-destruction (placée ici, côté expéditeur) -->
+    <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; color:var(--muted); margin-top:4px; margin-bottom: 8px;">
+      <input type="checkbox" id="destroyOnDownloadCheck" style="width:auto; min-height:auto; accent-color: var(--cyan);">
+      🗑️ Auto-destruction après le 1er téléchargement
+    </label>
+
     <button id="btnStartSend" class="btn primary" type="button">🔗 Générer le lien sécurisé</button>
     <button id="btnShowHistory" class="btn ghost" type="button">📋 Historique des liens</button>
     <div id="errorBox" class="error-box hidden"></div>
 
-    <!-- NOUVEAU : Bouton "Joindre un fichier" en bas, style Telegram -->
+    <!-- Bouton "Joindre un fichier" en bas, style Telegram -->
     <button id="btnOpenPicker" class="btn primary btn-attach" type="button">📎 Joindre un fichier</button>
   </section>
 
@@ -83,14 +89,17 @@
     <div class="eyebrow">LIEN PRÊT</div>
     <h2>Partagez votre lien</h2>
 
+    <!-- Zone du lien et bouton copier -->
     <div class="link-box">
-    <div class="share-box" style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
-    <button class="btn secondary" id="btnNativeShare" style="flex:1; min-width:120px;">📱 Partager</button>
-    <button class="btn secondary" id="btnWhatsapp" style="flex:1; min-width:120px;">💬 WhatsApp</button>
-    <button class="btn secondary" id="btnTelegram" style="flex:1; min-width:120px;">✈️ Telegram</button>
-    </div>
       <input type="text" id="linkOutput" readonly placeholder="Génération...">
       <button id="btnCopyLink" class="btn secondary" type="button">📋 Copier</button>
+    </div>
+
+    <!-- 🚨 NOUVEAU : Boutons de partage intelligent (sortis de .link-box pour ne pas casser le flex) -->
+    <div class="share-box" style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
+      <button class="btn secondary" id="btnNativeShare" style="flex:1; min-width:120px;">📱 Partager</button>
+      <button class="btn secondary" id="btnWhatsapp" style="flex:1; min-width:120px;">💬 WhatsApp</button>
+      <button class="btn secondary" id="btnTelegram" style="flex:1; min-width:120px;">✈️ Telegram</button>
     </div>
 
     <div id="qrBox" class="qr" aria-label="QR code du lien"></div>
@@ -119,22 +128,20 @@
     <div id="errorBox2" class="error-box hidden"></div>
   </section>
 
-  <!-- ÉTAPE 3 : TRANSFERT -->
+  <!-- ÉTAPE 3 : TRANSFERT (DESTINATAIRE) -->
   <section id="step-transfer" class="step">
     <div class="eyebrow">CONNEXION CHIFFRÉE</div>
     <p id="transferTitle">Préparation…</p>
+    
     <div id="pinBox" class="pin-box hidden">
       <p>🔒 Ce transfert est protégé par un code PIN</p>
-      <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; color:var(--muted); margin-top:8px;">
-    <input type="checkbox" id="destroyOnDownloadCheck" style="width:auto; min-height:auto; accent-color: var(--cyan);">
-    🗑️ Auto-destruction après 1 téléchargement
-    </label>
       <p class="pin-hint">L'expéditeur doit vous communiquer ce code séparément</p>
       <div class="link-box">
         <input id="pinEntry" type="text" inputmode="numeric" maxlength="8" placeholder="Code PIN" autocomplete="off">
         <button id="btnSubmitPin" class="btn secondary" type="button">Valider</button>
       </div>
     </div>
+
     <div class="progress-container">
       <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
       <div class="progress-stats"><b id="progressText">0 %</b><span id="speedText"></span></div>
@@ -148,7 +155,10 @@
     <div class="success-icon">✓</div>
     <h2>Transfert terminé</h2>
     <p id="doneSubtitle" class="notice">Votre fichier est prêt.</p>
+    
+    <!-- 🚨 NOUVEAU : Aperçu du fichier reçu -->
     <div id="filePreviewReceived" class="file-preview hidden" style="margin-bottom:16px; background: var(--card); border: 1px solid var(--line);"></div>
+    
     <a id="downloadLink" class="btn primary hidden" href="#">⬇️ Télécharger</a>
     <button id="btnRestart" class="btn secondary" type="button">🔄 Nouveau transfert</button>
   </section>
@@ -175,15 +185,13 @@
   </div>
 </div>
 
-<!-- Inputs du bottom sheet (NOUVEAUX, en plus des originaux) -->
+<!-- Inputs du bottom sheet -->
 <input type="file" id="galleryInput" class="hidden" accept="image/*,video/*" multiple>
 <input type="file" id="fileInputSheet" class="hidden" accept="*/*" multiple>
 <input type="file" id="folderInputSheet" class="hidden" webkitdirectory directory multiple>
 <input type="file" id="cameraInput" class="hidden" accept="image/*" capture="environment">
 
-
 <script defer src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script defer src="/app.js"></script>
-<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495" integrity="sha512-iIg7k2xntmwu6/uSb5tpc/hySgZc4eoL31yB29W6tJFo2akwjPWcEqnCEdJvGexCL0KEQwVYv5BlowfhVz26hg==" data-cf-beacon='{"version":"2024.11.0","token":"8607d2a720d14b038279025b2b5a82e5","spa":2}' crossorigin="anonymous"></script>
 </body>
 </html>

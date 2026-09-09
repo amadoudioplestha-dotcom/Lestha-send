@@ -1,4 +1,4 @@
-/* TransferX — client final (session persistante + historique + dashboard + OPFS) */
+/* TransferX — client final (version robuste avec fallback QR) */
 (() => {
 'use strict';
 
@@ -35,19 +35,16 @@ let selectedFile = null;
 let transferAborted = false;
 let iceServers = null;
 let sendGeneration = 0;
-
 let activePeerConnections = new Map();
 let currentTransfer = null;
 let downloadCount = 0;
 let timeLeftInterval = null;
 let historyInterval = null;
-
 let expectedName = '', expectedSize = 0, receivedSize = 0, transferStart = 0;
 let remoteDescriptionSet = false;
 let pendingIce = [];
 let pc = null;
 let sink = null;
-
 let selectedFiles = [];
 let useMultipleFiles = false;
 
@@ -61,9 +58,10 @@ function need(name) {
   if (has) return Promise.resolve();
   return new Promise((resolve, reject) => {
     const s = document.createElement('script');
-    s.src = LIBS[name]; s.async = true;
+    s.src = LIBS[name]; 
+    s.async = true;
     s.onload = resolve;
-    s.onerror = () => reject(new Error('Bibliotheque non chargee : ' + name));
+    s.onerror = () => reject(new Error('Bibliothèque non chargée : ' + name));
     document.head.appendChild(s);
   });
 }
@@ -75,6 +73,7 @@ function showStep(id) {
   if (el) el.classList.add('active');
   window.scrollTo(0, 0);
 }
+
 function error(message, box) {
   const el = $(box || 'errorBox');
   if (!el) return;
@@ -84,20 +83,25 @@ function error(message, box) {
   const duration = Math.min(20000, Math.max(8000, message.length * 90));
   setTimeout(() => { if (el.textContent === message) el.classList.add('hidden'); }, duration);
 }
+
 function clearErrors() {
   document.querySelectorAll('.error-box').forEach(el => { el.textContent = ''; el.classList.add('hidden'); });
 }
+
 function bytes(n) {
   if (!n || isNaN(n)) return '0 o';
   const units = ['o', 'Ko', 'Mo', 'Go', 'To'];
   const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), units.length - 1);
   return (n / Math.pow(1024, i)).toFixed(i < 2 ? 0 : 1) + ' ' + units[i];
 }
+
 function speed(n) { return n > 0 ? bytes(n) + '/s' : ''; }
+
 function setSocketReady(ready) {
   const btn = $('btnStartSend');
   if (btn) { btn.disabled = !ready; btn.title = ready ? '' : 'Connexion au serveur en cours...'; }
 }
+
 function updateProgress(current, total, started) {
   const start = started || transferStart;
   const pct = total ? Math.min(100, Math.round((current / total) * 100)) : 0;
@@ -105,6 +109,7 @@ function updateProgress(current, total, started) {
   const txt = $('progressText'); if (txt) txt.textContent = pct + ' %';
   const sp = $('speedText'); if (sp && start) sp.textContent = speed(current / Math.max((Date.now() - start) / 1000, 0.1));
 }
+
 function showPreview(file) {
   const info = $('fileInfo'), box = $('filePreview');
   if (!info || !box) return;
@@ -113,8 +118,9 @@ function showPreview(file) {
   const s = info.querySelector('.file-preview-size'); if (s) s.textContent = bytes(file.size);
   box.classList.remove('hidden');
 }
+
 function formatTimeLeft(ms) {
-  if (ms <= 0) return 'Expire';
+  if (ms <= 0) return 'Expiré';
   const d = Math.floor(ms / 86400000);
   const h = Math.floor((ms % 86400000) / 3600000);
   const m = Math.floor((ms % 3600000) / 60000);
@@ -122,14 +128,48 @@ function formatTimeLeft(ms) {
   if (h > 0) return h + 'h ' + m + 'min';
   return m + 'min';
 }
+
+// 🚨 FONCTION QR ROBUSTE AVEC FALLBACK
 async function renderQR(text) {
   const box = $('qrBox');
-  if (!box) return;
+  if (!box) {
+    console.warn('⚠️ Element qrBox introuvable dans le HTML');
+    return;
+  }
   box.innerHTML = '';
+  
+  // Essai 1 : Librairie locale QRCode.js
   try {
     await need('qr');
-    if (window.QRCode) new QRCode(box, { text, width: 168, height: 168, correctLevel: QRCode.CorrectLevel.M });
-  } catch (e) { console.warn('QR non genere :', e.message); }
+    if (window.QRCode) {
+      new QRCode(box, {
+        text: text,
+        width: 168,
+        height: 168,
+        correctLevel: window.QRCode.CorrectLevel ? window.QRCode.CorrectLevel.M : 0
+      });
+      console.log('✅ QR généré via librairie locale');
+      return;
+    }
+  } catch (e) {
+    console.warn('⚠️ Librairie QR locale échouée :', e.message);
+  }
+  
+  // Fallback : API externe (fonctionne toujours)
+  try {
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=168x168&data=${encodeURIComponent(text)}`;
+    const img = document.createElement('img');
+    img.src = qrUrl;
+    img.alt = 'QR Code TransferX';
+    img.style.width = '168px';
+    img.style.height = '168px';
+    img.style.borderRadius = '8px';
+    box.appendChild(img);
+    console.log('✅ QR généré via API externe (fallback)');
+  } catch (e) {
+    console.error('❌ Génération QR impossible :', e.message);
+    box.innerHTML = '<p style="color:var(--muted);font-size:12px;text-align:center;">QR code indisponible</p>';
+  }
 }
 
 /* ---------- ICE / PeerConnection ---------- */
@@ -143,7 +183,9 @@ async function getIceServers() {
   }
   return iceServers;
 }
+
 async function newPeerConnection() { return new RTCPeerConnection({ iceServers: await getIceServers() }); }
+
 function wirePeer(peer, receiverId) {
   peer.onicecandidate = (event) => {
     if (event.candidate && socket && socket.connected && roomId) {
@@ -156,6 +198,7 @@ function wirePeer(peer, receiverId) {
     }
   };
 }
+
 function requestQueuedIce(receiverId) {
   if (!socket || !socket.connected || !roomId) return;
   socket.emit('get-ice-candidates', { roomId }, (reply) => {
@@ -177,84 +220,68 @@ function requestQueuedIce(receiverId) {
 }
 
 /* ---------- EXPEDITEUR ---------- */
-// Remplacez votre fonction setupSenderChannel actuelle par celle-ci :
 function setupSenderChannel(dc, receiverId) {
-    dc.binaryType = 'arraybuffer';
-
-    dc.onopen = () => {
-        const t = $('transferTitle');
-        if (t && role === 'sender' && activePeerConnections.size === 1) t.textContent = 'Envoi en cours...';
-        
-        // 1. Envoyer les métadonnées en premier
-        dc.send(JSON.stringify({
-            msgType: 'metadata',
-            name: selectedFile.name,
-            size: selectedFile.size,
-            fileType: selectedFile.type || 'application/octet-stream'
-        }));
-    };
-
-    dc.onmessage = (event) => {
-        try {
-            const msg = JSON.parse(event.data);
-            
-            // 🚨 NOUVEAU : Le destinataire demande un point de départ
-            if (msg.msgType === 'resume') {
-                const startOffset = msg.offset || 0;
-                console.log(`🚀 Démarrage/Reprise de l'envoi depuis l'octet : ${startOffset}`);
-                sendFileFromOffset(dc, receiverId, startOffset);
-            } 
-            else if (msg.msgType === 'complete') {
-                const peer = activePeerConnections.get(receiverId);
-                if (peer) { try { peer.pc.close(); } catch (e) {} activePeerConnections.delete(receiverId); }
-                updateDashboard();
-            } 
-            else if (msg.msgType === 'error') {
-                error('❌ ' + msg.message, 'errorBox2');
-            }
-        } catch (e) {}
-    };
+  dc.binaryType = 'arraybuffer';
+  dc.onopen = () => {
+    const t = $('transferTitle');
+    if (t && role === 'sender' && activePeerConnections.size === 1) t.textContent = 'Envoi en cours...';
+    dc.send(JSON.stringify({
+      msgType: 'metadata',
+      name: selectedFile.name,
+      size: selectedFile.size,
+      fileType: selectedFile.type || 'application/octet-stream'
+    }));
+  };
+  dc.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.msgType === 'resume') {
+        const startOffset = msg.offset || 0;
+        console.log(`🚀 Démarrage/Reprise depuis l'octet : ${startOffset}`);
+        sendFileFromOffset(dc, receiverId, startOffset);
+      } else if (msg.msgType === 'complete') {
+        const peer = activePeerConnections.get(receiverId);
+        if (peer) { try { peer.pc.close(); } catch (e) {} activePeerConnections.delete(receiverId); }
+        updateDashboard();
+      } else if (msg.msgType === 'error') {
+        error('❌ ' + msg.message, 'errorBox2');
+      }
+    } catch (e) {}
+  };
 }
 
-// 🚨 NOUVEAU : Fonction d'envoi qui accepte un offset de départ (remplace l'ancienne sendFile)
 async function sendFileFromOffset(dc, receiverId, startOffset) {
-    const generation = ++sendGeneration;
-    if (!selectedFile || dc.readyState !== 'open') return error("❌ Canal non pret ", 'errorBox2');
-    
-    const startTime = Date.now();
-    let offset = startOffset;
-    
-    const read = (blob) => safari
-        ? new Promise((resolve, reject) => {
-            const r = new FileReader();
-            r.onload = () => resolve(r.result);
-            r.onerror = reject;
-            r.readAsArrayBuffer(blob);
-        })
-        : blob.arrayBuffer();
-
-    while (offset < selectedFile.size && !transferAborted && generation === sendGeneration) {
-        if (dc.readyState !== 'open') return;
-        if (dc.bufferedAmount > 1024 * 1024) { await new Promise((r) => setTimeout(r, 40)); continue; }
-        
-        const end = Math.min(offset + CHUNK_SIZE, selectedFile.size);
-        try { dc.send(await read(selectedFile.slice(offset, end))); }
-        catch (e) { return error("❌ Erreur d'envoi : " + e.message, 'errorBox2'); }
-        
-        offset = end;
-        const peerInfo = activePeerConnections.get(receiverId);
-        if (peerInfo) {
-            peerInfo.progress = selectedFile.size ? Math.round((offset / selectedFile.size) * 100) : 0;
-            peerInfo.speedText = speed(offset / Math.max((Date.now() - startTime) / 1000, 0.1));
-            renderReceiversList();
-        }
-        updateProgress(offset, selectedFile.size, startTime);
+  const generation = ++sendGeneration;
+  if (!selectedFile || dc.readyState !== 'open') return error("❌ Canal non prêt", 'errorBox2');
+  const startTime = Date.now();
+  let offset = startOffset;
+  const read = (blob) => safari
+    ? new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = reject;
+        r.readAsArrayBuffer(blob);
+      })
+    : blob.arrayBuffer();
+  while (offset < selectedFile.size && !transferAborted && generation === sendGeneration) {
+    if (dc.readyState !== 'open') return;
+    if (dc.bufferedAmount > 1024 * 1024) { await new Promise((r) => setTimeout(r, 40)); continue; }
+    const end = Math.min(offset + CHUNK_SIZE, selectedFile.size);
+    try { dc.send(await read(selectedFile.slice(offset, end))); }
+    catch (e) { return error("❌ Erreur d'envoi : " + e.message, 'errorBox2'); }
+    offset = end;
+    const peerInfo = activePeerConnections.get(receiverId);
+    if (peerInfo) {
+      peerInfo.progress = selectedFile.size ? Math.round((offset / selectedFile.size) * 100) : 0;
+      peerInfo.speedText = speed(offset / Math.max((Date.now() - startTime) / 1000, 0.1));
+      renderReceiversList();
     }
-    
-    if (offset >= selectedFile.size) {
-        const peerInfo = activePeerConnections.get(receiverId);
-        if (peerInfo) { peerInfo.progress = 100; peerInfo.speedText = ''; renderReceiversList(); }
-    }
+    updateProgress(offset, selectedFile.size, startTime);
+  }
+  if (offset >= selectedFile.size) {
+    const peerInfo = activePeerConnections.get(receiverId);
+    if (peerInfo) { peerInfo.progress = 100; peerInfo.speedText = ''; renderReceiversList(); }
+  }
 }
 
 async function createPeerForReceiver(receiverId) {
@@ -278,6 +305,7 @@ function updateDashboard() {
   const sd = $('statDownloads'); if (sd) sd.textContent = downloadCount;
   renderReceiversList();
 }
+
 function renderReceiversList() {
   const list = $('receiversList');
   if (!list) return;
@@ -288,13 +316,14 @@ function renderReceiversList() {
     const done = pct >= 100;
     html += '<div class="receiver-item">' +
       '<div class="receiver-item-top"><span class="receiver-id">👤 ' + escapeHtmlLocal(id.slice(0, 8)) + '...</span>' +
-      '<span class="receiver-status">' + (done ? '✅ Termine' : '⬇️ ' + pct + ' %') + '</span></div>' +
+      '<span class="receiver-status">' + (done ? '✅ Terminé' : '⬇️ ' + pct + ' %') + '</span></div>' +
       '<div class="receiver-progress-bar"><div class="receiver-progress-fill" style="width:' + pct + '%"></div></div>' +
       (peer.speedText && !done ? '<div class="receiver-speed">' + escapeHtmlLocal(peer.speedText) + '</div>' : '') +
       '</div>';
   });
   list.innerHTML = html;
 }
+
 function startTimeLeftTicker() {
   if (timeLeftInterval) clearInterval(timeLeftInterval);
   timeLeftInterval = setInterval(() => {
@@ -304,7 +333,7 @@ function startTimeLeftTicker() {
     const left = currentTransfer.expiresAt - Date.now();
     el.textContent = formatTimeLeft(left);
     if (badge) {
-      if (left <= 0) { badge.textContent = '🔴 Expire'; badge.classList.add('expired'); }
+      if (left <= 0) { badge.textContent = '🔴 Expiré'; badge.classList.add('expired'); }
       else { badge.textContent = '🟢 Actif'; badge.classList.remove('expired'); }
     }
   }, 30000);
@@ -314,28 +343,34 @@ function startTimeLeftTicker() {
 function getHistory() {
   try { return JSON.parse(localStorage.getItem('transferx_history') || '[]'); } catch (e) { return []; }
 }
+
 function setHistory(h) { localStorage.setItem('transferx_history', JSON.stringify(h)); }
+
 function saveToHistory(entry) {
   const h = getHistory();
   h.unshift(entry);
   if (h.length > 50) h.length = 50;
   setHistory(h);
 }
+
 function updateHistoryDownloads(rid, count) {
   const h = getHistory();
   const item = h.find(x => x.roomId === rid);
   if (item) { item.downloadCount = count; setHistory(h); }
 }
+
 function showHistory() {
   showStep('step-history');
   renderHistory();
   if (historyInterval) clearInterval(historyInterval);
   historyInterval = setInterval(renderHistory, 5000);
 }
+
 function hideHistory() {
   if (historyInterval) { clearInterval(historyInterval); historyInterval = null; }
   showStep('step-select');
 }
+
 function escapeHtmlLocal(t) {
   return String(t)
     .replace(/&/g, '&amp;')
@@ -344,6 +379,7 @@ function escapeHtmlLocal(t) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 }
+
 function renderHistory() {
   const h = getHistory();
   const now = Date.now();
@@ -353,9 +389,9 @@ function renderHistory() {
     const totalDl = h.reduce((s, x) => s + (x.downloadCount || 0), 0);
     const totalSize = h.reduce((s, x) => s + (x.fileSize || 0), 0);
     stats.innerHTML =
-      '<div class="stat-card"><span class="stat-number">' + h.length + '</span><span class="stat-label">Liens crees</span></div>' +
+      '<div class="stat-card"><span class="stat-number">' + h.length + '</span><span class="stat-label">Liens créés</span></div>' +
       '<div class="stat-card"><span class="stat-number">' + active + '</span><span class="stat-label">Actifs</span></div>' +
-      '<div class="stat-card"><span class="stat-number">' + totalDl + '</span><span class="stat-label">Telechargements</span></div>' +
+      '<div class="stat-card"><span class="stat-number">' + totalDl + '</span><span class="stat-label">Téléchargements</span></div>' +
       '<div class="stat-card"><span class="stat-number">' + bytes(totalSize) + '</span><span class="stat-label">Total</span></div>';
   }
   const list = $('historyList');
@@ -370,14 +406,14 @@ function renderHistory() {
     else if (action === 'delete') window.__deleteHistory(rid);
   };
   if (h.length === 0) {
-    list.innerHTML = '<p style="text-align:center;color:var(--muted);padding:30px;">Aucun lien cree</p>';
+    list.innerHTML = '<p style="text-align:center;color:var(--muted);padding:30px;">Aucun lien créé</p>';
     return;
   }
   list.innerHTML = h.map(item => {
     const isActive = item.expiresAt > now;
     return '<div class="history-item ' + (isActive ? '' : 'expired') + '">' +
       '<div class="history-item-header"><span class="history-item-name">📎 ' + escapeHtmlLocal(item.fileName) + '</span>' +
-      '<span class="history-item-status ' + (isActive ? 'active' : 'expired') + '">' + (isActive ? 'Actif' : 'Expire') + '</span></div>' +
+      '<span class="history-item-status ' + (isActive ? 'active' : 'expired') + '">' + (isActive ? 'Actif' : 'Expiré') + '</span></div>' +
       '<div class="history-item-details">' +
       '<span>📦 ' + bytes(item.fileSize) + '</span>' +
       '<span>📅 ' + new Date(item.createdAt).toLocaleDateString('fr-FR') + '</span>' +
@@ -386,17 +422,19 @@ function renderHistory() {
       '<span>⬇️ ' + (item.downloadCount || 0) + '</span>' +
       '</div>' +
       '<div class="history-item-actions">' +
-      (isActive ? '<button class="btn secondary" type="button" data-history-action="copy" data-room-id="' + escapeHtmlLocal(item.roomId) + '\">📋 Copier</button>' +
-        '<button class="btn secondary" type="button" data-history-action="qr" data-room-id="' + escapeHtmlLocal(item.roomId) + '\">📱 QR</button>' : '') +
-      '<button class="btn ghost" type="button" data-history-action="delete" data-room-id="' + escapeHtmlLocal(item.roomId) + '\">🗑️</button>' +
+      (isActive ? '<button class="btn secondary" type="button" data-history-action="copy" data-room-id="' + escapeHtmlLocal(item.roomId) + '">📋 Copier</button>' +
+        '<button class="btn secondary" type="button" data-history-action="qr" data-room-id="' + escapeHtmlLocal(item.roomId) + '">📱 QR</button>' : '') +
+      '<button class="btn ghost" type="button" data-history-action="delete" data-room-id="' + escapeHtmlLocal(item.roomId) + '">🗑️</button>' +
       '</div></div>';
   }).join('');
 }
+
 window.__copyHistoryLink = (rid) => {
   const link = location.origin + '?room=' + encodeURIComponent(rid);
   if (navigator.clipboard) navigator.clipboard.writeText(link).catch(() => {});
-  alert('✅ Lien copie !');
+  alert('✅ Lien copié !');
 };
+
 window.__showHistoryQR = (rid) => {
   const link = location.origin + '?room=' + encodeURIComponent(rid);
   hideHistory();
@@ -404,11 +442,13 @@ window.__showHistoryQR = (rid) => {
   const out = $('linkOutput'); if (out) out.value = link;
   renderQR(link);
 };
+
 window.__deleteHistory = (rid) => {
   if (!confirm("Supprimer ce lien ?")) return;
   setHistory(getHistory().filter(x => x.roomId !== rid));
   renderHistory();
 };
+
 function exportHistory() {
   const blob = new Blob([JSON.stringify(getHistory(), null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -443,7 +483,7 @@ async function createSink() {
     disk: false,
     write: async (p) => {
       size += p.byteLength;
-      if (size > MEM_SINK_LIMIT) throw new Error('Fichier trop volumineux pour la memoire');
+      if (size > MEM_SINK_LIMIT) throw new Error('Fichier trop volumineux pour la mémoire');
       chunks.push(p);
     },
     close: async () => new Blob(chunks),
@@ -453,145 +493,122 @@ async function createSink() {
 
 /* ---------- DESTINATAIRE ---------- */
 function setupReceiverChannel() {
-    pc.ondatachannel = (event) => {
-        const channel = event.channel;
-        channel.binaryType = 'arraybuffer';
-        let gotMetadata = false;
-        let started = 0;
-
-        channel.onopen = () => {
-            const t = $('transferTitle');
-            if (t) t.textContent = 'Reception en cours...';
-            started = Date.now();
-            transferStart = started;
-        };
-
-        channel.onmessage = async (msgEvent) => {
-            if (transferAborted) return;
-            
-            if (!gotMetadata) {
-                try {
-                    const raw = typeof msgEvent.data === 'string' ? msgEvent.data : new TextDecoder().decode(msgEvent.data);
-                    const meta = JSON.parse(raw);
-                    if (meta.msgType === 'metadata') {
-                        gotMetadata = true;
-                        expectedName = meta.name || 'fichier';
-                        expectedSize = Number(meta.size) || 0;
-                        
-                        // 🚨 NOUVEAU : Vérifier si on a une progression sauvegardée pour ce fichier exact
-                        const resumeKey = `resume_${expectedName}_${expectedSize}`;
-                        receivedSize = sessionStorage.getItem(resumeKey) ? parseInt(sessionStorage.getItem(resumeKey), 10) : 0;
-
-                        if (expectedSize > MAX_FILE_SIZE) {
-                            try { channel.send(JSON.stringify({ msgType: 'error', message: 'Fichier trop volumineux' })); } catch (e) {}
-                            return error('❌ Fichier trop volumineux', 'errorBox3');
-                        }
-                        try { sink = await createSink(); }
-                        catch (e) { sink = null; return error('❌ ' + e.message, 'errorBox3'); }
-                        
-                        // 🚨 NOUVEAU : Demander à l'expéditeur de commencer (ou reprendre) à cet offset
-                        channel.send(JSON.stringify({ msgType: 'resume', offset: receivedSize }));
-                        if (receivedSize > 0) console.log(`🔄 Reprise à l'octet : ${receivedSize}`);
-                        else if (expectedSize === 0) await finishReceive(channel);
-                        return;
-                    }
-                } catch (e) {}
-            }
-
-            const part = new Uint8Array(msgEvent.data);
-            if (sink) {
-                try { await sink.write(part); }
-                catch (e) { sink = null; return error("❌ Erreur d'ecriture : " + e.message, 'errorBox3'); }
-            }
-            receivedSize += part.byteLength;
-            
-            // 🚨 NOUVEAU : Sauvegarder la progression tous les ~5 Mo
-            if (receivedSize % (5 * 1024 * 1024) < part.byteLength) {
-                sessionStorage.setItem(`resume_${expectedName}_${expectedSize}`, receivedSize.toString());
-            }
-            
-            updateProgress(receivedSize, expectedSize, started);
-            if (expectedSize && receivedSize >= expectedSize) {
-                sessionStorage.removeItem(`resume_${expectedName}_${expectedSize}`); // Nettoyage succès
-                await finishReceive(channel);
-            }
-        };
+  pc.ondatachannel = (event) => {
+    const channel = event.channel;
+    channel.binaryType = 'arraybuffer';
+    let gotMetadata = false;
+    let started = 0;
+    channel.onopen = () => {
+      const t = $('transferTitle');
+      if (t) t.textContent = 'Réception en cours...';
+      started = Date.now();
+      transferStart = started;
     };
+    channel.onmessage = async (msgEvent) => {
+      if (transferAborted) return;
+      if (!gotMetadata) {
+        try {
+          const raw = typeof msgEvent.data === 'string' ? msgEvent.data : new TextDecoder().decode(msgEvent.data);
+          const meta = JSON.parse(raw);
+          if (meta.msgType === 'metadata') {
+            gotMetadata = true;
+            expectedName = meta.name || 'fichier';
+            expectedSize = Number(meta.size) || 0;
+            const resumeKey = `resume_${expectedName}_${expectedSize}`;
+            receivedSize = sessionStorage.getItem(resumeKey) ? parseInt(sessionStorage.getItem(resumeKey), 10) : 0;
+            if (expectedSize > MAX_FILE_SIZE) {
+              try { channel.send(JSON.stringify({ msgType: 'error', message: 'Fichier trop volumineux' })); } catch (e) {}
+              return error('❌ Fichier trop volumineux', 'errorBox3');
+            }
+            try { sink = await createSink(); }
+            catch (e) { sink = null; return error('❌ ' + e.message, 'errorBox3'); }
+            channel.send(JSON.stringify({ msgType: 'resume', offset: receivedSize }));
+            if (receivedSize > 0) console.log(`🔄 Reprise à l'octet : ${receivedSize}`);
+            else if (expectedSize === 0) await finishReceive(channel);
+            return;
+          }
+        } catch (e) {}
+      }
+      const part = new Uint8Array(msgEvent.data);
+      if (sink) {
+        try { await sink.write(part); }
+        catch (e) { sink = null; return error("❌ Erreur d'écriture : " + e.message, 'errorBox3'); }
+      }
+      receivedSize += part.byteLength;
+      if (receivedSize % (5 * 1024 * 1024) < part.byteLength) {
+        sessionStorage.setItem(`resume_${expectedName}_${expectedSize}`, receivedSize.toString());
+      }
+      updateProgress(receivedSize, expectedSize, started);
+      if (expectedSize && receivedSize >= expectedSize) {
+        sessionStorage.removeItem(`resume_${expectedName}_${expectedSize}`);
+        await finishReceive(channel);
+      }
+    };
+  };
 }
 
 async function finishReceive(channel) {
-    window.removeEventListener('beforeunload', handleBeforeUnload);
-    if (sink) {
-        try {
-            const file = await sink.close();
-            const url = URL.createObjectURL(file);
-            
-            // NOUVEAU : Gestion de l'aperçu avant téléchargement
-            const previewBox = $('filePreviewReceived');
-            if (previewBox) {
-                previewBox.innerHTML = '';
-                previewBox.classList.remove('hidden');
-                
-                if (file.type.startsWith('image/')) {
-                    const img = document.createElement('img');
-                    img.src = url;
-                    img.style.maxWidth = '100%';
-                    img.style.borderRadius = '8px';
-                    img.style.marginTop = '8px';
-                    previewBox.appendChild(img);
-                } else if (file.type.startsWith('video/')) {
-                    const vid = document.createElement('video');
-                    vid.src = url;
-                    vid.controls = true;
-                    vid.style.maxWidth = '100%';
-                    vid.style.borderRadius = '8px';
-                    vid.style.marginTop = '8px';
-                    previewBox.appendChild(vid);
-                } else {
-                    // Fallback pour les autres types de fichiers (PDF, ZIP, etc.)
-                    previewBox.innerHTML = `
-                        <div style="font-size:48px; margin:10px 0;">📄</div>
-                        <div style="font-weight:600;">${escapeHtmlLocal(file.name)}</div>
-                        <div style="color:var(--muted); font-size:13px; margin-top:4px;">${bytes(file.size)}</div>
-                    `;
-                }
-            }
-
-            const link = $('downloadLink');
-            if (link) {
-                link.href = url;
-                link.download = expectedName;
-                link.classList.remove('hidden');
-                link.textContent = '⬇️ Télécharger ' + expectedName + ' (' + bytes(file.size) + ')';
-            }
-        } catch (e) { 
-            error('❌ Finalisation : ' + e.message, 'errorBox3'); 
+  window.removeEventListener('beforeunload', handleBeforeUnload);
+  if (sink) {
+    try {
+      const file = await sink.close();
+      const url = URL.createObjectURL(file);
+      const previewBox = $('filePreviewReceived');
+      if (previewBox) {
+        previewBox.innerHTML = '';
+        previewBox.classList.remove('hidden');
+        if (file.type.startsWith('image/')) {
+          const img = document.createElement('img');
+          img.src = url;
+          img.style.maxWidth = '100%';
+          img.style.borderRadius = '8px';
+          img.style.marginTop = '8px';
+          previewBox.appendChild(img);
+        } else if (file.type.startsWith('video/')) {
+          const vid = document.createElement('video');
+          vid.src = url;
+          vid.controls = true;
+          vid.style.maxWidth = '100%';
+          vid.style.borderRadius = '8px';
+          vid.style.marginTop = '8px';
+          previewBox.appendChild(vid);
+        } else {
+          previewBox.innerHTML = `
+            <div style="font-size:48px; margin:10px 0;">📄</div>
+            <div style="font-weight:600;">${escapeHtmlLocal(file.name)}</div>
+            <div style="color:var(--muted); font-size:13px; margin-top:4px;">${bytes(file.size)}</div>
+          `;
         }
-        sink = null;
+      }
+      const link = $('downloadLink');
+      if (link) {
+        link.href = url;
+        link.download = expectedName;
+        link.classList.remove('hidden');
+        link.textContent = '⬇️ Télécharger ' + expectedName + ' (' + bytes(file.size) + ')';
+      }
+    } catch (e) { 
+      error('❌ Finalisation : ' + e.message, 'errorBox3'); 
     }
-    
-    try { channel.send(JSON.stringify({ msgType: 'complete' })); } catch (e) {}
-    if (socket && socket.connected && roomId) socket.emit('download-complete', { roomId });
-    
-    showStep('step-done');
-    const sub = $('doneSubtitle'); 
-    if (sub) sub.textContent = expectedName + ' — transfert terminé';
+    sink = null;
+  }
+  try { channel.send(JSON.stringify({ msgType: 'complete' })); } catch (e) {}
+  if (socket && socket.connected && roomId) socket.emit('download-complete', { roomId });
+  showStep('step-done');
+  const sub = $('doneSubtitle'); 
+  if (sub) sub.textContent = expectedName + ' — transfert terminé';
 }
-
 
 /* ---------- FLUX EXPEDITEUR ---------- */
 async function startSender() {
-  if (!selectedFile) return error('❌ Selectionnez un fichier');
-  if (!socket || !socket.connected) return error('❌ Connexion en cours, reessayez');
+  if (!selectedFile) return error('❌ Sélectionnez un fichier');
+  if (!socket || !socket.connected) return error('❌ Connexion en cours, réessayez');
   clearErrors();
-    const ttlSel = $('expirySelect');
-    const ttl = ttlSel ? parseInt(ttlSel.value, 10) || 86400000 : 86400000;
-    const pinRaw = $('pinInput') ? $('pinInput').value.trim() : '';
-
-    // 🚨 NOUVEAU : Récupérer l'option d'auto-destruction
-    const destroyOnDownload = $('destroyOnDownloadCheck') ? $('destroyOnDownloadCheck').checked : false;
-
-    if (pinRaw && !/^\d{4,8}$/.test(pinRaw)) return error('❌ PIN : 4 a 8 chiffres');
+  const ttlSel = $('expirySelect');
+  const ttl = ttlSel ? parseInt(ttlSel.value, 10) || 86400000 : 86400000;
+  const pinRaw = $('pinInput') ? $('pinInput').value.trim() : '';
+  const destroyOnDownload = $('destroyOnDownloadCheck') ? $('destroyOnDownloadCheck').checked : false;
+  if (pinRaw && !/^\d{4,8}$/.test(pinRaw)) return error('❌ PIN : 4 à 8 chiffres');
   role = 'sender';
   transferAborted = false;
   window.addEventListener('beforeunload', handleBeforeUnload);
@@ -599,23 +616,23 @@ async function startSender() {
   downloadCount = 0;
   showStep('step-waiting');
   const wm = $('waitingMsg'); if (wm) wm.textContent = 'Connexion...';
- socket.emit('create-room', { ttl, pin: pinRaw || null, destroyOnDownload }, async (reply) => {
-        if (!reply || !reply.success || !reply.roomId) {
-            showStep('step-select');
-            return error('❌ ' + ((reply && reply.error) || 'Impossible de creer la room'), 'errorBox');
-        }
-        roomId = reply.roomId;
-        currentTransfer = {
-            roomId: roomId,
-            expiresAt: reply.expiresAt || (Date.now() + ttl),
-            fileName: selectedFile.name,
-            fileSize: selectedFile.size,
-            pin: pinRaw || null,
-            createdAt: Date.now(),
-            downloadCount: 0,
-            destroyOnDownload: destroyOnDownload // 🚨 Sauvegardé pour l'historique
-        };
-        saveToHistory(currentTransfer);
+  socket.emit('create-room', { ttl, pin: pinRaw || null, destroyOnDownload }, async (reply) => {
+    if (!reply || !reply.success || !reply.roomId) {
+      showStep('step-select');
+      return error('❌ ' + ((reply && reply.error) || 'Impossible de créer la room'), 'errorBox');
+    }
+    roomId = reply.roomId;
+    currentTransfer = {
+      roomId: roomId,
+      expiresAt: reply.expiresAt || (Date.now() + ttl),
+      fileName: selectedFile.name,
+      fileSize: selectedFile.size,
+      pin: pinRaw || null,
+      createdAt: Date.now(),
+      downloadCount: 0,
+      destroyOnDownload: destroyOnDownload
+    };
+    saveToHistory(currentTransfer);
     const link = location.origin + '?room=' + encodeURIComponent(roomId);
     const out = $('linkOutput'); if (out) out.value = link;
     const pinBadge = $('pinBadge');
@@ -638,7 +655,7 @@ async function prepareFolderZip(files) {
   const titleEl = $('transferTitle');
   const rootName = ((files[0].webkitRelativePath || 'dossier').split('/')[0]) || 'dossier';
   try {
-    if (titleEl) titleEl.textContent = 'Preparation du dossier...';
+    if (titleEl) titleEl.textContent = 'Préparation du dossier...';
     await need('jszip');
     const zip = new JSZip();
     files.forEach(f => zip.file(f.webkitRelativePath || f.name, f));
@@ -670,9 +687,9 @@ async function prepareFolderZip(files) {
     } else {
       if (total > MEM_ZIP_LIMIT) {
         const raison = isRestrictedWebView()
-          ? "navigateur integre (WhatsApp, Facebook, Instagram...)"
+          ? "navigateur intégré (WhatsApp, Facebook, Instagram...)"
           : "navigateur sans OPFS";
-        throw new Error('Dossier trop volumineux (' + bytes(total) + ') pour la memoire car ' + raison + '. Ouvrez dans Chrome ou compressez avant.');
+        throw new Error('Dossier trop volumineux (' + bytes(total) + ') pour la mémoire car ' + raison + '. Ouvrez dans Chrome ou compressez avant.');
       }
       const parts = [];
       let accumulated = 0;
@@ -682,7 +699,7 @@ async function prepareFolderZip(files) {
           accumulated += chunk.byteLength;
           if (accumulated > MEM_ZIP_LIMIT) {
             stream.pause();
-            reject(new Error('Dossier trop volumineux pour la memoire'));
+            reject(new Error('Dossier trop volumineux pour la mémoire'));
             return;
           }
           parts.push(new Blob([chunk]));
@@ -696,14 +713,14 @@ async function prepareFolderZip(files) {
     selectedFile = finalFile;
     selectedFiles = [finalFile];
     useMultipleFiles = false;
-    if (titleEl) titleEl.textContent = 'Transfert Securise';
+    if (titleEl) titleEl.textContent = 'Transfert Sécurisé';
     showPreview(selectedFile);
     renderStrip();
     updateFilePreview();
     clearErrors();
     ensureSocket();
   } catch (err) {
-    error('❌ Erreur preparation : ' + err.message);
+    error('❌ Erreur préparation : ' + err.message);
     selectedFiles = [];
     selectedFile = null;
     renderStrip();
@@ -722,7 +739,7 @@ async function prepareMultiFilesZip(files) {
   if (total > MAX_FILE_SIZE) return error('❌ Taille totale trop volumineuse (max ' + bytes(MAX_FILE_SIZE) + ')');
   const titleEl = $('transferTitle');
   try {
-    if (titleEl) titleEl.textContent = 'Preparation de l\'archive...';
+    if (titleEl) titleEl.textContent = 'Préparation de l\'archive...';
     await need('jszip');
     const zip = new JSZip();
     files.forEach(f => zip.file(f.name, f));
@@ -753,7 +770,7 @@ async function prepareMultiFilesZip(files) {
       Object.defineProperty(finalFile, 'name', { writable: true, value: 'archive-' + new Date().toLocaleDateString('fr-FR') + '.zip' });
     } else {
       if (total > MEM_ZIP_LIMIT) {
-        throw new Error('Archive trop volumineuse pour la memoire (max ' + bytes(MEM_ZIP_LIMIT) + '). Ouvrez dans Chrome.');
+        throw new Error('Archive trop volumineuse pour la mémoire (max ' + bytes(MEM_ZIP_LIMIT) + '). Ouvrez dans Chrome.');
       }
       const parts = [];
       let accumulated = 0;
@@ -777,14 +794,14 @@ async function prepareMultiFilesZip(files) {
     selectedFile = finalFile;
     selectedFiles = [finalFile];
     useMultipleFiles = false;
-    if (titleEl) titleEl.textContent = 'Transfert Securise';
+    if (titleEl) titleEl.textContent = 'Transfert Sécurisé';
     showPreview(selectedFile);
     renderStrip();
     updateFilePreview();
     clearErrors();
     ensureSocket();
   } catch (err) {
-    error('❌ Erreur preparation : ' + err.message);
+    error('❌ Erreur préparation : ' + err.message);
     selectedFiles = [];
     selectedFile = null;
     renderStrip();
@@ -812,7 +829,7 @@ function joinRoom(pin) {
       return;
     }
     if (!reply || !reply.success) {
-      error('❌ ' + ((reply && reply.error) || 'Lien invalide ou expire'), 'errorBox3');
+      error('❌ ' + ((reply && reply.error) || 'Lien invalide ou expiré'), 'errorBox3');
       showStep('step-select');
       return;
     }
@@ -846,6 +863,7 @@ function resetConnection() {
   pc = null;
   if (timeLeftInterval) { clearInterval(timeLeftInterval); timeLeftInterval = null; }
 }
+
 function resetUI() {
   selectedFile = null;
   selectedFiles = [];
@@ -867,6 +885,7 @@ function resetUI() {
   const pbox = $('pinBox'); if (pbox) pbox.classList.add('hidden');
   const strip = $('selectedStrip'); if (strip) { strip.innerHTML = ''; strip.classList.add('hidden'); }
 }
+
 function cancelTransfer() {
   window.removeEventListener('beforeunload', handleBeforeUnload);
   transferAborted = true;
@@ -877,6 +896,7 @@ function cancelTransfer() {
   resetUI();
   showStep('step-select');
 }
+
 function handleBeforeUnload(e) {
   if (role && !transferAborted && expectedSize && receivedSize < expectedSize) {
     e.preventDefault();
@@ -887,7 +907,6 @@ function handleBeforeUnload(e) {
 /* ---------- SOCKET ---------- */
 function initSocket() {
   socket = io({ transports: ['websocket', 'polling'], reconnection: true, reconnectionAttempts: Infinity, reconnectionDelay: 1000, reconnectionDelayMax: 10000 });
-
   socket.on('connect', () => {
     setSocketReady(true);
     const urlRoom = new URLSearchParams(location.search).get('room');
@@ -899,7 +918,6 @@ function initSocket() {
     if (role && !transferAborted) error('⚠️ Connexion perdue — reconnexion...', role === 'sender' ? 'errorBox2' : 'errorBox3');
   });
   socket.on('connect_error', () => setSocketReady(false));
-
   socket.on('offer-received', async (data) => {
     if (role !== 'receiver' || !pc) return;
     try {
@@ -922,9 +940,8 @@ function initSocket() {
       const queued = peer.pending.splice(0);
       for (const c of queued) peer.pc.addIceCandidate(c).catch(() => {});
       requestQueuedIce(data.receiverId);
-    } catch (e) { error('❌ Reponse invalide : ' + e.message, 'errorBox2'); }
+    } catch (e) { error('❌ Réponse invalide : ' + e.message, 'errorBox2'); }
   });
-
   socket.on('ice-candidate', (data) => {
     const candidate = data.candidate || data;
     const from = data.from;
@@ -940,11 +957,10 @@ function initSocket() {
       else peer.pending.push(candidate);
     }
   });
-
   socket.on('receiver-joined', (data) => {
     if (role !== 'sender') return;
     if (data && data.receiverId) createPeerForReceiver(data.receiverId);
-    else { const wm = $('waitingMsg'); if (wm) wm.textContent = '✅ Destinataire connecte !'; }
+    else { const wm = $('waitingMsg'); if (wm) wm.textContent = '✅ Destinataire connecté !'; }
   });
   socket.on('receiver-left', (data) => {
     if (role !== 'sender') return;
@@ -956,26 +972,28 @@ function initSocket() {
     const wm = $('waitingMsg');
     if (wm && !transferAborted) wm.textContent = "⏳ Lien actif — en attente...";
   });
-
   socket.on('download-notification', (data) => {
     downloadCount = data.totalDownloads || (downloadCount + 1);
     updateDashboard();
     if (currentTransfer) updateHistoryDownloads(currentTransfer.roomId, downloadCount);
     const wm = $('waitingMsg');
-    if (wm) wm.textContent = '✅ Telechargement #' + downloadCount + ' termine';
+    if (wm) wm.textContent = '✅ Téléchargement #' + downloadCount + ' terminé';
   });
-
   socket.on('peer-disconnected', () => {
     if (!transferAborted) {
-      error('❌ Pair deconnecte', role === 'sender' ? 'errorBox2' : 'errorBox3');
+      error('❌ Pair déconnecté', role === 'sender' ? 'errorBox2' : 'errorBox3');
       resetConnection();
       showStep('step-select');
     }
   });
   socket.on('peer-cancelled', () => {
-    error('❌ Expediteur annule', 'errorBox3');
+    error('❌ Expéditeur annule', 'errorBox3');
     resetConnection();
     showStep('step-select');
+  });
+  socket.on('transfer-destroyed', () => {
+    error('🔥 Transfert auto-détruit', 'errorBox2');
+    cancelTransfer();
   });
 }
 
@@ -992,17 +1010,15 @@ async function sendEmail() {
       body: JSON.stringify({ to, link, fileName: selectedFile ? selectedFile.name : '' })
     });
     const data = await res.json();
-    if (!res.ok || !data.success) throw new Error(data.error || 'Echec');
-    if (btn) btn.textContent = '✅ Envoye';
+    if (!res.ok || !data.success) throw new Error(data.error || 'Échec');
+    if (btn) btn.textContent = '✅ Envoyé';
     if (toEl) toEl.value = '';
   } catch (e) { error('❌ ' + e.message, 'errorBox2'); }
   finally { setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = '✉️ Envoyer'; } }, 2500); }
 }
 
-/* ========== UI : BOUTONS ORIGINAUX + NOUVEAU SELECTEUR ========== */
-
+/* ========== UI : BOUTONS ========== */
 function bindUI() {
-  // Boutons originaux
   const bmf = $('btnModeFile');
   if (bmf) bmf.onclick = () => {
     clearErrors();
@@ -1010,7 +1026,6 @@ function bindUI() {
     const i = $('fileInput');
     if (i) i.click();
   };
-
   const bmf2 = $('btnModeFolder');
   if (bmf2) bmf2.onclick = () => {
     clearErrors();
@@ -1018,8 +1033,6 @@ function bindUI() {
     const i = $('folderInput');
     if (i) i.click();
   };
-
-  // Input original file
   const fi = $('fileInput');
   if (fi) fi.onchange = (e) => {
     try { sessionStorage.removeItem('transferx_picking'); } catch (err) {}
@@ -1032,8 +1045,6 @@ function bindUI() {
     showPreview(file);
     ensureSocket();
   };
-
-  // Input original folder
   const fo = $('folderInput');
   if (fo) fo.onchange = async (e) => {
     try { sessionStorage.removeItem('transferx_picking'); } catch (err) {}
@@ -1042,12 +1053,8 @@ function bindUI() {
     await prepareFolderZip(files);
     e.target.value = '';
   };
-
-  // Bouton nouveau selecteur
   const bop = $('btnOpenPicker');
   if (bop) bop.onclick = () => { clearErrors(); openSheet(); };
-
-  // Reste des boutons
   const bs = $('btnStartSend'); if (bs) bs.onclick = startSender;
   const bcs = $('btnCancelSend'); if (bcs) bcs.onclick = cancelTransfer;
   const bct = $('btnCancelTransfer'); if (bct) bct.onclick = cancelTransfer;
@@ -1057,73 +1064,68 @@ function bindUI() {
     const out = $('linkOutput'); if (!out) return;
     try { await navigator.clipboard.writeText(out.value); }
     catch (e) { out.select(); document.execCommand('copy'); }
-    bcl.textContent = '✅ Copie';
+    bcl.textContent = '✅ Copié';
     setTimeout(() => { bcl.textContent = '📋 Copier'; }, 2000);
   };
   const bse = $('btnSendEmail'); if (bse) bse.onclick = sendEmail;
   const bsh = $('btnShowHistory'); if (bsh) bsh.onclick = showHistory;
   const bbh = $('btnBackFromHistory'); if (bbh) bbh.onclick = hideHistory;
   const beh = $('btnExportHistory'); if (beh) beh.onclick = exportHistory;
-
   const bsp = $('btnSubmitPin');
   if (bsp) bsp.onclick = () => {
     const pe = $('pinEntry');
     const pin = pe ? pe.value.trim() : '';
-    if (!/^\d{4,8}$/.test(pin)) { error('❌ PIN : 4 a 8 chiffres', 'errorBox3'); return; }
+    if (!/^\d{4,8}$/.test(pin)) { error('❌ PIN : 4 à 8 chiffres', 'errorBox3'); return; }
     clearErrors();
-    const t = $('transferTitle'); if (t) t.textContent = 'Verification du PIN...';
+    const t = $('transferTitle'); if (t) t.textContent = 'Vérification du PIN...';
     joinRoom(pin);
   };
   const pe = $('pinEntry');
   if (pe) pe.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); const b = $('btnSubmitPin'); if (b) b.click(); }
   });
+  
+  // Partage intelligent
+  const btnNativeShare = $('btnNativeShare');
+  if (btnNativeShare) {
+    btnNativeShare.onclick = async () => {
+      const link = $('linkOutput')?.value;
+      const fileName = selectedFile ? selectedFile.name : 'un fichier';
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            title: 'Transfert TransferX',
+            text: `Je t'ai envoyé un fichier via TransferX : ${fileName}`,
+            url: link
+          });
+        } catch (err) {}
+      } else {
+        $('linkOutput')?.select();
+        document.execCommand('copy');
+        btnNativeShare.textContent = '✅ Lien copié !';
+        setTimeout(() => { btnNativeShare.textContent = '📱 Partager'; }, 2000);
+      }
+    };
+  }
+  const btnWhatsapp = $('btnWhatsapp');
+  if (btnWhatsapp) {
+    btnWhatsapp.onclick = () => {
+      const link = $('linkOutput')?.value;
+      const text = encodeURIComponent(`Je t'ai envoyé un fichier sécurisé via TransferX. Ouvre ce lien : ${link}`);
+      window.open(`https://wa.me/?text=${text}`, '_blank');
+    };
+  }
+  const btnTelegram = $('btnTelegram');
+  if (btnTelegram) {
+    btnTelegram.onclick = () => {
+      const link = $('linkOutput')?.value;
+      const text = encodeURIComponent(`Je t'ai envoyé un fichier sécurisé via TransferX.`);
+      window.open(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`, '_blank');
+    };
+  }
 }
 
-    // --- NOUVEAU : Boutons de partage intelligent ---
-    const btnNativeShare = $('btnNativeShare');
-    if (btnNativeShare) {
-        btnNativeShare.onclick = async () => {
-            const link = $('linkOutput')?.value;
-            const fileName = selectedFile ? selectedFile.name : 'un fichier';
-            if (navigator.share) {
-                try {
-                    await navigator.share({
-                        title: 'Transfert TransferX',
-                        text: `Je t'ai envoyé un fichier via TransferX : ${fileName}`,
-                        url: link
-                    });
-                } catch (err) { /* Partage annulé par l'utilisateur */ }
-            } else {
-                // Fallback si l'API n'est pas supportée (ex: desktop)
-                $('linkOutput')?.select();
-                document.execCommand('copy');
-                btnNativeShare.textContent = '✅ Lien copié !';
-                setTimeout(() => { btnNativeShare.textContent = '📱 Partager'; }, 2000);
-            }
-        };
-    }
-
-    const btnWhatsapp = $('btnWhatsapp');
-    if (btnWhatsapp) {
-        btnWhatsapp.onclick = () => {
-            const link = $('linkOutput')?.value;
-            const text = encodeURIComponent(`Je t'ai envoyé un fichier sécurisé via TransferX. Ouvre ce lien : ${link}`);
-            window.open(`https://wa.me/?text=${text}`, '_blank');
-        };
-    }
-
-    const btnTelegram = $('btnTelegram');
-    if (btnTelegram) {
-        btnTelegram.onclick = () => {
-            const link = $('linkOutput')?.value;
-            const text = encodeURIComponent(`Je t'ai envoyé un fichier sécurisé via TransferX.`);
-            window.open(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`, '_blank');
-        };
-    }
-
-/* ========== BOTTOM SHEET TELEGRAM ========== */
-
+/* ========== BOTTOM SHEET ========== */
 function openSheet() {
   const ov = $('pickerOverlay');
   const s = $('pickerSheet');
@@ -1150,12 +1152,10 @@ function bindPicker() {
     folder:  $('folderInputSheet'),
     camera:  $('cameraInput')
   };
-
   const bclose = $('btnCloseSheet');
   if (bclose) bclose.addEventListener('click', closeSheet);
   const ov = $('pickerOverlay');
   if (ov) ov.addEventListener('click', closeSheet);
-
   document.querySelectorAll('.sheet-tab').forEach(tab => {
     tab.addEventListener('click', () => {
       document.querySelectorAll('.sheet-tab').forEach(t => t.classList.remove('active'));
@@ -1167,7 +1167,6 @@ function bindPicker() {
       input.click();
     });
   });
-
   ['gallery', 'file', 'camera'].forEach(key => {
     const input = inputs[key];
     if (!input) return;
@@ -1179,7 +1178,6 @@ function bindPicker() {
       }
     });
   });
-
   const fso = inputs.folder;
   if (fso) fso.addEventListener('change', async (e) => {
     try { sessionStorage.removeItem('transferx_picking'); } catch (err) {}
@@ -1192,7 +1190,6 @@ function bindPicker() {
 }
 
 /* ---------- Fonctions du nouveau selecteur ---------- */
-
 function addFiles(files) {
   selectedFiles.push(...files);
   useMultipleFiles = true;
@@ -1204,7 +1201,6 @@ function syncSelectedFile() {
     selectedFile = null;
     return;
   }
-
   const total = selectedFiles.reduce((s, f) => s + f.size, 0);
   if (total > MAX_FILE_SIZE) {
     error('❌ Taille totale trop volumineuse (max ' + bytes(MAX_FILE_SIZE) + ')');
@@ -1213,7 +1209,6 @@ function syncSelectedFile() {
     renderStrip();
     return;
   }
-
   if (selectedFiles.length === 1) {
     selectedFile = selectedFiles[0];
     showPreview(selectedFile);
@@ -1221,7 +1216,6 @@ function syncSelectedFile() {
     prepareMultiFilesZip(selectedFiles);
     return;
   }
-
   renderStrip();
   updateFilePreview();
   clearErrors();
@@ -1233,14 +1227,11 @@ function renderStrip() {
   if (!strip) return;
   strip.innerHTML = '';
   strip.classList.toggle('hidden', selectedFiles.length === 0);
-
   selectedFiles.forEach((file, i) => {
     const chip = document.createElement('div');
     chip.className = 'selected-chip';
-
     const thumb = document.createElement('div');
     thumb.className = 'thumb';
-
     if (file.type.startsWith('image/')) {
       const img = document.createElement('img');
       img.src = URL.createObjectURL(file);
@@ -1256,15 +1247,12 @@ function renderStrip() {
     } else {
       thumb.textContent = '📄';
     }
-
     const name = document.createElement('span');
     name.className = 'chip-name';
     name.textContent = file.name;
-
     const size = document.createElement('span');
     size.className = 'chip-size';
     size.textContent = formatSize(file.size);
-
     const remove = document.createElement('button');
     remove.className = 'chip-remove';
     remove.type = 'button';
@@ -1280,7 +1268,6 @@ function renderStrip() {
       renderStrip();
       updateFilePreview();
     };
-
     chip.append(thumb, name, size, remove);
     strip.appendChild(chip);
   });
@@ -1297,15 +1284,12 @@ function updateFilePreview() {
   const preview = $('filePreview');
   const info = $('fileInfo');
   if (!preview || !info) return;
-
   if (!selectedFiles.length) {
     preview.classList.add('hidden');
     return;
   }
-
   preview.classList.remove('hidden');
   const total = selectedFiles.reduce((s, f) => s + f.size, 0);
-
   const nameEl = document.createElement('div');
   nameEl.className = 'file-preview-name';
   const sizeEl = document.createElement('div');
@@ -1333,28 +1317,24 @@ document.addEventListener('DOMContentLoaded', () => {
       root.removeEntry('transferx_multi.zip').catch(() => {});
     }).catch(() => {});
   }
-
   try {
     if (sessionStorage.getItem('transferx_picking')) {
       sessionStorage.removeItem('transferx_picking');
       const ramInfo = lowMemoryDevice() ? (' (RAM : ' + navigator.deviceMemory + ' Go)') : '';
       setTimeout(() => {
-        error("⚠️ Selection interrompue" + ramInfo);
+        error("⚠️ Sélection interrompue" + ramInfo);
       }, 300);
     }
   } catch (e) {}
-
   if (isRestrictedWebView()) {
     setTimeout(() => {
-      error("ℹ️ Navigateur integre detecte. Ouvrez dans Chrome pour fiabilite.");
+      error("ℹ️ Navigateur intégré détecté. Ouvrez dans Chrome pour fiabilité.");
     }, 600);
   }
-
   bindUI();
   bindPicker();
   setSocketReady(false);
-  if (!window.RTCPeerConnection) return error('❌ WebRTC non supporte');
-
+  if (!window.RTCPeerConnection) return error('❌ WebRTC non supporté');
   const urlRoom = new URLSearchParams(location.search).get('room');
   if (urlRoom) ensureSocket();
 });
