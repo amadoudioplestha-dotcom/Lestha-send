@@ -84,6 +84,11 @@
     <h2>Partagez votre lien</h2>
 
     <div class="link-box">
+    <div class="share-box" style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
+    <button class="btn secondary" id="btnNativeShare" style="flex:1; min-width:120px;">📱 Partager</button>
+    <button class="btn secondary" id="btnWhatsapp" style="flex:1; min-width:120px;">💬 WhatsApp</button>
+    <button class="btn secondary" id="btnTelegram" style="flex:1; min-width:120px;">✈️ Telegram</button>
+    </div>
       <input type="text" id="linkOutput" readonly placeholder="Génération...">
       <button id="btnCopyLink" class="btn secondary" type="button">📋 Copier</button>
     </div>
@@ -120,6 +125,10 @@
     <p id="transferTitle">Préparation…</p>
     <div id="pinBox" class="pin-box hidden">
       <p>🔒 Ce transfert est protégé par un code PIN</p>
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; color:var(--muted); margin-top:8px;">
+    <input type="checkbox" id="destroyOnDownloadCheck" style="width:auto; min-height:auto; accent-color: var(--cyan);">
+    🗑️ Auto-destruction après 1 téléchargement
+    </label>
       <p class="pin-hint">L'expéditeur doit vous communiquer ce code séparément</p>
       <div class="link-box">
         <input id="pinEntry" type="text" inputmode="numeric" maxlength="8" placeholder="Code PIN" autocomplete="off">
@@ -139,6 +148,7 @@
     <div class="success-icon">✓</div>
     <h2>Transfert terminé</h2>
     <p id="doneSubtitle" class="notice">Votre fichier est prêt.</p>
+    <div id="filePreviewReceived" class="file-preview hidden" style="margin-bottom:16px; background: var(--card); border: 1px solid var(--line);"></div>
     <a id="downloadLink" class="btn primary hidden" href="#">⬇️ Télécharger</a>
     <button id="btnRestart" class="btn secondary" type="button">🔄 Nouveau transfert</button>
   </section>

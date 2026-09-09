@@ -164,7 +164,14 @@ Le transfert est direct et chiffré de bout en bout : aucun fichier n'est stock�
 const rooms = new Map();
 
 function generateRoomId() {
-    return crypto.randomBytes(8).toString('hex');
+    // Génère un code court lisible (ex: TX-7K9M2P)
+    // On exclut I, L, 1, 0, O pour éviter les confusions visuelles ou orales
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = 'TX-';
+    for (let i = 0; i < 6; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
 }
 
 function hashPin(pin) {
@@ -198,6 +205,21 @@ io.on('connection', (socket) => {
             oldRoom.receivers.forEach(id => io.to(id).emit('peer-disconnected'));
             rooms.delete(socket.roomId);
         }
+
+        // Dans socket.on('create-room', ...)
+const destroyOnDownload = payload.destroyOnDownload === true; // 🚨 NOUVEAU
+rooms.set(roomId, {
+    senderSocketId: socket.id,
+    receivers: new Set(),
+    offers: new Map(),
+    answers: new Map(),
+    iceCandidates: new Map(),
+    createdAt: Date.now(),
+    expiresAt: Date.now() + ttl,
+    pinHash: pinHash,
+    downloadCount: 0,
+    destroyOnDownload: destroyOnDownload // 🚨 NOUVEAU
+});
 
         const roomId = generateRoomId();
         const pinHash = pin ? hashPin(pin) : null;
@@ -286,18 +308,27 @@ io.on('connection', (socket) => {
         if (typeof callback === 'function') callback({ candidates });
     });
 
-    // ✅ Nouveau : téléchargement terminé → compteur + notification
-    socket.on('download-complete', ({ roomId }) => {
-        const room = rooms.get(roomId);
-        if (!room) return;
-        room.downloadCount = (room.downloadCount || 0) + 1;
-        io.to(room.senderSocketId).emit('download-notification', {
-            receiverId: socket.id,
-            totalDownloads: room.downloadCount,
-            timestamp: Date.now()
-        });
-        console.log(`✅ Téléchargement terminé: ${roomId} (total: ${room.downloadCount})`);
+// 🚨 MODIFIER l'événement download-complete :
+socket.on('download-complete', ({ roomId }) => {
+    const room = rooms.get(roomId);
+    if (!room) return;
+    
+    room.downloadCount = (room.downloadCount || 0) + 1;
+    io.to(room.senderSocketId).emit('download-notification', {
+        receiverId: socket.id,
+        totalDownloads: room.downloadCount,
+        timestamp: Date.now()
     });
+    console.log(`✅ Téléchargement terminé: ${roomId} (total: ${room.downloadCount})`);
+
+    // 🚨 NOUVEAU : Logique d'auto-destruction
+    if (room.destroyOnDownload) {
+        console.log(`🔥 Auto-destruction de la room: ${roomId}`);
+        room.receivers.forEach(id => io.to(id).emit('peer-disconnected'));
+        io.to(room.senderSocketId).emit('transfer-destroyed'); // Notifie l'expéditeur
+        rooms.delete(roomId);
+    }
+});
 
     socket.on('cancel-transfer', ({ roomId }) => {
         const room = rooms.get(roomId);
