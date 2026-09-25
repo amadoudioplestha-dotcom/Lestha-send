@@ -1,0 +1,9 @@
+[
+  {
+    "AllowedOrigins": ["https://transferx.exemple.com", "http://localhost:3000"],
+    "AllowedMethods": ["PUT", "GET", "HEAD"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag", "Content-Length", "Content-Range"],
+    "MaxAgeSeconds": 86400
+  }
+]
