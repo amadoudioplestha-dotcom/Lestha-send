@@ -1,356 +1,141 @@
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
-const { Server } = require('socket.io');
 const path = require('path');
 const crypto = require('crypto');
+const { Server } = require('socket.io');
 
-let sgMail = null;
-try {
-    sgMail = require('@sendgrid/mail');
-    console.log('✅ @sendgrid/mail chargé');
-} catch (e) {
-    console.warn('⚠️ @sendgrid/mail non disponible');
-}
+const { createStorage } = require('./lib/storage');
+const { createDb } = require('./lib/db');
+const { createMailer } = require('./lib/email');
+const { makeSigner, rateLimiter, clientIp } = require('./lib/util');
+const { mountCloud } = require('./lib/cloud');
+const { mountP2P } = require('./lib/p2p');
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
-const PORT = process.env.PORT || 3000;
+const env = process.env;
+const PORT = env.PORT || 3000;
 
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.json({ limit: '10mb' }));
+async function main() {
+  const storage = createStorage(env);
+  const db = createDb(storage);
+  const mailer = createMailer(env);
 
-app.get('/favicon.ico', (req, res) => res.status(204).end());
-app.all('/cdn-cgi/*', (req, res) => res.status(204).end());
+  // Secret HMAC stable (jetons PIN, URLs d'upload locales) : APP_SECRET ou généré et stocké une fois
+  let secret = env.APP_SECRET;
+  if (!secret) {
+    const buf = await storage.getBuffer('system/secret').catch(() => null);
+    if (buf && buf.length >= 32) secret = buf.toString();
+    else {
+      secret = crypto.randomBytes(32).toString('hex');
+      await storage.putBuffer('system/secret', Buffer.from(secret), 'text/plain');
+    }
+  }
+  const signer = makeSigner(secret);
 
-app.get('/health', (req, res) => {
-    res.json({
-        status: 'OK',
-        timestamp: new Date().toISOString(),
-        email: {
-            sendgrid_configured: !!(sgMail && process.env.SENDGRID_API_KEY),
-            from_email: process.env.SENDGRID_FROM_EMAIL || 'Non configuré'
-        },
-        webrtc: true
-    });
-});
+  const app = express();
+  app.set('trust proxy', true);
+  app.disable('x-powered-by');
+  const server = http.createServer(app);
+  const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 1e6, pingInterval: 20000, pingTimeout: 30000 });
 
-function validateIceServer(url, username, credential) {
+  // En-têtes de sécurité légers
+  app.use((req, res, next) => {
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.set('Permissions-Policy', 'camera=(self), microphone=()');
+    next();
+  });
+
+  app.use(express.json({ limit: '5mb' }));
+
+  // Fichiers statiques : le service worker et le HTML ne doivent jamais être figés en cache
+  const pub = path.join(__dirname, 'public');
+  app.use(express.static(pub, {
+    setHeaders(res, file) {
+      // HTML / JS / CSS : toujours revalidés (ETag) → jamais de versions mélangées après une mise à jour
+      if (/\.(html|webmanifest|json|js|css)$/.test(file)) res.set('Cache-Control', 'no-cache');
+      else res.set('Cache-Control', 'public, max-age=86400');
+    }
+  }));
+
+  app.get('/favicon.ico', (req, res) => res.redirect(301, '/icon-192.png'));
+  app.all('/cdn-cgi/*', (req, res) => res.status(204).end());
+
+  app.get('/health', (req, res) => res.json({
+    status: 'OK', timestamp: new Date().toISOString(), storage: storage.name,
+    email: { enabled: mailer.enabled, provider: mailer.provider }, turn: !!env.TURN_URL, webrtc: true
+  }));
+
+  /* ---------- ICE (STUN/TURN) ---------- */
+  function validateIceServer(url, username, credential) {
     if (!url || typeof url !== 'string') return null;
     url = url.trim();
-    const schemeMatch = url.match(/^(stun|turn|turns):/i);
-    let scheme, hostPortPart;
-    if (schemeMatch) {
-        scheme = schemeMatch[1].toLowerCase();
-        hostPortPart = url.slice(schemeMatch[0].length);
-    } else {
-        scheme = url.includes('stun.') ? 'stun' : 'turn';
-        hostPortPart = url;
-    }
-    const hostPortMatch = hostPortPart.match(/^([^:]+)(?::(\d+))?$/);
-    if (!hostPortMatch) return null;
-    const [, host, portStr] = hostPortMatch;
-    const defaultPort = scheme === 'stun' ? 19302 : 3478;
-    const port = portStr ? parseInt(portStr, 10) : defaultPort;
-    const finalPort = (isNaN(port) || port < 1 || port > 65535) ? defaultPort : port;
-    const cleanUrl = `${scheme}:${host.trim()}:${finalPort}`;
-    const serverObj = { urls: cleanUrl };
-    if (scheme !== 'stun' && username && credential) {
-        serverObj.username = String(username).trim();
-        serverObj.credential = String(credential).trim();
-    }
-    return serverObj;
-}
-
-app.get('/api/ice-config', (req, res) => {
-    const iceServers = [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
-    ];
-    if (process.env.TURN_URL) {
-        const turnServer = validateIceServer(
-            process.env.TURN_URL,
-            process.env.TURN_USERNAME,
-            process.env.TURN_CREDENTIAL
-        );
-        if (turnServer) iceServers.push(turnServer);
-    }
+    const m = url.match(/^(stun|turn|turns):/i);
+    const scheme = m ? m[1].toLowerCase() : (url.includes('stun.') ? 'stun' : 'turn');
+    const rest = m ? url.slice(m[0].length) : url;
+    const hm = rest.match(/^([^:?]+)(?::(\d+))?(\?.*)?$/);
+    if (!hm) return null;
+    const port = parseInt(hm[2] || (scheme === 'stun' ? 19302 : 3478), 10);
+    const obj = { urls: `${scheme}:${hm[1].trim()}:${port}${hm[3] || ''}` };
+    if (scheme !== 'stun' && username && credential) { obj.username = String(username).trim(); obj.credential = String(credential).trim(); }
+    return obj;
+  }
+  app.get('/api/ice-config', (req, res) => {
+    const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:stun.cloudflare.com:3478' }];
+    (env.TURN_URL || '').split(',').filter(Boolean).forEach(u => {
+      const s = validateIceServer(u, env.TURN_USERNAME, env.TURN_CREDENTIAL);
+      if (s) iceServers.push(s);
+    });
     res.json({ iceServers });
-});
+  });
 
-function escapeHtml(text) {
-    if (text == null) return '';
-    return String(text)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-}
-
-app.post('/api/send-email', async (req, res) => {
-    const { to, link, fileName } = req.body;
+  /* ---------- E-mail du mode P2P (lien limité à ce domaine : pas de relais de spam) ---------- */
+  const p2pMailLimit = rateLimiter({ windowMs: 3600 * 1000, max: 20 });
+  app.post('/api/send-email', async (req, res) => {
+    const { to, link, fileName } = req.body || {};
     if (!to || !link) return res.status(400).json({ error: 'Champs manquants (to, link).' });
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return res.status(400).json({ error: 'Email invalide.' });
-    if (!sgMail || !process.env.SENDGRID_API_KEY) {
-        return res.status(503).json({ error: 'Service email non configuré.' });
-    }
-    const fromEmail = process.env.SENDGRID_FROM_EMAIL;
-    if (!fromEmail) {
-        return res.status(503).json({ error: 'Expéditeur non configuré.' });
-    }
-
-    const safeName = escapeHtml(fileName) || 'sans nom';
-    const safeLink = escapeHtml(link);
-
+    const base = (env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+    let ok = false;
+    try { const u = new URL(link); ok = u.origin === new URL(base).origin; } catch (e) { ok = false; }
+    if (!ok) return res.status(400).json({ error: 'Lien non autorisé.' });
+    if (!p2pMailLimit(clientIp(req))) return res.status(429).json({ error: 'Trop d\'e-mails envoyés.' });
+    if (!mailer.enabled) return res.status(503).json({ error: 'Service email non configuré.' });
     try {
-        sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-        await sgMail.send({
-            to: to.trim(),
-            from: { email: fromEmail, name: 'TransferX' },
-            replyTo: fromEmail,
-            subject: `Un fichier vous attend : ${safeName}`,
-            text: `Bonjour,\n\nUn fichier vous a été envoyé via TransferX : ${fileName || 'sans nom'}\n\nPour le récupérer, ouvrez ce lien :\n${link}\n\nLe lien reste valide pendant que l'expéditeur est connecté.\nLe transfert est direct et chiffré de bout en bout : aucun fichier n'est stocké sur nos serveurs.\n\n— TransferX`,
-            html: `<!DOCTYPE html>
-<html lang="fr"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f6f7f9;">
-  <div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:0 auto;padding:24px;">
-    <h2 style="color:#1f2937;font-size:20px;margin:0 0 16px;">Un fichier vous attend</h2>
-    <p style="color:#374151;font-size:15px;line-height:1.5;margin:0 0 24px;">
-      Le fichier <strong>${safeName}</strong> vous a été envoyé via TransferX.
-    </p>
-    <p style="text-align:center;margin:0 0 24px;">
-      <a href="${safeLink}" style="background:#2563eb;color:#ffffff;padding:14px 28px;text-decoration:none;border-radius:6px;display:inline-block;font-weight:bold;font-size:16px;">Récupérer le fichier</a>
-    </p>
-    <p style="color:#6b7280;font-size:13px;line-height:1.6;border-top:1px solid #e5e7eb;padding-top:16px;margin:0;">
-      Le lien reste valide pendant que l'expéditeur est connecté.<br>
-      Transfert direct et chiffré de bout en bout : aucun fichier n'est stocké sur nos serveurs.
-    </p>
-  </div>
-</body></html>`,
-            trackingSettings: {
-                clickTracking: { enable: false, enableText: false },
-                openTracking:  { enable: false }
-            },
-            mailSettings: {
-                sandboxMode: { enable: false }
-            }
-        });
-        console.log(`✅ Email envoyé à ${to}`);
-        return res.json({ success: true, provider: 'sendgrid' });
-    } catch (error) {
-        console.error('❌ Erreur SendGrid:', error.response?.body || error.message);
-        return res.status(500).json({
-            error: 'Échec envoi: ' + (error.response?.body?.errors?.[0]?.message || error.message)
-        });
+      await mailer.send({ to: to.trim(), ...mailer.p2pEmail({ link, fileName }) });
+      res.json({ success: true, provider: mailer.provider });
+    } catch (e) {
+      console.error('❌ Email:', e.response?.body || e.message);
+      res.status(500).json({ error: 'Échec envoi : ' + (e.response?.body?.errors?.[0]?.message || e.message) });
     }
-});
+  });
 
-// ========================================
-//  SIGNALISATION WEBRTC — SESSION PERSISTANTE
-// ========================================
-const rooms = new Map();
+  /* ---------- Modes Cloud + P2P ---------- */
+  mountCloud(app, { storage, db, mailer, signer, io, env });
+  mountP2P(io);
 
-function generateRoomId() {
-    // Génère un code court lisible (ex: TX-7K9M2P)
-    // On exclut I, L, 1, 0, O pour éviter les confusions visuelles ou orales
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let code = 'TX-';
-    for (let i = 0; i < 6; i++) {
-        code += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return code;
+  /* ---------- Routes de l'application (SPA) ---------- */
+  const sendIndex = (req, res) => { res.set('Cache-Control', 'no-cache'); res.sendFile(path.join(pub, 'index.html')); };
+  app.get(['/t/:id', '/m/:id', '/dashboard', '/send', '/p2p'], sendIndex);
+
+  // Erreurs API au format JSON
+  app.use('/api', (req, res) => res.status(404).json({ error: 'Route inconnue.' }));
+  app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
+    console.error('❌', req.method, req.path, err.message);
+    if (res.headersSent) return;
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Erreur serveur. Réessayez.' });
+  });
+
+  server.listen(PORT, () => {
+    console.log(`🚀 TransferX sur le port ${PORT}`);
+    console.log(`💾 Stockage : ${storage.name === 's3' ? 'S3 / Cloudflare R2 (' + (env.S3_BUCKET || env.R2_BUCKET) + ')' : 'disque local (' + storage.root + ')'}`);
+    console.log(`📧 E-mail : ${mailer.enabled ? mailer.provider : 'non configuré'}`);
+    console.log(`🔄 TURN : ${env.TURN_URL ? 'configuré' : 'STUN uniquement'}`);
+  });
+
+  const shutdown = async () => { try { await db.flushAll(); } catch (e) { /* ignore */ } process.exit(0); };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
 
-function hashPin(pin) {
-    return crypto.createHash('sha256').update(String(pin)).digest('hex');
-}
-
-// Nettoyage : expiration réelle + max 7 jours
-setInterval(() => {
-    const now = Date.now();
-    for (const [roomId, room] of rooms.entries()) {
-        if ((room.expiresAt && now > room.expiresAt) || now - room.createdAt > 7 * 86400000) {
-            console.log(`🧹 Room expirée nettoyée: ${roomId}`);
-            room.receivers.forEach(id => io.to(id).emit('peer-disconnected'));
-            rooms.delete(roomId);
-        }
-    }
-}, 60000);
-
-io.on('connection', (socket) => {
-    console.log('✅ Connexion socket:', socket.id);
-
-    // ✅ create-room : TTL + PIN + Auto-destruction
-    socket.on('create-room', (payload, callback) => {
-        if (typeof payload === 'function') { callback = payload; payload = {}; }
-        payload = payload || {};
-        const ttl = Math.min(Math.max(parseInt(payload.ttl, 10) || 3600000, 60000), 7 * 86400000);
-        const pin = payload.pin ? String(payload.pin) : null;
-        const destroyOnDownload = payload.destroyOnDownload === true; // 🚨 NOUVEAU
-
-        if (socket.roomId && rooms.has(socket.roomId)) {
-            const oldRoom = rooms.get(socket.roomId);
-            oldRoom.receivers.forEach(id => io.to(id).emit('peer-disconnected'));
-            rooms.delete(socket.roomId);
-        }
-
-        const roomId = generateRoomId();
-        const pinHash = pin ? hashPin(pin) : null;
-
-        rooms.set(roomId, {
-            senderSocketId: socket.id,
-            receivers: new Set(),
-            offers: new Map(),
-            answers: new Map(),
-            iceCandidates: new Map(),
-            createdAt: Date.now(),
-            expiresAt: Date.now() + ttl,
-            pinHash: pinHash,
-            downloadCount: 0,
-            destroyOnDownload: destroyOnDownload // 🚨 NOUVEAU
-        });
-        
-        socket.join(roomId);
-        socket.roomId = roomId;
-        socket.role = 'sender';
-        console.log(`📍 Room créée: ${roomId} (TTL: ${Math.round(ttl / 3600000)}h, PIN: ${pinHash ? '✅' : '❌'}, Auto-destroy: ${destroyOnDownload ? '✅' : '❌'})`);
-        
-        if (typeof callback === 'function') {
-            callback({ roomId, success: true, expiresAt: Date.now() + ttl });
-        }
-    });
-
-    // ✅ Offre SDP vers un destinataire précis
-    socket.on('send-offer', ({ roomId, offer, receiverId }) => {
-        const room = rooms.get(roomId);
-        if (!room || room.senderSocketId !== socket.id) return;
-        if (receiverId) {
-            room.offers.set(receiverId, offer);
-            io.to(receiverId).emit('offer-received', { offer });
-        }
-    });
-
-    // ✅ join-room : PIN + multi-destinataires (session persistante)
-    socket.on('join-room', ({ roomId, pin }, callback) => {
-        const room = rooms.get(roomId);
-        if (!room) return callback && callback({ success: false, error: 'Lien invalide ou expiré.' });
-        if (Date.now() > room.expiresAt) {
-            rooms.delete(roomId);
-            return callback && callback({ success: false, error: 'Ce lien a expiré.' });
-        }
-        if (room.pinHash) {
-            if (!pin) return callback && callback({ success: false, pinRequired: true });
-            if (hashPin(pin) !== room.pinHash) return callback && callback({ success: false, pinRequired: true, error: 'Code PIN incorrect.' });
-        }
-
-        room.receivers.add(socket.id);
-        socket.join(roomId);
-        socket.roomId = roomId;
-        socket.role = 'receiver';
-        console.log(`👤 Destinataire #${room.receivers.size} rejoint: ${roomId}`);
-        
-        if (typeof callback === 'function') callback({ success: true });
-        io.to(room.senderSocketId).emit('receiver-joined', { receiverId: socket.id, totalReceivers: room.receivers.size });
-    });
-
-    socket.on('send-answer', ({ roomId, answer }) => {
-        const room = rooms.get(roomId);
-        if (!room) return;
-        room.answers.set(socket.id, answer);
-        io.to(room.senderSocketId).emit('answer-received', { answer, receiverId: socket.id });
-    });
-
-    socket.on('ice-candidate', ({ roomId, candidate, targetId }) => {
-        const room = rooms.get(roomId);
-        if (!room) return;
-        if (targetId) {
-            io.to(targetId).emit('ice-candidate', { candidate, from: socket.id });
-        } else {
-            const target = socket.id === room.senderSocketId ? null : room.senderSocketId;
-            if (target) {
-                io.to(target).emit('ice-candidate', { candidate, from: socket.id });
-            } else {
-                if (!room.iceCandidates.has(socket.id)) room.iceCandidates.set(socket.id, []);
-                room.iceCandidates.get(socket.id).push({ candidate, timestamp: Date.now() });
-            }
-        }
-    });
-
-    socket.on('get-ice-candidates', ({ roomId }, callback) => {
-        const room = rooms.get(roomId);
-        if (!room) return callback && callback({ candidates: [] });
-        const myRole = socket.id === room.senderSocketId ? 'sender' : 'receiver';
-        const candidates = [];
-        room.iceCandidates.forEach((list, fromId) => {
-            const fromRole = fromId === room.senderSocketId ? 'sender' : 'receiver';
-            if (fromRole !== myRole) list.forEach(c => candidates.push(c.candidate));
-        });
-        if (typeof callback === 'function') callback({ candidates });
-    });
-
-    // ✅ download-complete : compteur + auto-destruction
-    socket.on('download-complete', ({ roomId }) => {
-        const room = rooms.get(roomId);
-        if (!room) return;
-        
-        room.downloadCount = (room.downloadCount || 0) + 1;
-        io.to(room.senderSocketId).emit('download-notification', {
-            receiverId: socket.id,
-            totalDownloads: room.downloadCount,
-            timestamp: Date.now()
-        });
-        console.log(`✅ Téléchargement terminé: ${roomId} (total: ${room.downloadCount})`);
-
-        // 🚨 NOUVEAU : Logique d'auto-destruction
-        if (room.destroyOnDownload) {
-            console.log(`🔥 Auto-destruction de la room: ${roomId}`);
-            room.receivers.forEach(id => io.to(id).emit('peer-disconnected'));
-            io.to(room.senderSocketId).emit('transfer-destroyed'); // Notifie l'expéditeur
-            rooms.delete(roomId);
-        }
-    });
-
-    socket.on('cancel-transfer', ({ roomId }) => {
-        const room = rooms.get(roomId);
-        if (!room || room.senderSocketId !== socket.id) return;
-        room.receivers.forEach(id => io.to(id).emit('peer-cancelled'));
-        rooms.delete(roomId);
-    });
-
-    socket.on('leave-room', ({ roomId }) => {
-        const room = rooms.get(roomId);
-        if (!room) return;
-        if (room.receivers.has(socket.id)) {
-            room.receivers.delete(socket.id);
-            io.to(room.senderSocketId).emit('receiver-left', { receiverId: socket.id, totalReceivers: room.receivers.size });
-        }
-    });
-
-    socket.on('disconnect', () => {
-        const roomId = socket.roomId;
-        if (!roomId) return;
-        const room = rooms.get(roomId);
-        if (!room) return;
-        
-        if (socket.id === room.senderSocketId) {
-            room.receivers.forEach(id => io.to(id).emit('peer-disconnected'));
-            rooms.delete(roomId);
-        } else {
-            if (room.receivers.has(socket.id)) {
-                room.receivers.delete(socket.id);
-                io.to(room.senderSocketId).emit('receiver-left', { receiverId: socket.id, totalReceivers: room.receivers.size });
-            }
-        }
-    });
-
-    socket.on('ping-keepalive', () => socket.emit('pong-keepalive'));
-});
-
-server.listen(PORT, () => {
-    console.log(`🚀 Serveur démarré sur le port ${PORT}`);
-    console.log(`📧 SendGrid: ${sgMail && process.env.SENDGRID_API_KEY ? '✅ Configuré' : '❌ Non configuré'}`);
-    console.log(`📧 From: ${process.env.SENDGRID_FROM_EMAIL || 'Non configuré'}`);
-    console.log(`🔄 TURN: ${process.env.TURN_URL ? '✅ Configuré' : '❌ STUN uniquement'}`);
-});
+main().catch((e) => { console.error('Démarrage impossible :', e); process.exit(1); });
