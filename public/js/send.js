@@ -404,7 +404,13 @@ export function runUpload(ctx) {
   up.addEventListener('progress', (e) => updateUploading(e.detail));
   up.addEventListener('state', () => updateUploadingState());
   up.addEventListener('filecomplete', () => refreshFileBars());
-  up.addEventListener('stalled', () => toast('L\'envoi n\'arrive pas à démarrer : le stockage refuse ce site. Administrateur : vérifiez la règle CORS du bucket R2 (console admin → Système → Lancer le test).', 'error', { duration: 15000 }));
+  up.addEventListener('stalled', (e) => {
+    const ban = rootEl && $('#upBanner', rootEl);
+    const msg = e.detail.kind === 'cors'
+      ? 'L\'envoi n\'arrive pas à démarrer : le stockage refuse ce site. Administrateur : vérifiez la règle CORS du bucket R2 (console admin → Système → Lancer le test).'
+      : 'Le fichier est envoyé mais son assemblage échoue (« ' + e.detail.message + ' »). TransferX réessaie automatiquement ; si ça dure, notez ce message.';
+    if (ban) ban.innerHTML = `<div class="banner bad">${icon('shield')}<span>${esc(msg)}</span></div>`; else toast(msg, 'error', { duration: 15000 });
+  });
   up.addEventListener('error', (e) => { toast('Envoi interrompu : ' + e.detail.message, 'error'); keepAwake(false); active = null; if (rootEl) renderCompose(); });
   up.addEventListener('done', () => finalize());
   keepAwake(true);
@@ -468,8 +474,11 @@ function updateUploading(d) {
   const p = Math.floor(pct * 1000) / 10;
   $('#upPct', rootEl).textContent = pct >= 1 ? '100' : p.toFixed(p < 10 ? 1 : 0).replace('.', ',');
   $('#upBytes', rootEl).textContent = bytes(d.loaded) + ' / ' + bytes(d.total);
-  $('#upSpeed', rootEl).textContent = d.speed ? speed(d.speed) : '—';
-  $('#upEta', rootEl).textContent = d.speed ? duration(d.eta) : '—';
+  const waiting = d.phase === 'confirming' || d.phase === 'assembling';
+  $('#upSpeed', rootEl).textContent = d.speed >= 1 && !waiting ? speed(d.speed) : '—';
+  $('#upEta', rootEl).textContent = d.speed >= 1 && !waiting ? duration(d.eta) : '—';
+  const stEl = $('#upState', rootEl);
+  if (stEl && active.uploader.state === 'running') stEl.textContent = d.phase === 'assembling' ? 'Assemblage du fichier…' : d.phase === 'confirming' ? 'Derniers octets en route…' : 'Envoi en cours';
   document.title = Math.floor(pct * 100) + ' % · Envoi TransferX';
   const h = d.history || [];
   if (h.length > 1) {

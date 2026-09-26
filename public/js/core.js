@@ -15,12 +15,12 @@ export function bytes(n, digits) {
   n = Number(n) || 0;
   if (n <= 0) return '0 o';
   const u = ['o', 'Ko', 'Mo', 'Go', 'To'];
-  const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), u.length - 1);
+  const i = Math.max(0, Math.min(Math.floor(Math.log(n) / Math.log(1024)), u.length - 1));
   const v = n / Math.pow(1024, i);
   const d = digits != null ? digits : (i < 2 ? 0 : v < 10 ? 2 : v < 100 ? 1 : 0);
   return v.toFixed(d).replace('.', ',') + ' ' + u[i];
 }
-export const speed = (bps) => (bps > 0 ? bytes(bps) + '/s' : '—');
+export const speed = (bps) => (bps >= 1 ? bytes(bps) + '/s' : '—');
 export function duration(sec) {
   if (!isFinite(sec) || sec < 0) return '—';
   sec = Math.round(sec);

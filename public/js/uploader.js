@@ -37,15 +37,27 @@ export class Uploader extends EventTarget {
 
   get loaded() {
     let l = this.doneBytes;
-    this.inflight.forEach(x => { l += x.loaded || 0; });
+    this.inflight.forEach(x => { l += this._sent(x); });
     return Math.min(l, this.total);
+  }
+
+  /** Octets d'un morceau en cours : plafonnés à 97 % tant que le stockage n'a pas confirmé
+   *  (certains navigateurs, dont Safari, annoncent 100 % bien avant la fin réelle). */
+  _sent(x) { return Math.min(x.loaded || 0, Math.floor((x.size || 0) * 0.97)); }
+
+  /** Étape actuelle, pour l'affichage */
+  get phase() {
+    if (this.state !== 'running') return this.state;
+    if ([...this.fileState.values()].some(st => st.completing)) return 'assembling';
+    if (!this.queue.length && this.inflight.size && [...this.inflight.values()].every(x => x.size && x.loaded >= x.size)) return 'confirming';
+    return 'running';
   }
 
   fileProgress() {
     return this.items.map(({ file, meta }) => {
       const st = this.fileState.get(meta.id);
       let b = st ? st.bytes : 0;
-      this.inflight.forEach((x, k) => { if (k.startsWith(meta.id + ':')) b += x.loaded || 0; });
+      this.inflight.forEach((x, k) => { if (k.startsWith(meta.id + ':')) b += this._sent(x); });
       return { id: meta.id, name: file.name, size: file.size, loaded: Math.min(b, file.size), done: !!(st && st.completed) };
     });
   }
@@ -97,7 +109,7 @@ export class Uploader extends EventTarget {
   _progress() {
     const loaded = this.loaded;
     const eta = this.speed > 0 ? (this.total - loaded) / this.speed : Infinity;
-    this._emit('progress', { loaded, total: this.total, speed: this.state === 'running' ? this.speed : 0, eta, history: this.speedHistory });
+    this._emit('progress', { loaded, total: this.total, speed: this.state === 'running' ? this.speed : 0, eta, history: this.speedHistory, phase: this.phase });
   }
 
   _run() {
@@ -129,13 +141,14 @@ export class Uploader extends EventTarget {
   async _upload(task) {
     const { meta, file, n } = task;
     const k = meta.id + ':' + n;
-    const slot = { xhr: null, loaded: 0 };
+    const slot = { xhr: null, loaded: 0, size: 0 };
     this.inflight.set(k, slot);
     try {
       const url = await this._getUrl(meta, n);
       if (this.state !== 'running') throw Object.assign(new Error('stopped'), { stopped: true });
       const off = (n - 1) * meta.partSize;
       const blob = file.slice(off, Math.min(off + meta.partSize, file.size));
+      slot.size = blob.size;
       await new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         slot.xhr = xhr;
@@ -170,7 +183,7 @@ export class Uploader extends EventTarget {
       const delay = Math.min(MAX_RETRY_DELAY, 800 * Math.pow(2, task.tries - 1)) + Math.random() * 400;
       this._emit('retry', { attempt: task.tries, delay, message: e.message });
       // Aucun octet n'est jamais passé alors que le réseau marche : le stockage refuse le navigateur (règle CORS R2)
-      if (e.network && !this._stallWarned && this.doneBytes === 0 && task.tries >= 3) { this._stallWarned = true; this._emit('stalled', { message: e.message }); }
+      if (e.network && !this._stallWarned && this.doneBytes === 0 && task.tries >= 3) { this._stallWarned = true; this._emit('stalled', { kind: 'cors', message: e.message }); }
       await new Promise(r => setTimeout(r, delay));
     }
     this._run();
@@ -180,6 +193,7 @@ export class Uploader extends EventTarget {
     const st = this.fileState.get(meta.id);
     if (!st || st.completed || st.completing || st.done.size < meta.partCount) return;
     st.completing = true;
+    this._progress();
     try {
       await api(`/api/transfers/${this.id}/files/${meta.id}/complete`, { method: 'POST', key: this.key, body: {} });
       st.completed = true;
@@ -195,7 +209,9 @@ export class Uploader extends EventTarget {
         st.completing = false;
         return this._fail(e);
       } else {
-        await new Promise(r => setTimeout(r, 3000));
+        st.fails = (st.fails || 0) + 1;
+        if (st.fails === 3) this._emit('stalled', { kind: 'complete', message: e.message || 'Erreur du serveur' });
+        await new Promise(r => setTimeout(r, Math.min(30000, 3000 * st.fails)));
         st.completing = false;
         return this._maybeComplete(meta, file);
       }

@@ -174,10 +174,12 @@ export const depositView = (() => {
       const p = d.total ? d.loaded / d.total : 1;
       bar.style.strokeDashoffset = String(C * (1 - p));
       $('#pc', root).textContent = Math.floor(p * 100); $('#by', root).textContent = bytes(d.loaded) + ' / ' + bytes(d.total);
-      $('#sp', root).textContent = d.speed ? speed(d.speed) : '—'; $('#eta', root).textContent = d.speed ? duration(d.eta) : '—';
+      const waiting = d.phase === 'confirming' || d.phase === 'assembling';
+      $('#sp', root).textContent = d.speed >= 1 && !waiting ? speed(d.speed) : '—'; $('#eta', root).textContent = d.speed >= 1 && !waiting ? duration(d.eta) : '—';
+      const stEl = $('#st', root); if (stEl && up.state === 'running') stEl.textContent = d.phase === 'assembling' ? 'Assemblage…' : d.phase === 'confirming' ? 'Derniers octets en route…' : 'Dépôt en cours';
     });
     up.addEventListener('state', () => { const b = root && $('#ban', root); if (b) b.innerHTML = up.state === 'offline' ? `<div class="banner warn">${icon('wifi-off')}<span>Connexion perdue : reprise automatique au retour du réseau.</span></div>` : ''; });
-    up.addEventListener('stalled', () => { const b = root && $('#ban', root); if (b) b.innerHTML = `<div class="banner bad">${icon('shield')}<span>L'envoi n'arrive pas à démarrer : le stockage refuse la connexion depuis ce site. Prévenez l'organisateur (règle CORS du stockage à vérifier). La page continue d'essayer.</span></div>`; });
+    up.addEventListener('stalled', (e) => { const b = root && $('#ban', root); if (!b) return; const msg = e.detail.kind === 'cors' ? 'L\'envoi n\'arrive pas à démarrer : le stockage refuse la connexion depuis ce site. Prévenez l\'organisateur (règle CORS du stockage à vérifier). La page continue d\'essayer.' : 'Fichiers envoyés, mais l\'assemblage échoue (« ' + e.detail.message + ' »). La page réessaie automatiquement.'; b.innerHTML = `<div class="banner bad">${icon('shield')}<span>${esc(msg)}</span></div>`; });
     up.addEventListener('error', (e) => { keepAwake(false); toast('Dépôt interrompu : ' + e.detail.message, 'error'); });
     up.addEventListener('done', async () => {
       for (let i = 0; i < 5; i++) { try { await api(`/api/transfers/${r.transferId}/finalize`, { method: 'POST', key: r.uploadKey, body: {} }); break; } catch (e) { await new Promise(res => setTimeout(res, 1500)); } }
