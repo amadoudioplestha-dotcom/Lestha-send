@@ -356,7 +356,7 @@ async function runFullTest() {
   try {
     const srv = await aapi('/selftest', { method: 'POST', body: {} });
     srv.steps.forEach(s => { const el = line(s.name); done(el, s.ok, s.detail, s.ms); if (!s.ok) ok = false; });
-    if (!A.ov.system.cloudEnabled) { const el = line('Envoi Cloud depuis le navigateur'); done(el, false, 'Mode Cloud désactivé : configurez R2 d\'abord.'); return; }
+    if (!A.ov.system.cloudEnabled) { const el = line('Envoi Cloud depuis le navigateur'); done(el, false, 'Mode Cloud désactivé : configurez R2 d\'abord.'); ok = false; return; }
     const payload = crypto.getRandomValues(new Uint8Array(64 * 1024));
     let tr, url;
     const H = { Authorization: 'Bearer ' + A.token };
