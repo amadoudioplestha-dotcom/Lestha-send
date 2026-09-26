@@ -31,6 +31,28 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.2 — Lots 2, 3 et 4
+
+**À proximité** (`/proximite`) — partage façon AirDrop entre **tous** les appareils (Android, iPhone, Mac, Windows, Linux), sans installation :
+- découverte automatique des appareils sur le même Wi-Fi (radar), nom d'appareil modifiable ;
+- **appareils associés** par code à 6 chiffres ou QR : ils se retrouvent même sur des réseaux différents (jeton signé, rien n'est stocké côté serveur) ;
+- envoi de fichiers, dossiers, photos, avec acceptation par le destinataire ; transfert **direct** WebRTC (le serveur ne voit jamais les fichiers) ;
+- **presse-papiers partagé** : texte ou lien d'un appareil à l'autre (bouton « Ouvrir » pour les liens).
+Limite : réception en mémoire (≈ 700 Mo sur téléphone, 2 Go sur ordinateur) — au-delà, utilisez le mode Cloud.
+
+**Lien de visionnage** (`/w/:id`) — option « Lecture en ligne » à l'envoi :
+- *Lecture + téléchargement* ou *Visionnage seul* (boutons de téléchargement et ZIP désactivés côté serveur, liens de lecture courts, filigrane mobile) ;
+- lecteur avec playlist, **reprise** là où on s'était arrêté, **sous-titres** automatiques (`video.fr.srt` ou `.vtt` envoyés avec la vidéo) ;
+- **statistiques de visionnage** : spectateurs, % vu en moyenne, visionnages complets (événements 25/50/75/95 %) ;
+- **commentaires horodatés** (« à 02:14, couper ce plan ») : cliquables, visibles et supprimables dans la page de gestion, notifiés en direct.
+Formats : MP4 H.264, WebM, MP3/M4A lus partout ; MKV/AVI/H.265 affichent un message clair.
+
+**Demande de fichiers** (`/demande` → lien `/d/:id`, gestion `/r/:id`) :
+- consignes, date limite, taille maximale par dépôt, code facultatif pour déposer, alerte e-mail à chaque dépôt ;
+- les déposants donnent leur nom (+ message) et envoient avec la même technologie que le mode Cloud (morceaux parallèles, reprise) ;
+- chaque dépôt est un transfert qui vous appartient (le déposant n'a qu'une clé d'envoi) : ouvrir, ZIP, supprimer ;
+- dépôts en direct, ouverture/fermeture, prolongation, QR à projeter en classe ; les demandes apparaissent dans le tableau de bord.
+
 ## Nouveautés 3.1 — Lot 1 « Fondations »
 
 **Garde-fou stockage.** Au démarrage, le serveur teste réellement le stockage (écriture → lecture → suppression). Si les clés R2 sont fausses, il s'arrête et Render garde l'ancienne version en ligne. Sur Render sans R2, le mode Cloud est désactivé automatiquement (seul le P2P reste proposé) : plus aucun lien « introuvable » après un redémarrage. `/health` indique `"cloud": true|false`.
@@ -58,6 +80,9 @@ lib/email.js         SendGrid ou SMTP
 lib/admin.js         console d'administration (API + flux temps réel)
 lib/security.js      empreintes d'IP, masquage, liste de blocage
 views/admin.html     page de la console (servie uniquement sur ADMIN_PATH)
+lib/requests.js      demandes de fichiers (liens de dépôt)
+lib/nearby.js        À proximité : présence, appairage signé, relais de signalisation
+public/js/nearby.js  radar + transfert direct · watch.js lecteur · request.js dépôts
 public/js/*.js       modules ES : envoi, uploader, réception, P2P, tableau de bord, gestion
 public/js/opfs-worker.js   écriture disque synchrone pour le P2P
 ```

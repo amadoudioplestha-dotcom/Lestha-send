@@ -13,6 +13,8 @@ const { mountCloud } = require('./lib/cloud');
 const { mountP2P } = require('./lib/p2p');
 const { createSecurity } = require('./lib/security');
 const { mountAdmin } = require('./lib/admin');
+const { mountRequests } = require('./lib/requests');
+const { mountNearby } = require('./lib/nearby');
 const VERSION = require('./package.json').version;
 
 const env = process.env;
@@ -159,11 +161,13 @@ async function main() {
   /* ---------- Modes Cloud + P2P ---------- */
   const cloud = mountCloud(app, { storage, db, mailer, signer, io, env, ctx });
   const p2p = mountP2P(io, { security });
+  mountRequests(app, { env, storage, db, mailer, signer, io, ctx, cloud });
+  mountNearby(io, { secret, security });
   mountAdmin(app, { env, db, storage, mailer, signer, io, security, cloud, p2p, ctx, publicDir: pub });
 
   /* ---------- Routes de l'application (SPA) ---------- */
   const sendIndex = (req, res) => { res.set('Cache-Control', 'no-cache'); res.sendFile(path.join(pub, 'index.html')); };
-  app.get(['/t/:id', '/m/:id', '/dashboard', '/send', '/p2p'], sendIndex);
+  app.get(['/t/:id', '/m/:id', '/w/:id', '/d/:id', '/r/:id', '/dashboard', '/proximite', '/demande', '/send', '/p2p'], sendIndex);
 
   // Erreurs API au format JSON
   app.use('/api', (req, res) => res.status(404).json({ error: 'Route inconnue.' }));
