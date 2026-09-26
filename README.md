@@ -31,6 +31,19 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.1 — Lot 1 « Fondations »
+
+**Garde-fou stockage.** Au démarrage, le serveur teste réellement le stockage (écriture → lecture → suppression). Si les clés R2 sont fausses, il s'arrête et Render garde l'ancienne version en ligne. Sur Render sans R2, le mode Cloud est désactivé automatiquement (seul le P2P reste proposé) : plus aucun lien « introuvable » après un redémarrage. `/health` indique `"cloud": true|false`.
+
+**Console d'administration discrète** (`ADMIN_PASSWORD` + `ADMIN_PATH`) :
+- *Vue d'ensemble* : liens actifs, stockage, téléchargements, visiteurs, connexions en direct, liens P2P, graphique 30 jours, appareils et navigateurs, palmarès.
+- *Transferts* : recherche, filtres, tri ; fiche détaillée ; désactiver, prolonger, supprimer, copier le lien.
+- *Activité* : flux en direct (nouveaux envois, ouvertures, téléchargements, PIN erronés, suppressions).
+- *Sécurité* : expéditeurs les plus actifs (empreinte de connexion, jamais l'IP complète), blocage/déblocage, PIN erronés.
+- *Système* : état de la configuration et **diagnostic complet** (stockage, règle CORS R2, envoi, téléchargement, nettoyage) + e-mail de test.
+
+L'admin ne voit que des métadonnées : jamais le contenu des fichiers ni les messages.
+
 ## Architecture
 
 ```
@@ -42,6 +55,9 @@ lib/cloud.js         API transferts : création, URLs de morceaux, reprise, fina
                      statistiques, PIN (scrypt + jetons HMAC), limites, nettoyage auto
 lib/p2p.js           signalisation WebRTC avec rooms persistantes
 lib/email.js         SendGrid ou SMTP
+lib/admin.js         console d'administration (API + flux temps réel)
+lib/security.js      empreintes d'IP, masquage, liste de blocage
+views/admin.html     page de la console (servie uniquement sur ADMIN_PATH)
 public/js/*.js       modules ES : envoi, uploader, réception, P2P, tableau de bord, gestion
 public/js/opfs-worker.js   écriture disque synchrone pour le P2P
 ```

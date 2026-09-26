@@ -11,14 +11,57 @@ const { createMailer } = require('./lib/email');
 const { makeSigner, rateLimiter, clientIp } = require('./lib/util');
 const { mountCloud } = require('./lib/cloud');
 const { mountP2P } = require('./lib/p2p');
+const { createSecurity } = require('./lib/security');
+const { mountAdmin } = require('./lib/admin');
+const VERSION = require('./package.json').version;
 
 const env = process.env;
 const PORT = env.PORT || 3000;
+const IS_RENDER = env.RENDER === 'true' || !!env.RENDER_SERVICE_ID;
+// Sur Render, l'adresse publique est connue automatiquement si PUBLIC_URL n'est pas renseignée
+if (!env.PUBLIC_URL && env.RENDER_EXTERNAL_URL) env.PUBLIC_URL = env.RENDER_EXTERNAL_URL;
+
+/** Vérifie que le stockage répond vraiment (écriture → lecture → suppression) */
+async function storageSelfTest(storage) {
+  const key = 'system/healthcheck-' + crypto.randomBytes(4).toString('hex');
+  const payload = Buffer.from('ok-' + Date.now());
+  const t0 = Date.now();
+  await storage.putBuffer(key, payload, 'text/plain');
+  const back = await storage.getBuffer(key);
+  await storage.deleteKey(key);
+  if (!back || !back.equals(payload)) throw new Error('Lecture incohérente');
+  return Date.now() - t0;
+}
 
 async function main() {
   const storage = createStorage(env);
   const db = createDb(storage);
   const mailer = createMailer(env);
+
+  /* ---------- GARDE-FOU STOCKAGE ----------
+   * Le disque d'un service Render est effacé à chaque redémarrage : y stocker des transferts
+   * produirait des liens « introuvables ». Sans R2, le mode Cloud est donc désactivé (P2P seul). */
+  const warnings = [];
+  let cloudEnabled = true;
+  if (storage.name === 'local' && IS_RENDER && env.ALLOW_LOCAL_STORAGE !== 'true') {
+    cloudEnabled = false;
+    warnings.push({ level: 'bad', code: 'no-r2', text: 'Stockage R2 non configuré : le mode Cloud est désactivé pour éviter des liens qui disparaissent au redémarrage de Render.' });
+    console.warn('⛔ Stockage R2 absent sur Render → mode Cloud désactivé (P2P seul). Renseignez R2_ACCOUNT_ID, R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY.');
+  }
+  try {
+    const ms = await storageSelfTest(storage);
+    console.log(`✅ Stockage opérationnel (${storage.name}, ${ms} ms)`);
+  } catch (e) {
+    // Mauvaises clés R2, bucket inexistant… : on arrête net, Render garde alors l'ancienne version en ligne
+    console.error('❌ Le stockage ne répond pas :', e.name, e.message);
+    console.error('   Vérifiez R2_ACCOUNT_ID, R2_BUCKET, R2_ACCESS_KEY_ID et R2_SECRET_ACCESS_KEY.');
+    process.exit(1);
+  }
+  if (!env.PUBLIC_URL) warnings.push({ level: 'warn', code: 'no-public-url', text: 'PUBLIC_URL non renseignée : les liens envoyés par e-mail utilisent l\'adresse de la requête.' });
+  if (!env.APP_SECRET) warnings.push({ level: 'info', code: 'no-secret', text: 'APP_SECRET non renseigné : un secret a été généré et conservé dans le stockage.' });
+  if (!env.UPLOAD_CODE) warnings.push({ level: 'warn', code: 'no-upload-code', text: 'UPLOAD_CODE vide : n\'importe qui peut créer des envois et remplir votre stockage.' });
+  if (!mailer.enabled) warnings.push({ level: 'info', code: 'no-email', text: 'E-mail non configuré : l\'envoi du lien par e-mail et les alertes sont désactivés.' });
+  if (!env.TURN_URL) warnings.push({ level: 'info', code: 'no-turn', text: 'Aucun serveur TURN : certains transferts P2P entre réseaux très filtrés peuvent échouer.' });
 
   // Secret HMAC stable (jetons PIN, URLs d'upload locales) : APP_SECRET ou généré et stocké une fois
   let secret = env.APP_SECRET;
@@ -31,6 +74,9 @@ async function main() {
     }
   }
   const signer = makeSigner(secret);
+  const security = createSecurity({ storage, secret });
+  await security.load();
+  const ctx = { cloudEnabled, security, warnings, version: VERSION, startedAt: Date.now(), isRender: IS_RENDER, isAdmin: () => false };
 
   const app = express();
   app.set('trust proxy', true);
@@ -62,7 +108,7 @@ async function main() {
   app.all('/cdn-cgi/*', (req, res) => res.status(204).end());
 
   app.get('/health', (req, res) => res.json({
-    status: 'OK', timestamp: new Date().toISOString(), storage: storage.name,
+    status: 'OK', version: VERSION, timestamp: new Date().toISOString(), storage: storage.name, cloud: cloudEnabled,
     email: { enabled: mailer.enabled, provider: mailer.provider }, turn: !!env.TURN_URL, webrtc: true
   }));
 
@@ -111,8 +157,9 @@ async function main() {
   });
 
   /* ---------- Modes Cloud + P2P ---------- */
-  mountCloud(app, { storage, db, mailer, signer, io, env });
-  mountP2P(io);
+  const cloud = mountCloud(app, { storage, db, mailer, signer, io, env, ctx });
+  const p2p = mountP2P(io, { security });
+  mountAdmin(app, { env, db, storage, mailer, signer, io, security, cloud, p2p, ctx, publicDir: pub });
 
   /* ---------- Routes de l'application (SPA) ---------- */
   const sendIndex = (req, res) => { res.set('Cache-Control', 'no-cache'); res.sendFile(path.join(pub, 'index.html')); };

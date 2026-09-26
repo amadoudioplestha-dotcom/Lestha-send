@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#070b16">
+<meta name="color-scheme" content="dark">
+<link rel="icon" type="image/svg+xml" href="/icon-192.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<title>Console · TransferX</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="admin">
+{{SPRITE}}
+<div class="bg-scene" aria-hidden="true"><span class="blob b1"></span><span class="blob b2"></span><span class="grid-lines"></span></div>
+
+<header class="topbar">
+  <a class="brand" href="/" target="_blank" rel="noopener">
+    <svg class="brand-mark"><use href="#i-logo"/></svg>
+    <span class="brand-name">Transfer<b>X</b></span>
+  </a>
+  <span class="pill violet adm-tag"><svg class="i sm"><use href="#i-shield"/></svg>Console</span>
+  <div class="topbar-actions" style="margin-left:auto">
+    <span class="live-badge off hidden" id="admLive"><i></i><span>…</span></span>
+    <button id="admLogout" class="icon-btn hidden" type="button" title="Se déconnecter"><svg class="i"><use href="#i-power"/></svg></button>
+  </div>
+</header>
+
+<main id="adm" class="view" tabindex="-1"></main>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<div id="modalRoot"></div>
+
+<script type="module" src="/js/admin.js"></script>
+</body>
+</html>
