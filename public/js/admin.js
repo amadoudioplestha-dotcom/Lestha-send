@@ -384,7 +384,7 @@ async function runFullTest() {
       if (back.length !== payload.length || back.some((v, i) => v !== payload[i])) throw new Error('Le fichier reçu ne correspond pas à l\'original');
       return `${bytes(back.length)} identiques à l'octet près`;
     });
-    await step('Nettoyage du transfert de test', () => api(`/api/transfers/${tr.id}`, { method: 'DELETE', key: tr.ownerKey }));
+    await step('Nettoyage du transfert de test', async () => { await api(`/api/transfers/${tr.id}`, { method: 'DELETE', key: tr.ownerKey }); return 'Transfert de test supprimé'; });
   } catch (e) { const el = line('Diagnostic'); done(el, false, e.message); ok = false; }
   finally {
     btn.disabled = false;

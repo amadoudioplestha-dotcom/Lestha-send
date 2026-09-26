@@ -404,6 +404,7 @@ export function runUpload(ctx) {
   up.addEventListener('progress', (e) => updateUploading(e.detail));
   up.addEventListener('state', () => updateUploadingState());
   up.addEventListener('filecomplete', () => refreshFileBars());
+  up.addEventListener('stalled', () => toast('L\'envoi n\'arrive pas à démarrer : le stockage refuse ce site. Administrateur : vérifiez la règle CORS du bucket R2 (console admin → Système → Lancer le test).', 'error', { duration: 15000 }));
   up.addEventListener('error', (e) => { toast('Envoi interrompu : ' + e.detail.message, 'error'); keepAwake(false); active = null; if (rootEl) renderCompose(); });
   up.addEventListener('done', () => finalize());
   keepAwake(true);

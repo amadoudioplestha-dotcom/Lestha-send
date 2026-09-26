@@ -169,6 +169,8 @@ export class Uploader extends EventTarget {
       task.tries = (task.tries || 0) + 1;
       const delay = Math.min(MAX_RETRY_DELAY, 800 * Math.pow(2, task.tries - 1)) + Math.random() * 400;
       this._emit('retry', { attempt: task.tries, delay, message: e.message });
+      // Aucun octet n'est jamais passé alors que le réseau marche : le stockage refuse le navigateur (règle CORS R2)
+      if (e.network && !this._stallWarned && this.doneBytes === 0 && task.tries >= 3) { this._stallWarned = true; this._emit('stalled', { message: e.message }); }
       await new Promise(r => setTimeout(r, delay));
     }
     this._run();
