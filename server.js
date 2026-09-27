@@ -15,6 +15,7 @@ const { createSecurity } = require('./lib/security');
 const { mountAdmin } = require('./lib/admin');
 const { mountRequests } = require('./lib/requests');
 const { mountNearby } = require('./lib/nearby');
+const { mountLive } = require('./lib/live');
 const VERSION = require('./package.json').version;
 
 const env = process.env;
@@ -90,7 +91,7 @@ async function main() {
   app.use((req, res, next) => {
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-    res.set('Permissions-Policy', 'camera=(self), microphone=()');
+    res.set('Permissions-Policy', 'camera=(self), microphone=(self), display-capture=(self)');
     next();
   });
 
@@ -163,11 +164,12 @@ async function main() {
   const p2p = mountP2P(io, { security });
   mountRequests(app, { env, storage, db, mailer, signer, io, ctx, cloud });
   mountNearby(io, { secret, security });
+  mountLive(app, { storage, io, env });
   mountAdmin(app, { env, db, storage, mailer, signer, io, security, cloud, p2p, ctx, publicDir: pub });
 
   /* ---------- Routes de l'application (SPA) ---------- */
   const sendIndex = (req, res) => { res.set('Cache-Control', 'no-cache'); res.sendFile(path.join(pub, 'index.html')); };
-  app.get(['/t/:id', '/m/:id', '/w/:id', '/d/:id', '/r/:id', '/dashboard', '/proximite', '/demande', '/send', '/p2p'], sendIndex);
+  app.get(['/t/:id', '/m/:id', '/w/:id', '/d/:id', '/r/:id', '/dashboard', '/proximite', '/demande', '/send', '/p2p', '/direct', '/live/:id'], sendIndex);
 
   // Erreurs API au format JSON
   app.use('/api', (req, res) => res.status(404).json({ error: 'Route inconnue.' }));

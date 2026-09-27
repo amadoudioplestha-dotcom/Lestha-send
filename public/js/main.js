@@ -14,6 +14,8 @@ route(/^\/w\/([A-Za-z0-9]{6,32})\/?$/, () => import('./watch.js'), null);
 route(/^\/demande\/?$/, () => import('./request.js').then(m => ({ default: m.createView })), 'send');
 route(/^\/d\/([A-Za-z0-9]{6,32})\/?$/, () => import('./request.js').then(m => ({ default: m.depositView })), null);
 route(/^\/r\/([A-Za-z0-9]{6,32})\/?$/, () => import('./request.js').then(m => ({ default: m.manageView })), 'dashboard');
+route(/^\/direct\/?$/, () => import('./live.js').then(m => ({ default: m.studioView })), 'live');
+route(/^\/live\/([A-Za-z0-9]{6,32})\/?$/, () => import('./live.js').then(m => ({ default: m.roomView })), 'live');
 route(/^.*$/, () => import('./send.js'), 'send');
 
 enableRipples();

@@ -1,4 +1,4 @@
-# TransferX 3.3 — transfert de fichiers sans limites
+# TransferX 3.4 — transfert de fichiers sans limites
 
 Deux modes, une seule application :
 
@@ -30,6 +30,12 @@ En P2P, le fichier ne vit que sur l'appareil de l'expéditeur : dès qu'il quitt
 Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléchargés, journal, et contrôles : activer/désactiver, prolonger, PIN, limite de destinataires, QR code, **lien de gestion privé** (piloter depuis un autre appareil), suppression immédiate, sauvegarde/import.
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
+
+## Nouveautés 3.4 — Direct (`/direct` → salle `/live/:id`)
+- **Lien de plateforme** : YouTube (vidéo et live), Facebook (vidéo et live), Vimeo, Twitch, publications Instagram / TikTok — lecteur **officiel** intégré, rien n'est recopié. (Les lives Instagram/TikTok ne sont pas intégrables : limite des plateformes.)
+- **Caméra / écran / micro** diffusés depuis le navigateur (WebRTC, jusqu'à 25 spectateurs, débit adapté automatiquement, changement de source à chaud).
+- **Flux .m3u8** (OBS, régie) lu avec hls.js.
+- Discussion en direct, compteur de spectateurs, compte à rebours, badge EN DIRECT, partage WhatsApp, QR plein écran à projeter, régie (passer en direct, terminer, fermer la discussion, supprimer).
 
 ## Nouveautés 3.3 — Revue vidéo pro (façon Frame.io) + fichiers .TS
 
@@ -93,6 +99,7 @@ lib/security.js      empreintes d'IP, masquage, liste de blocage
 views/admin.html     page de la console (servie uniquement sur ADMIN_PATH)
 lib/requests.js      demandes de fichiers (liens de dépôt)
 lib/nearby.js        À proximité : présence, appairage signé, relais de signalisation
+lib/live.js          Direct : salles, discussion, signalisation caméra (lives/<id>.json)
 public/js/nearby.js  radar + transfert direct · watch.js lecteur · request.js dépôts
 public/js/*.js       modules ES : envoi, uploader, réception, P2P, tableau de bord, gestion
 public/js/opfs-worker.js   écriture disque synchrone pour le P2P
