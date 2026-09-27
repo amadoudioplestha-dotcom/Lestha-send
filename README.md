@@ -1,4 +1,4 @@
-# TransferX 3.0 — transfert de fichiers sans limites
+# TransferX 3.3 — transfert de fichiers sans limites
 
 Deux modes, une seule application :
 
@@ -30,6 +30,17 @@ En P2P, le fichier ne vit que sur l'appareil de l'expéditeur : dès qu'il quitt
 Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléchargés, journal, et contrôles : activer/désactiver, prolonger, PIN, limite de destinataires, QR code, **lien de gestion privé** (piloter depuis un autre appareil), suppression immédiate, sauvegarde/import.
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
+
+## Nouveautés 3.3 — Revue vidéo pro (façon Frame.io) + fichiers .TS
+
+Active **Lecture en ligne** + **Commentaires horodatés** sur un envoi : le lien `/w/:id` devient une salle de revue.
+- **Timecode à l'image près** (23,976 → 60 i/s), raccourcis **J/K/L**, **← →** image par image, vitesses 0,25×–2×, **plage In/Out** (I / O) et boucle.
+- **Annotations dessinées sur l'image** : flèche, crayon, cadre, cercle, 5 couleurs ; réaffichées quand on clique la remarque.
+- **Marqueurs sur la timeline** (rouge = à traiter, vert = traité), **fils de réponses**, case **« Traité »**, filtres.
+- **Validation** : « Approuver » / « Demander des modifications » (e-mail + notification à l'auteur).
+- **Versions V1, V2, V3…** sur le **même lien** (bouton « Nouvelle version » dans la page de gestion) ; chaque version garde ses remarques, les relecteurs sont prévenus.
+- **Exports** : EDL de marqueurs pour **DaVinci Resolve**, **CSV** (Excel/Sheets), **rapport PDF** imprimable.
+- **.TS / .M2TS** (MPEG-TS H.264 + AAC) lus dans le navigateur via mpegts.js (ordinateur, Android ; pas sur iPhone).
 
 ## Nouveautés 3.2 — Lots 2, 3 et 4
 

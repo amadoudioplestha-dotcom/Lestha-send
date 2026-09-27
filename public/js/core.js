@@ -50,8 +50,9 @@ export const fmtDate = (ts) => new Date(ts).toLocaleString('fr-FR', { day: '2-di
 export const num = (n) => (Number(n) || 0).toLocaleString('fr-FR');
 
 /** Type de fichier → icône + couleur */
-export function fileKind(name = '', type = '') {
+export function fileKind(name = '', type = '', size = 0) {
   const ext = (name.split('.').pop() || '').toLowerCase();
+  if (/^(m2ts|mts)$/.test(ext) || (ext === 'ts' && (type.startsWith('video/') || size > 2e6))) return { icon: 'video', c: '#a78bfa', kind: 'video', ts: true };
   if (type.startsWith('image/') || /^(jpe?g|png|gif|webp|heic|avif|svg|bmp)$/.test(ext)) return { icon: 'image', c: '#f472b6', kind: 'image' };
   if (type.startsWith('video/') || /^(mp4|mov|mkv|avi|webm|m4v)$/.test(ext)) return { icon: 'video', c: '#a78bfa', kind: 'video' };
   if (type.startsWith('audio/') || /^(mp3|wav|m4a|aac|ogg|flac|opus)$/.test(ext)) return { icon: 'music', c: '#fbbf24', kind: 'audio' };

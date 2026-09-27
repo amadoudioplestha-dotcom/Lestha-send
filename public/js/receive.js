@@ -88,8 +88,9 @@ function renderReady() {
   const got = ls.get('tx_got_' + id, {});
   const hasFolders = files.some(f => f.path && f.path.includes('/'));
   const only = d.playback === 'only';
-  const watchable = (f) => d.playback !== 'off' && ['video', 'audio'].includes(fileKind(f.name, f.type).kind);
-  const playable = files.filter(watchable);
+  const watchable = (f) => d.playback !== 'off' && ['video', 'audio'].includes(fileKind(f.name, f.type, f.size).kind);
+  const isLatest = (f) => !files.some(x => x.versionOf && x.versionOf === (f.versionOf || f.id) && (x.v || 1) > (f.v || 1));
+  const playable = files.filter(watchable).filter(isLatest);
   root.innerHTML = `
   <section class="receive-card stack">
     <div class="card glow stack">
@@ -129,7 +130,7 @@ function renderReady() {
           const canPreview = ['image', 'video', 'audio'].includes(k.kind) || k.kind === 'pdf';
           return `<div class="dl-row" data-fid="${f.id}">
             <div class="ficon" style="--c:${k.c}" ${canPreview ? `data-preview="${f.id}" title="Aperçu"` : ''}>${thumb ? `<img src="${fileUrl(f.id, true)}" alt="" loading="lazy" decoding="async">` : icon(k.icon)}</div>
-            <div class="fmeta"><div class="fname" title="${esc(f.path || f.name)}">${esc(f.name)}</div><div class="fsub">${bytes(f.size)}${f.path && f.path.includes('/') ? ' · ' + esc(f.path.split('/').slice(0, -1).join('/')) : ''}${got[f.id] ? ' · <span style="color:var(--ok)">téléchargé</span>' : ''}</div></div>
+            <div class="fmeta"><div class="fname" title="${esc(f.path || f.name)}">${f.v ? `<span class="pill violet" style="padding:1px 7px;margin-right:6px">V${f.v}</span>` : ''}${esc(f.name)}</div><div class="fsub">${bytes(f.size)}${f.path && f.path.includes('/') ? ' · ' + esc(f.path.split('/').slice(0, -1).join('/')) : ''}${got[f.id] ? ' · <span style="color:var(--ok)">téléchargé</span>' : ''}</div></div>
             ${watchable(f) ? `<a class="btn sm icon" href="/w/${id}?f=${f.id}" data-link title="Regarder">${icon('play', 'sm')}</a>` : ''}
             ${only ? '' : !isMobile ? `<button type="button" class="btn sm icon ghost" data-copy="${f.id}" title="Copier le lien direct (gestionnaire de téléchargement)">${icon('link', 'sm')}</button>` : ''}
             ${only ? '' : `<a class="btn sm dl-btn ${got[f.id] ? 'ok' : ''}" href="${fileUrl(f.id)}" data-dl="${f.id}" aria-label="Télécharger ${esc(f.name)}">${icon(got[f.id] ? 'check' : 'download', 'sm')}<span>${got[f.id] ? 'Encore' : 'Télécharger'}</span></a>`}

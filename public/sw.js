@@ -4,8 +4,8 @@
  * - n'intercepte JAMAIS les API, les téléchargements ni socket.io
  */
 'use strict';
-const VERSION = 'tx-v3.2.2';
-const SHELL = ['/', '/style.css', '/js/main.js', '/js/core.js', '/js/router.js', '/js/send.js', '/js/uploader.js', '/js/p2p.js', '/js/receive.js', '/js/dashboard.js', '/js/manage.js', '/js/charts.js', '/js/opfs-worker.js', '/js/nearby.js', '/js/watch.js', '/js/request.js', '/manifest.json', '/icon-192.png', '/icon-512.png', '/icon-192.svg', '/vendor/qrcode.js'];
+const VERSION = 'tx-v3.3.0';
+const SHELL = ['/', '/style.css', '/js/main.js', '/js/core.js', '/js/router.js', '/js/send.js', '/js/uploader.js', '/js/p2p.js', '/js/receive.js', '/js/dashboard.js', '/js/manage.js', '/js/charts.js', '/js/opfs-worker.js', '/js/nearby.js', '/js/watch.js', '/js/request.js', '/js/review-tools.js', '/manifest.json', '/icon-192.png', '/icon-512.png', '/icon-192.svg', '/vendor/qrcode.js'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).catch(() => {}).then(() => self.skipWaiting()));

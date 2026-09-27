@@ -79,6 +79,8 @@ const EV = {
   play: { ic: 'play', c: '#8b7bff', txt: 'Lecture démarrée' },
   watch: { ic: 'film', c: '#a78bfa', txt: 'Visionnage' },
   comment: { ic: 'message', c: '#fbbf24', txt: 'Commentaire' },
+  review: { ic: 'check', c: '#10d49a', txt: 'Décision' },
+  version: { ic: 'upload', c: '#a78bfa', txt: 'Nouvelle version' },
   deposit: { ic: 'inbox', c: '#06d6a0', txt: 'Nouveau dépôt' },
   closed: { ic: 'lock', c: '#fb7185', txt: 'Dépôts fermés' },
   opened: { ic: 'unlock', c: '#06d6a0', txt: 'Dépôts rouverts' }
@@ -90,7 +92,7 @@ export function feedItem(ev, title, isNew = false) {
   return `<div class="feed-item ${isNew ? 'new' : ''}">
     <div class="feed-dot" style="--fc:${m.c}">${icon(m.ic)}</div>
     <div style="min-width:0">
-      <div class="small" style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(m.txt)}${ev.type === 'watch' ? ' ' + ev.p + ' %' : ''}${ev.type === 'comment' ? ' à ' + Math.floor(ev.p / 60) + ':' + String(ev.p % 60).padStart(2, '0') + (ev.n ? ' par ' + esc(ev.n) : '') : ''}${ev.type === 'deposit' && ev.n ? ' de ' + esc(ev.n) : ''}${ev.f ? ' — ' + esc(ev.f) : ''}</div>
+      <div class="small" style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(m.txt)}${ev.type === 'watch' ? ' ' + ev.p + ' %' : ''}${ev.type === 'comment' ? ' à ' + Math.floor(ev.p / 60) + ':' + String(ev.p % 60).padStart(2, '0') + (ev.n ? ' par ' + esc(ev.n) : '') : ''}${ev.type === 'deposit' && ev.n ? ' de ' + esc(ev.n) : ''}${ev.type === 'review' ? ' : ' + (ev.s === 'approved' ? 'approuvé' : ev.s === 'changes' ? 'modifs demandées' : 'retirée') + (ev.n ? ' par ' + esc(ev.n) : '') : ''}${ev.type === 'version' && ev.p ? ' V' + ev.p : ''}${ev.f ? ' — ' + esc(ev.f) : ''}</div>
       <div class="tiny faint" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${title ? esc(title) + (who ? ' · ' : '') : ''}${esc(who)}${ev.v ? ' · visiteur #' + esc(ev.v) : ''}</div>
     </div>
     <span class="feed-time" data-ts="${ev.t}">${relTime(ev.t)}</span>

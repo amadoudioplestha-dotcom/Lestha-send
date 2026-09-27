@@ -1,10 +1,22 @@
 /* TransferX — gestion d'un transfert : statistiques détaillées, contrôle et activité en direct */
-import { $, esc, icon, bytes, num, timeLeft, fmtDate, fileKind, ls, owned, api, toast, modal, renderQR, animateCount, getSocket, notify, confirmDialog } from './core.js';
+import { $, esc, icon, bytes, num, timeLeft, fmtDate, fileKind, ls, owned, api, toast, modal, renderQR, animateCount, getSocket, notify, confirmDialog, keepAwake } from './core.js';
 import { navigate } from './router.js';
 import { bucketize, barChart, feedItem, refreshTimes } from './charts.js';
 import { shareGrid, bindShare, resumePending } from './send.js';
+import { Uploader } from './uploader.js';
+import { tc, exportEDL, exportCSV, printReport } from './review-tools.js';
 
-function onComment(d) { if (!t || !d || d.id !== t.id) return; t.comments = (t.comments || []).concat(d.comment); renderComments(); }
+function onComment(d) {
+  if (!t || !d || d.id !== t.id) return;
+  const i = (t.comments || []).findIndex(c => c.id === d.comment.id);
+  if (i >= 0) t.comments[i] = d.comment; else t.comments = (t.comments || []).concat(d.comment);
+  renderComments();
+}
+function onReview(d) {
+  if (!t || !d || d.id !== t.id) return;
+  notify(d.status === 'approved' ? 'Version approuvée ✅' : 'Modifications demandées', d.name);
+  load();
+}
 let root = null, id = null, key = null, t = null, timer = null, sock = null, onEv = null, onConn = null;
 
 export default {
@@ -99,9 +111,9 @@ function renderAll() {
           <div class="card-title"><h3>${icon('file')}Fichiers les plus téléchargés</h3></div>
           <div class="per-file" id="perFile"></div>
         </div>
-        <div class="card ${t.allowComments || (t.comments || []).length ? '' : 'hidden'}" id="cmCard">
-          <div class="card-title"><h3>${icon('message')}Commentaires horodatés</h3><span class="small faint" id="cmCount"></span></div>
-          <div class="stack comments" id="cmList" style="gap:6px"></div>
+        <div class="card ${t.allowComments || (t.comments || []).length || (t.playback && t.playback !== 'off') ? '' : 'hidden'}" id="cmCard">
+          <div class="card-title"><h3>${icon('film')}Revue vidéo</h3><span class="small faint" id="cmCount"></span></div>
+          <div class="stack" id="cmList" style="gap:12px"></div>
         </div>
       </div>
       <div class="stack">
@@ -144,16 +156,85 @@ function tickLife() {
 const fmtT = (s) => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); };
 function renderComments() {
   const card = root && $('#cmCard', root); if (!card) return;
-  const list = (t.comments || []).slice().sort((a, b) => a.fid === b.fid ? a.time - b.time : a.fid.localeCompare(b.fid));
-  card.classList.toggle('hidden', !t.allowComments && !list.length);
-  $('#cmCount', root).textContent = list.length || '';
-  const nameOf = (fid) => (t.files.find(f => f.id === fid) || {}).name || '';
-  $('#cmList', root).innerHTML = list.length ? list.map(c => `<div class="comment" style="cursor:default"><a class="c-time" href="/w/${esc(t.id)}?f=${esc(c.fid)}" data-link title="Ouvrir le lecteur">${fmtT(c.time)}</a><span class="c-body" style="flex:1"><b>${esc(c.name)}</b> ${esc(c.text)}<small>${esc(nameOf(c.fid))} · ${relTimeLocal(c.at)}</small></span><button type="button" class="btn sm icon ghost" data-delc="${esc(c.id)}" aria-label="Supprimer">${icon('trash', 'sm')}</button></div>`).join('') : '<p class="small faint">Aucun commentaire pour l\'instant.</p>';
-  $('#cmList', root).onclick = async (e) => {
-    const b = e.target.closest('[data-delc]'); if (!b) return;
-    try { const r = await api(`/api/transfers/${id}/comments/${b.dataset.delc}`, { method: 'DELETE', key }); t.comments = r.comments; renderComments(); } catch (err) { toast(err.message, 'error'); }
+  const all = t.comments || [];
+  const media = t.files.filter(f => f.done && ['video', 'audio'].includes(fileKind(f.name, f.type, f.size).kind));
+  card.classList.toggle('hidden', !media.length || (!t.allowComments && !all.length && (!t.playback || t.playback === 'off')));
+  const tops = all.filter(c => !c.parent);
+  const open = tops.filter(c => !c.resolved).length;
+  $('#cmCount', root).textContent = tops.length ? `${open} à traiter / ${tops.length}` : '';
+  const fps = Number(ls.get('tx_fps', 25)) || 25;
+  const verdict = { approved: ['ok', 'Approuvé'], changes: ['warn', 'Modifs demandées'] };
+  // Les versions les plus récentes en premier
+  const ordered = media.slice().sort((a, b) => ((a.versionOf || a.id).localeCompare(b.versionOf || b.id)) || ((b.v || 1) - (a.v || 1)));
+  $('#cmList', root).innerHTML = (t.allowComments ? '' : `<div class="banner info">${icon('message')}<span>Activez « Commentaires horodatés » dans les contrôles pour que vos relecteurs puissent annoter et valider.</span></div>`) + ordered.map(f => {
+    const list = tops.filter(c => c.fid === f.id).sort((a, b) => a.time - b.time);
+    const revs = (t.reviews || {})[f.id] || [];
+    return `<div class="rv-file" data-file="${f.id}">
+      <div class="row between" style="gap:8px;flex-wrap:wrap">
+        <div style="min-width:0"><b>${f.v ? `<span class="pill violet" style="padding:1px 7px;margin-right:6px">V${f.v}</span>` : ''}${esc(f.name)}</b>
+          <div class="tiny faint">${list.length} remarque(s) · ${list.filter(c => !c.resolved).length} à traiter${revs.map(r => ` · <span class="rv-verdict-inline ${verdict[r.status]?.[0] || ''}">${esc(r.name)} : ${verdict[r.status]?.[1] || ''}</span>`).join('')}</div></div>
+        <div class="row" style="gap:4px;flex-wrap:wrap">
+          <a class="btn sm" href="/w/${esc(t.id)}?f=${esc(f.id)}" data-link>${icon('play', 'sm')}Ouvrir</a>
+          ${t.state !== 'expired' ? `<button type="button" class="btn sm" data-newv="${f.id}">${icon('upload', 'sm')}Nouvelle version</button>` : ''}
+          ${list.length ? `<button type="button" class="btn sm ghost" data-x="edl" data-fid="${f.id}" title="Marqueurs DaVinci Resolve">EDL</button><button type="button" class="btn sm ghost" data-x="csv" data-fid="${f.id}">CSV</button><button type="button" class="btn sm ghost" data-x="pdf" data-fid="${f.id}">PDF</button>` : ''}
+        </div>
+      </div>
+      <div class="rv-upl hidden" id="upl-${f.id}"></div>
+      ${list.length ? `<div class="stack comments" style="gap:6px;margin-top:8px">${list.map(c => {
+        const reps = all.filter(r => r.parent === c.id);
+        return `<div class="rv-comment ${c.resolved ? 'done' : ''}"><div class="row" style="gap:8px;align-items:flex-start">
+          <a class="c-time" href="/w/${esc(t.id)}?f=${esc(c.fid)}" data-link>${tc(c.time, fps)}${c.end ? '<br>→ ' + tc(c.end, fps) : ''}</a>
+          <div class="grow" style="min-width:0"><b>${esc(c.name)}</b> <span class="tiny faint">${relTimeLocal(c.at)}</span>${c.draw ? ' <span class="rv-pill">dessin</span>' : ''}<div class="c-text">${esc(c.text)}</div>
+            ${reps.map(r => `<div class="rv-reply"><b>${esc(r.name)}</b> ${esc(r.text)}</div>`).join('')}</div>
+          <label class="rv-check" title="Marquer comme traité"><input type="checkbox" data-res="${c.id}" ${c.resolved ? 'checked' : ''}><span>${icon('check', 'sm')}</span></label>
+          <button type="button" class="btn sm icon ghost" data-delc="${esc(c.id)}" aria-label="Supprimer">${icon('trash', 'sm')}</button>
+        </div></div>`;
+      }).join('')}</div>` : ''}
+    </div>`;
+  }).join('');
+  const box = $('#cmList', root);
+  box.onclick = async (e) => {
+    const b = e.target.closest('[data-delc]');
+    if (b) { try { const r = await api(`/api/transfers/${id}/comments/${b.dataset.delc}`, { method: 'DELETE', key }); t.comments = r.comments; renderComments(); } catch (err) { toast(err.message, 'error'); } return; }
+    const x = e.target.closest('[data-x]');
+    if (x) {
+      const f = t.files.find(z => z.id === x.dataset.fid); const cs = all.filter(c => c.fid === f.id);
+      if (x.dataset.x === 'edl') { exportEDL(f, cs, fps, 1); toast('Dans DaVinci Resolve : clic droit sur la timeline › Timelines › Import › Timeline Markers from EDL', 'info', { duration: 9000 }); }
+      else if (x.dataset.x === 'csv') exportCSV(f, cs, fps);
+      else if (!printReport(f, cs, fps, (t.reviews || {})[f.id] || [])) toast('Autorisez les fenêtres pop-up pour imprimer le rapport', 'error');
+      return;
+    }
+    const nv = e.target.closest('[data-newv]'); if (nv) newVersion(nv.dataset.newv);
+  };
+  box.onchange = async (e) => {
+    const cb = e.target.closest('[data-res]'); if (!cb) return;
+    try { const r = await api(`/api/transfers/${id}/comments/${cb.dataset.res}`, { method: 'PATCH', key, body: { resolved: cb.checked } }); t.comments = r.comments; renderComments(); }
+    catch (err) { toast(err.message, 'error'); cb.checked = !cb.checked; }
   };
 }
+
+/** Envoie une nouvelle version (V2, V3…) sur le même lien : les relecteurs la voient aussitôt */
+function newVersion(fid) {
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'video/*,audio/*,.ts,.m2ts,.mts,.mov,.mkv';
+  inp.onchange = async () => {
+    const file = inp.files[0]; if (!file) return;
+    const zone = $('#upl-' + fid, root);
+    let r;
+    try { r = await api(`/api/transfers/${id}/versions`, { method: 'POST', key, body: { of: fid, file: { name: file.name, size: file.size, type: file.type, lastModified: file.lastModified } } }); }
+    catch (err) { toast(err.message, 'error'); return; }
+    const up = new Uploader({ id, key, items: [{ file, meta: r.file }] });
+    const show = (html) => { if (zone) { zone.classList.remove('hidden'); zone.innerHTML = html; } };
+    show(`<div class="small">Envoi de la V${r.file.v}… <b id="uplPct-${fid}">0 %</b></div><div class="life"><i id="uplBar-${fid}" style="width:0%"></i></div>`);
+    up.addEventListener('progress', (e) => { const p = e.detail.total ? e.detail.loaded / e.detail.total * 100 : 100; const a = $('#uplPct-' + fid, root), b = $('#uplBar-' + fid, root); if (a) a.textContent = Math.floor(p) + ' %'; if (b) b.style.width = p + '%'; });
+    up.addEventListener('stalled', (e) => show(`<div class="banner bad">${icon('shield')}<span>${e.detail.kind === 'cors' ? 'Le stockage refuse l\'envoi (règle CORS R2).' : 'Assemblage en échec : ' + esc(e.detail.message)}</span></div>`));
+    up.addEventListener('error', (e) => { keepAwakeSafe(false); toast('Envoi interrompu : ' + e.detail.message, 'error'); });
+    up.addEventListener('done', () => { keepAwakeSafe(false); toast(`V${r.file.v} en ligne : les relecteurs la voient sur le même lien 🎬`, 'success'); load(); });
+    keepAwakeSafe(true);
+    up.start();
+  };
+  inp.click();
+}
+const keepAwakeSafe = (on) => keepAwake(on);
 const relTimeLocal = (ts) => { const m = Math.round((Date.now() - ts) / 60000); return m < 1 ? 'à l\'instant' : m < 60 ? 'il y a ' + m + ' min' : m < 1440 ? 'il y a ' + Math.round(m / 60) + ' h' : new Date(ts).toLocaleDateString('fr-FR'); };
 
 function renderPerFile() {
@@ -257,6 +338,8 @@ async function live() {
   };
   sock.off('transfer-comment', onComment);
   sock.on('transfer-comment', onComment);
+  sock.off('transfer-review', onReview);
+  sock.on('transfer-review', onReview);
   sock.on('transfer-event', onEv);
   sock.on('transfer-deleted', onEv);
   sock.on('connect', onConn);
