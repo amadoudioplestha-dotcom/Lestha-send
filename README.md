@@ -1,4 +1,4 @@
-# TransferX 3.4 — transfert de fichiers sans limites
+# TransferX 3.5 — transfert de fichiers sans limites
 
 Deux modes, une seule application :
 
@@ -30,6 +30,17 @@ En P2P, le fichier ne vit que sur l'appareil de l'expéditeur : dès qu'il quitt
 Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléchargés, journal, et contrôles : activer/désactiver, prolonger, PIN, limite de destinataires, QR code, **lien de gestion privé** (piloter depuis un autre appareil), suppression immédiate, sauvegarde/import.
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
+
+## Nouveautés 3.5 — Classe virtuelle (Direct › « Classe virtuelle (caméra / écran) »)
+- **Rôles** : tuteur (créateur), **modérateur** (lien de co-animation `#m=…`), participants (nom demandé à l'entrée, sans compte).
+- Tuteur : caméra, **présentation d'écran**, micro seul, bascule à chaud, coupure micro.
+- **Lever la main ✋**, **réactions** (👍 👏 ❤️ 😂 ❓ 🐢) animées sur la vidéo.
+- **Donner / retirer la parole** : l'apprenant parle à toute la classe (micro + caméra optionnelle, vignettes « intervenants »), « Rendre la parole ».
+- **Modération** : couper un micro / tous les micros, baisser les mains, **retirer** un participant, **verrouiller la salle**, **salle d'attente** (admettre / refuser / tout admettre).
+- **Sondages** en direct (résultats en temps réel, clore, effacer).
+- **Liste de présence** (arrivée, dernière présence, durée, connexions) exportable en Excel.
+- **Enregistrement du cours** (vidéo du tuteur + voix des intervenants) → téléchargement ou **publication en replay TransferX** (lecture en ligne + remarques horodatées), lien posté dans la discussion.
+- Limite : 25 participants (diffusion pair-à-pair). Mosaïque de toutes les caméras = serveur vidéo SFU payant (évolution possible).
 
 ## Nouveautés 3.4 — Direct (`/direct` → salle `/live/:id`)
 - **Lien de plateforme** : YouTube (vidéo et live), Facebook (vidéo et live), Vimeo, Twitch, publications Instagram / TikTok — lecteur **officiel** intégré, rien n'est recopié. (Les lives Instagram/TikTok ne sont pas intégrables : limite des plateformes.)

@@ -593,3 +593,34 @@ textarea.input { min-height: 84px; resize: vertical; line-height: 1.5; }
 .qr-card #qrBox { width: min(70vmin, 420px); }
 .qr-card #qrBox svg { width: 100%; height: auto; }
 .hero-mini { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 8px 0 4px; }
+
+/* ---------- Classe virtuelle ---------- */
+.class-bar { margin-top: 10px; padding: 10px 12px; border-radius: 16px; background: rgba(8, 13, 25, .6); border: 1px solid var(--border); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.react-row { display: inline-flex; gap: 2px; }
+.react-btn { width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--border); background: rgba(15, 24, 41, .6); font-size: 18px; cursor: pointer; transition: transform .15s; padding: 0; }
+.react-btn:hover { transform: translateY(-2px) scale(1.08); }
+.react-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 4; }
+.react-float { position: absolute; bottom: 8px; font-size: 34px; animation: reactUp 2.6s ease-out forwards; }
+@keyframes reactUp { 0% { transform: translateY(0) scale(.6); opacity: 0; } 15% { opacity: 1; transform: translateY(-20px) scale(1.1); } 100% { transform: translateY(-260px) scale(1); opacity: 0; } }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 10px; }
+.tiles.hidden { display: none; }
+.tile { position: relative; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: #0b1222; border: 1px solid var(--border); }
+.tile video { width: 100%; height: 100%; object-fit: cover; }
+.tile.audio-only video { opacity: 0; }
+.tile.audio-only::before { content: '🎤'; position: absolute; inset: 0; display: grid; place-items: center; font-size: 30px; background: radial-gradient(circle, rgba(0, 180, 216, .25), transparent 70%); }
+.tile-name { position: absolute; left: 6px; bottom: 6px; padding: 2px 8px; border-radius: 8px; background: rgba(0, 0, 0, .65); color: #fff; font-size: 12px; font-weight: 600; max-width: calc(100% - 12px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-tabs { margin-bottom: 10px; flex-wrap: nowrap; overflow-x: auto; }
+.side-tabs .chip { min-height: 32px; padding: 0 10px; font-size: 12.5px; position: relative; flex: none; }
+.side-tabs .chip.pulse::after { content: ''; position: absolute; top: 4px; right: 4px; width: 8px; height: 8px; border-radius: 50%; background: #f43f5e; }
+.side-tabs .nav-badge { position: static; margin-left: 4px; }
+.p-row { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 10px; background: rgba(8, 13, 25, .45); font-size: 13.5px; flex-wrap: wrap; }
+.p-row.me { border: 1px solid rgba(0, 180, 216, .35); }
+.p-av { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--grad); color: #04121f; font-weight: 800; }
+.p-actions { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.wait-box { padding: 10px; border-radius: 12px; border: 1px dashed rgba(251, 191, 36, .5); background: rgba(251, 191, 36, .06); display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.poll-res .life { margin-top: 4px; }
+.poll-res.mine b { color: #67e8f9; }
+#pane-people, #pane-poll { max-height: min(60vh, 560px); overflow-y: auto; }
+.side-tabs { flex-wrap: wrap; overflow: visible; }
+.p-row .grow { flex: 1 1 0; }
+.p-actions { flex-basis: 100%; padding-left: 38px; }
