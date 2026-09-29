@@ -23,7 +23,12 @@ export async function render() {
   if (!r) { r = routes[0]; match = []; }
   if (current && current.destroy) { try { current.destroy(); } catch (e) { console.error(e); } }
   current = null;
-  document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === r.nav));
+  document.querySelectorAll('[data-nav]').forEach(a => {
+    const active = a.dataset.nav === r.nav;
+    a.classList.toggle('active', active);
+    if (active) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
+  });
   const root = document.getElementById('view');
   const mod = await r.load();
   if (my !== token) return;
@@ -32,6 +37,7 @@ export async function render() {
   current = view;
   window.scrollTo(0, 0);
   await view.render(root, { match, params, hash: location.hash.slice(1) });
+  root.focus({ preventScroll: true });
 }
 
 export function startRouter() {

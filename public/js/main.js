@@ -33,7 +33,7 @@ if (isWebView) setTimeout(() => toast('Navigateur intégré détecté : pour les
 
 /* Statut réseau */
 const net = $('#netStatus');
-const setNet = () => { const on = navigator.onLine !== false; net.classList.toggle('off', !on); net.title = on ? 'En ligne' : 'Hors connexion'; };
+const setNet = () => { const on = navigator.onLine !== false; net.classList.toggle('off', !on); net.title = on ? 'En ligne' : 'Hors connexion'; net.setAttribute('aria-label', on ? 'Connexion Internet : en ligne' : 'Connexion Internet : hors connexion'); };
 window.addEventListener('online', () => { setNet(); toast('Connexion rétablie', 'success'); });
 window.addEventListener('offline', () => { setNet(); toast('Vous êtes hors connexion — les transferts reprendront automatiquement', 'warn'); });
 setNet();
