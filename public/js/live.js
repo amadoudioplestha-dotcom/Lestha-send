@@ -133,7 +133,7 @@ export const roomView = (() => {
   function draw() {
     const host = role === 'host';
     root.innerHTML = `
-    <section class="watch-wrap">
+    <section class="watch-wrap ${isClass() ? 'class-room' : ''}">
       <div class="watch-main">
         <div class="player-box live-box ${L.vertical ? 'vertical' : ''}" id="stage"></div>
         ${isClass() ? `<div class="tiles" id="tiles"></div><div class="class-bar" id="bar"></div>` : ''}
@@ -154,16 +154,16 @@ export const roomView = (() => {
       </div>
       <aside class="watch-side stack">
         <div class="card live-chat">
-          ${isClass() ? `<div class="chips side-tabs" id="tabs">
-            <button type="button" class="chip" data-tab="chat">${icon('message', 'sm')}Discussion</button>
-            <button type="button" class="chip" data-tab="people">${icon('users', 'sm')}Participants <b id="pCount"></b><em class="nav-badge hidden" id="wBadge"></em></button>
-            <button type="button" class="chip" data-tab="poll">${icon('chart', 'sm')}Sondage</button></div>` : `<div class="card-title"><h3>${icon('message')}Discussion</h3></div>`}
-          <div id="pane-chat"><div class="chat-list" id="chat"></div>
+          ${isClass() ? `          <div class="chips side-tabs" id="tabs" role="tablist" aria-label="Outils de la classe">
+            <button type="button" class="chip" id="tab-chat" role="tab" aria-controls="pane-chat" data-tab="chat">${icon('message', 'sm')}Discussion</button>
+            <button type="button" class="chip" id="tab-people" role="tab" aria-controls="pane-people" data-tab="people">${icon('users', 'sm')}Participants <b id="pCount"></b><em class="nav-badge hidden" id="wBadge"></em></button>
+            <button type="button" class="chip" id="tab-poll" role="tab" aria-controls="pane-poll" data-tab="poll">${icon('chart', 'sm')}Sondage</button></div>` : `<div class="card-title"><h3 id="discussion-title">${icon('message')}Discussion</h3></div>`}
+          <div id="pane-chat" role="${isClass() ? 'tabpanel' : 'region'}" aria-labelledby="${isClass() ? 'tab-chat' : 'discussion-title'}"><div class="chat-list" id="chat" role="log" aria-live="polite" aria-relevant="additions" aria-label="Discussion du direct"></div>
           ${L.chat || staff() ? `<form id="chatForm" class="stack" style="gap:6px;margin-top:10px">
             ${isClass() ? '' : `<input class="input" id="chName" maxlength="40" placeholder="Votre nom" value="${esc(ls.get('tx_comment_name', host ? (L.hostName || '') : ''))}">`}
-            <div style="display:flex;gap:6px"><input class="input" id="chText" maxlength="300" placeholder="Écrire un message…" autocomplete="off"><button class="btn primary" type="submit" aria-label="Envoyer">${icon('arrow-right')}</button></div>
+            <div style="display:flex;gap:6px"><input class="input" id="chText" maxlength="300" placeholder="Écrire un message…" aria-label="Votre message" autocomplete="off"><button class="btn primary" type="submit" aria-label="Envoyer">${icon('arrow-right')}</button></div>
           </form>` : '<p class="small faint">La discussion est fermée.</p>'}</div>
-          ${isClass() ? '<div id="pane-people" class="hidden"></div><div id="pane-poll" class="hidden"></div>' : ''}
+          ${isClass() ? '<div id="pane-people" class="hidden" role="tabpanel" aria-labelledby="tab-people"></div><div id="pane-poll" class="hidden" role="tabpanel" aria-labelledby="tab-poll"></div>' : ''}
         </div>
       </aside>
     </section>`;
@@ -174,7 +174,12 @@ export const roomView = (() => {
   function badgeText() { return L.status === 'live' ? '● EN DIRECT' : L.status === 'ended' ? 'TERMINÉ' : 'BIENTÔT'; }
   function setTab(t) {
     tab = t;
-    root.querySelectorAll('#tabs [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
+    root.querySelectorAll('#tabs [data-tab]').forEach(b => {
+      const active = b.dataset.tab === t;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-selected', String(active));
+      b.tabIndex = active ? 0 : -1;
+    });
     ['chat', 'people', 'poll'].forEach(k => { const p = $('#pane-' + k, root); if (p) p.classList.toggle('hidden', k !== t); });
   }
 
@@ -254,24 +259,26 @@ export const roomView = (() => {
   /* ---------------- barre de commandes ---------------- */
   function renderBar() {
     const bar = $('#bar', root); if (!bar) return;
-    const reacts = `<span class="react-row">${REACTIONS.map(e => `<button type="button" class="react-btn" data-react="${e}" title="Réagir">${e}</button>`).join('')}</span>`;
+    const reactionNames = { '👍': 'J’aime', '👏': 'Applaudissements', '❤️': 'Cœur', '😂': 'Rire', '❓': 'Question', '🐢': 'Ralentir' };
+    const reacts = `<span class="react-row" role="group" aria-label="Réactions">${REACTIONS.map(e => `<button type="button" class="react-btn" data-react="${e}" title="${reactionNames[e]}" aria-label="${reactionNames[e]}">${e}</button>`).join('')}</span>`;
     if (role === 'host') {
+      const canShareScreen = !!(window.isSecureContext && navigator.mediaDevices?.getDisplayMedia);
       bar.innerHTML = `
-        <button type="button" class="btn sm ${out.source === 'camera' ? 'primary' : ''}" data-src="camera">${icon('camera', 'sm')}Caméra</button>
-        <button type="button" class="btn sm ${out.source === 'screen' ? 'primary' : ''}" data-src="screen">${icon('monitor', 'sm')}Présenter l'écran</button>
-        <button type="button" class="btn sm ${out.source === 'audio' ? 'primary' : ''}" data-src="audio">${icon('music', 'sm')}Micro seul</button>
-        ${out.stream ? `<button type="button" class="btn sm ${out.mic ? '' : 'danger'}" id="bMic">${out.mic ? '🎤 Micro' : '🔇 Micro coupé'}</button>
+        <button type="button" class="btn sm ${out.source === 'camera' ? 'primary' : ''}" data-src="camera" aria-pressed="${out.source === 'camera'}">${icon('camera', 'sm')}${out.source === 'screen' ? 'Revenir à la caméra' : 'Caméra'}</button>
+        <button type="button" class="btn sm ${out.source === 'screen' ? 'primary' : ''}" data-src="screen" aria-pressed="${out.source === 'screen'}" ${canShareScreen ? '' : 'disabled title="Le partage d’écran n’est pas disponible dans ce navigateur ou contexte."'}>${icon('monitor', 'sm')}Présenter l'écran</button>
+        <button type="button" class="btn sm ${out.source === 'audio' ? 'primary' : ''}" data-src="audio" aria-pressed="${out.source === 'audio'}">${icon('music', 'sm')}Micro seul</button>
+        ${out.stream ? `<button type="button" class="btn sm ${out.mic ? '' : 'danger'}" id="bMic" aria-label="${out.mic ? 'Couper le micro' : 'Réactiver le micro'}" aria-pressed="${!out.mic}">${out.mic ? '🎤 Micro actif · couper' : '🔇 Micro coupé · réactiver'}</button>
         <button type="button" class="btn sm ${rec.mr ? 'danger' : ''}" id="bRec">${rec.mr ? '⏹ Arrêter l\'enregistrement' : '⏺ Enregistrer'}</button>
-        <button type="button" class="btn sm ghost" id="bStop">${icon('x', 'sm')}Couper la diffusion</button>` : ''}
+        <button type="button" class="btn sm danger" id="bStop" aria-label="${out.source === 'screen' ? 'Arrêter le partage d’écran et revenir à la salle' : 'Arrêter la diffusion'}">${icon('x', 'sm')}${out.source === 'screen' ? 'Arrêter la présentation' : 'Arrêter la diffusion'}</button>` : ''}
         <span class="grow"></span>${reacts}
-        <div class="tiny faint" style="flex-basis:100%">${out.stream ? `Diffusion vers <b id="nPeers">${out.pcs.size}</b> participant(s)${rec.mr ? ' · <span style="color:#fda4af">● enregistrement en cours</span>' : ''}. Gardez cette page ouverte.` : 'Choisissez une source : les participants la reçoivent aussitôt.'}</div>`;
+        <div class="tiny faint" style="flex-basis:100%">${out.stream ? `Diffusion vers <b id="nPeers">${out.pcs.size}</b> participant(s)${rec.mr ? ' · <span style="color:#fda4af">● enregistrement en cours</span>' : ''}. Gardez cette page ouverte.` : 'Choisissez une source : les participants la reçoivent aussitôt.'}${canShareScreen ? '' : ' Le partage d’écran nécessite un navigateur compatible et une connexion HTTPS; essayez depuis un ordinateur.'}</div>`;
     } else if (speaking) {
       bar.innerHTML = `<span class="pill ok">🎤 Vous avez la parole</span>
         <button type="button" class="btn sm ${out.mic ? '' : 'danger'}" id="bMic">${out.mic ? '🎤 Micro' : '🔇 Micro coupé'}</button>
         <button type="button" class="btn sm" id="bCam">${out.stream && out.stream.getVideoTracks().length ? '📷 Couper la caméra' : '📷 Activer la caméra'}</button>
         <button type="button" class="btn sm ghost" id="bGive">Rendre la parole</button><span class="grow"></span>${reacts}`;
     } else {
-      bar.innerHTML = `${role === 'learner' ? `<button type="button" class="btn sm ${hand ? 'primary' : ''}" id="bHand">✋ ${hand ? 'Baisser la main' : 'Lever la main'}</button>` : ''}<span class="grow"></span>${reacts}`;
+      bar.innerHTML = `${role === 'learner' ? `<button type="button" class="btn sm ${hand ? 'primary' : ''}" id="bHand" aria-pressed="${hand}">✋ ${hand ? 'Baisser la main' : 'Lever la main'}</button>` : ''}<span class="grow"></span>${reacts}`;
     }
     bar.onclick = (e) => {
       const r = e.target.closest('[data-react]'); if (r && sock) { sock.emit('live-react', { e: r.dataset.react }); return; }
@@ -279,7 +286,7 @@ export const roomView = (() => {
       const b = e.target.closest('button'); if (!b) return;
       if (b.id === 'bMic') toggleMic();
       else if (b.id === 'bCam') toggleCam();
-      else if (b.id === 'bStop') { stopOut(); renderBar(); renderStage(); }
+      else if (b.id === 'bStop') { const wasPresenting = out.source === 'screen'; stopOut(); renderBar(); renderStage(); toast(wasPresenting ? 'Présentation arrêtée' : 'Diffusion arrêtée', 'info'); }
       else if (b.id === 'bRec') rec.mr ? stopRecording() : startRecording();
       else if (b.id === 'bHand') { hand = !hand; sock.emit('live-hand', { up: hand }); renderBar(); toast(hand ? 'Main levée ✋ — l\'animateur est prévenu' : 'Main baissée', 'info'); }
       else if (b.id === 'bGive') { sock.emit('live-hand', { up: false }); endSpeaking(true); }
@@ -409,7 +416,20 @@ export const roomView = (() => {
       bd.innerHTML = `<div class="qr-card"><div id="qrBox"></div><b>${esc(L.title)}</b><span class="small">${esc(link.replace(/^https?:\/\//, ''))}</span></div>`;
       bd.onclick = () => bd.remove(); document.body.appendChild(bd); renderQR($('#qrBox', bd), link);
     };
-    const tabs = $('#tabs', root); if (tabs) tabs.onclick = (e) => { const b = e.target.closest('[data-tab]'); if (b) { b.classList.remove('pulse'); setTab(b.dataset.tab); } };
+    const tabs = $('#tabs', root);
+    if (tabs) {
+      tabs.onclick = (e) => { const b = e.target.closest('[data-tab]'); if (b) { b.classList.remove('pulse'); setTab(b.dataset.tab); } };
+      tabs.onkeydown = (e) => {
+        const current = e.target.closest('[data-tab]');
+        if (!current || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+        e.preventDefault();
+        const buttons = [...tabs.querySelectorAll('[data-tab]')];
+        const index = buttons.indexOf(current);
+        const next = e.key === 'Home' ? 0 : e.key === 'End' ? buttons.length - 1 : (index + (e.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+        setTab(buttons[next].dataset.tab);
+        buttons[next].focus();
+      };
+    }
     const f = $('#chatForm', root);
     if (f) f.onsubmit = (e) => {
       e.preventDefault();
