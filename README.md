@@ -5,7 +5,7 @@ Deux modes, une seule application :
 | | **Cloud** (nouveau, par défaut) | **Direct P2P** (mode d'origine, fiabilisé) |
 |---|---|---|
 | Le lien marche si l'expéditeur ferme l'appli | ✅ oui, jusqu'à l'expiration | ⚠️ il doit revenir (le transfert reprend alors tout seul) |
-| Taille max | 250 Go par envoi (réglable) | limitée par le disque du destinataire |
+| Taille max | 250 Gio par envoi par défaut (réglable) | 250 Gio par transfert, sous réserve de l'espace disque disponible sur le destinataire |
 | Vitesse | upload direct vers R2 en parallèle, téléchargement direct depuis R2 | appareil → appareil |
 | Reprise | upload **et** téléchargement | à l'octet près |
 | Stockage | Cloudflare R2, supprimé à expiration | aucun |
@@ -24,7 +24,7 @@ En P2P, le fichier ne vit que sur l'appareil de l'expéditeur : dès qu'il quitt
 **Reprise** :
 - Envoi : coupure réseau → pause auto puis reprise ; page fermée → le tableau de bord propose « Reprendre », on resélectionne les fichiers et seuls les morceaux manquants partent.
 - Téléchargement : réponses HTTP `Range` → le bouton « Reprendre » du navigateur repart là où il s'était arrêté.
-- P2P : écriture disque en place (OPFS, Worker) + contrôle de flux → reprise exacte, plus de saturation mémoire sur les petits téléphones.
+- P2P : écriture disque en place (OPFS, Worker) + contrôle de flux → reprise exacte, sans charger le fichier entier en mémoire. Jusqu'à 250 Gio, sous réserve que le navigateur et l'espace disque du destinataire le permettent.
 
 **Tableau de bord** : KPIs animés (liens actifs, téléchargements, visiteurs uniques, taux de conversion, volume), graphique d'activité 14 jours, **flux en direct** (socket.io) avec appareil et navigateur, alertes système et e-mail au 1er téléchargement, badge de nouveaux téléchargements, envois interrompus à reprendre, recherche et filtres.
 Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléchargés, journal, et contrôles : activer/désactiver, prolonger, PIN, limite de destinataires, QR code, **lien de gestion privé** (piloter depuis un autre appareil), suppression immédiate, sauvegarde/import.
@@ -77,7 +77,7 @@ Active **Lecture en ligne** + **Commentaires horodatés** sur un envoi : le lien
 - **appareils associés** par code à 6 chiffres ou QR : ils se retrouvent même sur des réseaux différents (jeton signé, rien n'est stocké côté serveur) ;
 - envoi de fichiers, dossiers, photos, avec acceptation par le destinataire ; transfert **direct** WebRTC (le serveur ne voit jamais les fichiers) ;
 - **presse-papiers partagé** : texte ou lien d'un appareil à l'autre (bouton « Ouvrir » pour les liens).
-Limite : réception en mémoire (≈ 700 Mo sur téléphone, 2 Go sur ordinateur) — au-delà, utilisez le mode Cloud.
+Les transferts jusqu'à 250 Gio sont écrits progressivement sur le stockage privé du navigateur (OPFS), avec contrôle de flux ; les fichiers ne sont pas chargés entièrement en RAM. La capacité effective dépend de l'espace disque et du quota accordé par le navigateur. Si OPFS est indisponible, la réception en mémoire reste volontairement limitée à 500 Mio sur téléphone et 2 Gio sur ordinateur.
 
 **Lien de visionnage** (`/w/:id`) — option « Lecture en ligne » à l'envoi :
 - *Lecture + téléchargement* ou *Visionnage seul* (boutons de téléchargement et ZIP désactivés côté serveur, liens de lecture courts, filigrane mobile) ;
@@ -125,7 +125,7 @@ lib/live.js          Direct : salles, discussion, signalisation caméra (lives/<
 lib/classroom.js     intégration serveur BigBlueButton : réunions, accès enseignant, présences et enregistrements
 public/js/nearby.js  radar + transfert direct · watch.js lecteur · request.js dépôts
 public/js/*.js       modules ES : envoi, uploader, réception, P2P, tableau de bord, gestion et classe BBB
-public/js/opfs-worker.js   écriture disque synchrone pour le P2P
+public/js/opfs-worker.js   écriture disque synchrone pour les réceptions directes
 ```
 
 Les métadonnées étant stockées dans R2, un redémarrage ou une mise en veille (Render gratuit) **ne casse aucun lien**.

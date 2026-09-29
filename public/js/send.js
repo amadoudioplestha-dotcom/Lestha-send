@@ -3,6 +3,7 @@ import { $, $$, esc, icon, bytes, speed, duration, timeLeft, fileKind, ls, ss, o
 import { Uploader } from './uploader.js';
 import { navigate } from './router.js';
 import * as p2p from './p2p.js';
+import { MAX_DIRECT_BYTES, validateDirectFiles } from './direct-limits.mjs';
 
 const HOUR = 3600e3, DAY = 24 * HOUR;
 const S = {
@@ -34,6 +35,7 @@ async function renderCompose() {
   const cfg = await getConfig();
   if (!rootEl) return;
   const total = S.items.reduce((s, it) => s + it.file.size, 0);
+  const directValidation = validateDirectFiles(S.items.map(it => it.file));
   if (cfg.cloudEnabled === false && S.mode === 'cloud') S.mode = 'p2p';
   const cloud = S.mode === 'cloud';
   rootEl.innerHTML = `
@@ -41,7 +43,7 @@ async function renderCompose() {
     <div class="hero">
       <span class="eyebrow"><span class="pulse-dot"></span>Transfert de fichiers nouvelle génération</span>
       <h1>Envoyez <span class="grad-text">sans limites.</span></h1>
-      <p class="lead">Jusqu'à ${bytes(cfg.maxTransferBytes, 0)} par envoi, un lien qui reste actif même quand vous fermez l'application, et des téléchargements qui reprennent là où ils s'étaient arrêtés.</p>
+      <p class="lead">${cloud ? `Jusqu'à ${bytes(cfg.maxTransferBytes, 0)} par envoi, un lien qui reste actif même quand vous fermez l'application, et des téléchargements qui reprennent là où ils s'étaient arrêtés.` : `Jusqu'à ${bytes(MAX_DIRECT_BYTES, 0)} par transfert direct, si le navigateur et le disque du destinataire le permettent.`}</p>
       <div class="hero-badges">
         <span class="hero-badge">${icon('bolt')}Vitesse maximale</span>
         <span class="hero-badge">${icon('refresh')}Reprise automatique</span>
@@ -66,7 +68,7 @@ async function renderCompose() {
           <div class="dz-orb">${icon(S.items.length ? 'plus' : 'upload')}</div>
           <div>
             <div class="dz-title">${S.items.length ? 'Ajouter d\'autres fichiers' : (isMobile ? 'Touchez pour choisir vos fichiers' : 'Glissez vos fichiers ou dossiers ici')}</div>
-            <div class="dz-sub">${S.items.length ? 'Glisser-déposer, coller ou parcourir' : 'Tous formats · dossiers complets · jusqu\'à ' + bytes(cfg.maxTransferBytes, 0)}</div>
+            <div class="dz-sub">${S.items.length ? 'Glisser-déposer, coller ou parcourir' : 'Tous formats · dossiers complets · jusqu\'à ' + bytes(cloud ? cfg.maxTransferBytes : MAX_DIRECT_BYTES, 0)}</div>
           </div>
           ${S.items.length ? '' : `<div class="dz-actions">
             <button type="button" class="chip" data-pick="files">${icon('file', 'sm')}Fichiers</button>
@@ -87,6 +89,7 @@ async function renderCompose() {
           <div class="file-list" id="fileList">${renderFileRows()}</div>
           <div class="file-summary" style="margin-top:12px"><span>Total</span><b>${bytes(total)}</b></div>
           ${total > cfg.maxTransferBytes ? `<div class="banner bad" style="margin-top:10px">${icon('x')}Dépasse la limite de ${bytes(cfg.maxTransferBytes, 0)} par envoi.</div>` : ''}
+          ${!cloud && !directValidation.ok ? `<div class="banner bad" style="margin-top:10px">${icon('x')}${directValidation.error}</div>` : ''}
         </div>` : ''}
       </div>
 
@@ -126,10 +129,10 @@ async function renderCompose() {
           </div></div>
         </div>
 
-        <button type="button" class="btn primary xl block" id="btnGo" ${S.items.length && total <= cfg.maxTransferBytes ? '' : 'disabled'}>
+        <button type="button" class="btn primary xl block" id="btnGo" ${S.items.length && (cloud ? total <= cfg.maxTransferBytes : directValidation.ok) ? '' : 'disabled'}>
           ${icon(cloud ? 'upload' : 'link')}${cloud ? (S.items.length ? 'Envoyer · ' + bytes(total) : 'Envoyer') : 'Créer le lien direct'}
         </button>
-        <p class="small faint center">${cloud ? 'Upload direct vers le stockage, en parallèle et reprenable. Aucune limite de débit imposée.' : 'Gardez TransferX ouvert pendant le téléchargement. Pour pouvoir fermer, utilisez le mode Cloud.'}</p>
+        <p class="small faint center">${cloud ? 'Upload direct vers le stockage, en parallèle et reprenable. Aucune limite de débit imposée.' : `Jusqu'à ${bytes(MAX_DIRECT_BYTES, 0)} par transfert ; réception sur disque si le navigateur et l'espace disponible le permettent. Gardez TransferX ouvert pendant le téléchargement.`}</p>
         <a class="card request-cta" href="/demande" data-link>
           <span class="ficon" style="--c:#06d6a0">${icon('inbox')}</span>
           <span class="fmeta"><b>Besoin de <span class="grad-text">recevoir</span> des fichiers ?</b><span class="small muted">Créez un lien de dépôt : vos apprenants, clients ou collègues vous envoient leurs fichiers.</span></span>
@@ -347,6 +350,8 @@ async function importShared() {
 /* ============================ ENVOI DIRECT (P2P) ============================ */
 async function startP2P() {
   if (!S.items.length) return;
+  const validation = validateDirectFiles(S.items.map(it => it.file));
+  if (!validation.ok) return toast(validation.error, 'error');
   if (S.opts.pin && !/^\d{4,8}$/.test(S.opts.pin)) { S.optsOpen = true; renderCompose(); return toast('Le PIN doit contenir 4 à 8 chiffres', 'warn'); }
   if (!window.RTCPeerConnection) return toast('Ce navigateur ne gère pas le transfert direct. Utilisez le mode Cloud.', 'error');
   const btn = $('#btnGo'); if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Création du lien…'; }

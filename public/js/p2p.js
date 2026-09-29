@@ -7,6 +7,7 @@
  */
 import { $, esc, icon, bytes, speed, duration, timeLeft, fileKind, ls, toast, modal, renderQR, keepAwake, notify, getSocket, confetti, isMobile, lowMemory, confirmDialog } from './core.js';
 import { navigate } from './router.js';
+import { validateDirectFiles } from './direct-limits.mjs';
 
 const HOUR = 3600e3;
 const WINDOW = lowMemory ? 8 * 1024 * 1024 : isMobile ? 24 * 1024 * 1024 : 64 * 1024 * 1024;
@@ -34,6 +35,8 @@ function roomLink() { return location.origin + '/?room=' + encodeURIComponent(P.
 function sig(items) { return items.map(it => ({ name: it.file.name, size: it.file.size, lastModified: it.file.lastModified, path: it.path || null })); }
 
 export async function startSend(items, { ttl, pin, destroy }) {
+  const validation = validateDirectFiles(items.map(it => it.file));
+  if (!validation.ok) throw new Error(validation.error);
   const socket = await getSocket();
   bindSenderSocket(socket);
   if (!socket.connected) await new Promise(r => socket.once('connect', r));
@@ -458,6 +461,9 @@ function wcall(msg, transfer) {
 }
 async function initSink(meta) {
   const need = meta.total;
+  const validation = validateDirectFiles(meta.files);
+  if (!validation.ok) throw Object.assign(new Error(validation.error), { fatal: true });
+  if (!Number.isSafeInteger(need) || validation.total !== need) throw Object.assign(new Error('Métadonnées du transfert invalides.'), { fatal: true });
   if (supportsWorkerOPFS()) {
     try {
       if (!R.worker) {
@@ -469,6 +475,9 @@ async function initSink(meta) {
       const sizes = await Promise.all(meta.files.map((f, i) => wcall({ cmd: 'open', name: fname(i) }).then(r => r.size)));
       const already = sizes.reduce((s, x) => s + x, 0);
       if (est && est.quota && need - already > (est.quota - est.usage)) throw Object.assign(new Error(`Espace insuffisant : il faut ${bytes(need - already)} libres sur cet appareil.`), { fatal: true });
+      for (let i = 0; i < sizes.length; i++) {
+        if (sizes[i] > meta.files[i].size) await wcall({ cmd: 'truncate', name: fname(i), size: meta.files[i].size });
+      }
       R.written = sizes.map((s, i) => Math.min(s, meta.files[i].size));
       R.mode = 'disk';
       return;
@@ -478,7 +487,7 @@ async function initSink(meta) {
     }
   }
   const limit = isMobile ? 500 * 1024 * 1024 : 2 * 1024 * 1024 * 1024;
-  if (need > limit) throw Object.assign(new Error(`Ce navigateur ne peut pas recevoir ${bytes(need)} en direct. Ouvrez le lien dans Chrome, ou demandez un envoi en mode Cloud.`), { fatal: true });
+  if (need > limit) throw Object.assign(new Error(`Le stockage disque sécurisé n'est pas disponible dans ce navigateur. La réception en mémoire est limitée à ${bytes(limit)} ; ouvrez le lien dans un navigateur récent avec stockage OPFS et vérifiez l'espace disque disponible.`), { fatal: true });
   R.mode = 'memory';
   if (!R.mem) R.mem = meta.files.map(() => []);
   R.written = R.mem.map(parts => parts.reduce((s, p) => s + p.byteLength, 0));
@@ -496,13 +505,14 @@ function setupRxChannel(dc) {
     const data = new Uint8Array(R.bufBytes);
     let o = 0; for (const b of R.buf) { data.set(new Uint8Array(b), o); o += b.byteLength; }
     R.buf = []; R.bufBytes = 0;
+    const byteLength = data.byteLength;
     writing = writing.then(async () => {
       if (R.mode === 'disk') await wcall({ cmd: 'write', name: fname(idx), pos, data: data.buffer }, [data.buffer]);
       else R.mem[idx].push(data);
-      R.written[idx] = pos + data.byteLength;
+      R.written[idx] = pos + byteLength;
       const committed = R.starts[idx] + R.written[idx];
       if (committed - lastAck >= 2 * 1024 * 1024 || committed >= R.total) { lastAck = committed; if (dc.readyState === 'open') dc.send(JSON.stringify({ msgType: 'ack', pos: committed })); }
-    }).catch((e) => { R.state = 'error'; R.error = e.message; try { dc.send(JSON.stringify({ msgType: 'error', message: e.message })); } catch (x) { /* ignore */ } renderReceiver(); });
+    }).catch((e) => failReceive(dc, e.message));
     return writing;
   };
   dc.onmessage = async (e) => {
@@ -519,23 +529,36 @@ function setupRxChannel(dc) {
         R.pos = R.written.reduce((s, x) => s + x, 0);
         R.samples = [];
         lastAck = R.pos;
-        if (fi === -1) return finishReceive();
+        if (fi === -1) return finishReceive().catch(e => failReceive(dc, 'Finalisation impossible : ' + e.message));
         R.state = 'receiving';
         renderReceiver();
         dc.send(JSON.stringify({ msgType: 'resume', fileIndex: fi, offset: R.written[fi] }));
       } else if (m.msgType === 'file-start') {
+        const index = Number(m.index), offset = Number(m.offset);
+        if (!Number.isInteger(index) || index < 0 || index >= R.meta.files.length || !Number.isSafeInteger(offset) || offset !== R.written[index] || offset > R.meta.files[index].size) {
+          return failReceive(dc, 'Séquence de fichiers invalide.');
+        }
         flushBuf();
-        R.cur = m.index; R.curPos = m.offset; R.bufPos = m.offset;
+        R.cur = index; R.curPos = offset; R.bufPos = offset;
       } else if (m.msgType === 'file-end') {
         flushBuf();
+        R.cur = -1;
       } else if (m.msgType === 'all-sent') {
         await flushBuf();
         await writing;
-        finishReceive();
+        if (R.state === 'error') return;
+        if (R.written.some((size, index) => size !== R.meta.files[index].size)) {
+          return failReceive(dc, 'Réception incomplète : certains fichiers ne correspondent pas à la taille annoncée.');
+        }
+        finishReceive().catch(e => failReceive(dc, 'Finalisation impossible : ' + e.message));
       }
       return;
     }
     if (R.cur < 0) return;
+    const size = e.data.byteLength;
+    if (!R.meta || R.cur >= R.meta.files.length || R.curPos + size > R.meta.files[R.cur].size || R.pos + size > R.total) {
+      return failReceive(dc, 'Le volume reçu ne correspond pas aux fichiers annoncés.');
+    }
     if (!R.bufBytes) R.bufPos = R.curPos;
     R.buf.push(e.data); R.bufBytes += e.data.byteLength;
     R.curPos += e.data.byteLength; R.pos += e.data.byteLength;
@@ -545,10 +568,18 @@ function setupRxChannel(dc) {
   if (!R.ticker) R.ticker = setInterval(() => { if (R.state === 'receiving') updateRxProgress(); }, 700);
 }
 
+function failReceive(dc, message) {
+  R.state = 'error';
+  R.error = message;
+  clearInterval(R.ticker); R.ticker = null;
+  try { if (dc.readyState === 'open') dc.send(JSON.stringify({ msgType: 'error', message })); } catch (e) { /* ignore */ }
+  try { dc.close(); } catch (e) { /* ignore */ }
+  keepAwake(false);
+  renderReceiver();
+}
+
 async function finishReceive() {
   if (R.done) return;
-  R.done = true;
-  clearInterval(R.ticker); R.ticker = null;
   const files = R.meta.files;
   R.fileUrls = [];
   if (R.mode === 'disk') {
@@ -557,12 +588,15 @@ async function finishReceive() {
     for (let i = 0; i < files.length; i++) {
       const fh = await root.getFileHandle(fname(i));
       const f = await fh.getFile();
-      R.fileUrls.push({ name: files[i].name, path: files[i].path, size: files[i].size, type: files[i].type, url: URL.createObjectURL(new File([f], files[i].name, { type: files[i].type })) });
+      if (f.size !== files[i].size) throw new Error('Le fichier enregistré ne correspond pas à la taille annoncée.');
+      R.fileUrls.push({ name: files[i].name, path: files[i].path, size: files[i].size, type: files[i].type, url: URL.createObjectURL(f) });
     }
   } else {
     files.forEach((f, i) => R.fileUrls.push({ name: f.name, path: f.path, size: f.size, type: f.type, url: URL.createObjectURL(new Blob(R.mem[i], { type: f.type })) }));
     R.mem = null;
   }
+  R.done = true;
+  clearInterval(R.ticker); R.ticker = null;
   try { R.dc.send(JSON.stringify({ msgType: 'complete' })); } catch (e) { /* ignore */ }
   const socket = await getSocket();
   socket.emit('download-complete', { roomId: R.roomId });
@@ -599,13 +633,15 @@ export async function cleanupOPFS() {
     if (!navigator.storage || !navigator.storage.getDirectory) return;
     const root = await navigator.storage.getDirectory();
     const keep = new Set();
-    Object.keys(localStorage).filter(k => k.startsWith('tx_p2p_recv_')).forEach(k => {
+    Object.keys(localStorage).filter(k => k.startsWith('tx_p2p_recv_') || k.startsWith('tx_near_recv_')).forEach(k => {
       const v = ls.get(k, null);
-      if (v && Date.now() - v.at < 2 * 86400e3) keep.add(k.slice(12)); else ls.del(k);
+      const id = k.startsWith('tx_p2p_recv_') ? k.slice(12) : k.slice(13);
+      if (v && Date.now() - v.at < 2 * 86400e3) keep.add(id); else ls.del(k);
     });
     for await (const name of root.keys()) {
       const m = name.match(/^p2p_(TX-[A-Z0-9]{6})_\d+$/);
-      if ((m && !keep.has(m[1])) || /^transferx(\.tmp|_sender\.zip|_multi\.zip)$/.test(name)) root.removeEntry(name).catch(() => {});
+      const near = name.match(/^near_([A-Za-z0-9_-]{8,40})_\d+$/);
+      if ((m && !keep.has(m[1])) || (near && !keep.has(near[1])) || /^transferx(\.tmp|_sender\.zip|_multi\.zip)$/.test(name)) root.removeEntry(name).catch(() => {});
     }
   } catch (e) { /* ignore */ }
 }

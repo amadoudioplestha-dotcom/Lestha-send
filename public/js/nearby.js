@@ -3,6 +3,7 @@
  * Les fichiers passent directement d'un appareil à l'autre (WebRTC), jamais par le serveur. */
 import { $, $$, esc, icon, bytes, speed, fileKind, ls, toast, modal, confirmDialog, copyText, keepAwake, notify, getSocket, isMobile, lowMemory, renderQR } from './core.js';
 import { pick } from './send.js';
+import { validateDirectFiles } from './direct-limits.mjs';
 
 const WINDOW = lowMemory ? 8 << 20 : isMobile ? 24 << 20 : 64 << 20;
 const BUF_HIGH = 8 << 20, BUF_LOW = 2 << 20;
@@ -227,6 +228,8 @@ function sendText(to, text) {
 }
 
 function sendFiles(to, items) {
+  const validation = validateDirectFiles(items.map(it => it.file));
+  if (!validation.ok) return toast(validation.error, 'error');
   const peer = N.peers.find(p => p.deviceId === to) || { name: 'Appareil' };
   const offerId = newId();
   const files = items.map(it => ({ name: it.path || it.file.name, size: it.file.size, type: it.file.type || 'application/octet-stream' }));
@@ -309,16 +312,32 @@ async function onIncoming(p) {
     if (act === 'open') window.open(p.text.trim(), '_blank', 'noopener');
     return;
   }
+  const validation = validateDirectFiles(p.files);
+  if (!validation.ok || validation.total !== p.total) {
+    N.sock.emit('near-reply', { to: p.from.deviceId, offerId: p.offerId, accept: false });
+    toast(validation.error || 'Métadonnées du transfert invalides.', 'error');
+    return;
+  }
   notify('Fichiers entrants', `${p.from.name} veut vous envoyer ${p.files.length} fichier(s)`);
   const accept = await modal({
     title: `${p.from.name} veut vous envoyer ${p.files.length} fichier${p.files.length > 1 ? 's' : ''}`,
     body: `<p class="small muted" style="margin-bottom:10px">${bytes(p.total)} · directement depuis l'appareil</p><div class="file-list" style="max-height:240px">${p.files.slice(0, 50).map(f => { const k = fileKind(f.name, f.type); return `<div class="file-row"><div class="ficon" style="--c:${k.c};width:34px;height:34px">${icon(k.icon, 'sm')}</div><div class="fmeta"><div class="fname">${esc(f.name)}</div><div class="fsub">${bytes(f.size)}</div></div></div>`; }).join('')}${p.files.length > 50 ? `<div class="small faint center">+ ${p.files.length - 50} autres</div>` : ''}</div>`,
     actions: [{ label: 'Refuser', cls: 'ghost', value: false }, { label: 'Accepter', cls: 'primary', icon: 'download', value: true }]
   });
-  N.sock.emit('near-reply', { to: p.from.deviceId, offerId: p.offerId, accept: !!accept });
-  if (!accept) return;
-  const t = { id: p.offerId, dir: 'in', peer: p.from.deviceId, peerName: p.from.name, files: p.files, total: p.total, pos: 0, status: 'active', samples: [], parts: p.files.map(() => []), cur: -1, written: 0 };
+  if (!accept) {
+    N.sock.emit('near-reply', { to: p.from.deviceId, offerId: p.offerId, accept: false });
+    return;
+  }
+  const t = { id: p.offerId, dir: 'in', peer: p.from.deviceId, peerName: p.from.name, files: p.files, total: p.total, pos: 0, status: 'active', samples: [], cur: -1, curPos: 0, parts: null, buf: [], bufBytes: 0, writing: Promise.resolve(), written: [], mode: null };
   N.transfers.set(t.id, t);
+  try {
+    await initNearSink(t);
+  } catch (e) {
+    N.sock.emit('near-reply', { to: p.from.deviceId, offerId: p.offerId, accept: false });
+    fail(t, e.message);
+    return;
+  }
+  N.sock.emit('near-reply', { to: p.from.deviceId, offerId: p.offerId, accept: true });
   keepAwake(true);
   if (location.pathname !== '/proximite') toast(`Réception depuis ${p.from.name}…`, 'info', { action: 'Voir', onAction: () => { history.pushState({}, '', '/proximite'); dispatchEvent(new PopStateEvent('popstate')); } });
   renderTransfers();
@@ -352,26 +371,150 @@ async function handleSignal(t, data) {
 function setupReceiver(t, dc) {
   dc.binaryType = 'arraybuffer';
   t.dc = dc;
-  let lastAck = 0;
-  const memLimit = isMobile ? 700 * 1024 * 1024 : 2 * 1024 * 1024 * 1024;
+  t.lastAck = 0;
   dc.onmessage = (e) => {
     if (typeof e.data === 'string') {
       let m; try { m = JSON.parse(e.data); } catch (err) { return; }
-      if (m.t === 'file') t.cur = m.i;
-      else if (m.t === 'all') finishReceive(t);
+      if (m.t === 'file') {
+        if (!Number.isInteger(m.i) || m.i < 0 || m.i >= t.files.length) return fail(t, 'Séquence de fichiers invalide.');
+        flushNearBuffer(t); t.cur = m.i; t.curPos = 0;
+      } else if (m.t === 'end') { flushNearBuffer(t); t.cur = -1; }
+      else if (m.t === 'all') finishReceive(t).catch(e => fail(t, e.message));
       return;
     }
-    if (t.cur < 0) return;
-    t.parts[t.cur].push(e.data);
+    if (t.cur < 0 || t.status !== 'active') return;
+    if (t.curPos + e.data.byteLength > t.files[t.cur].size || t.pos + e.data.byteLength > t.total) {
+      return fail(t, 'Le volume reçu ne correspond pas aux fichiers annoncés.');
+    }
+    t.buf.push(e.data);
+    t.bufBytes += e.data.byteLength;
     t.pos += e.data.byteLength;
-    if (t.pos > memLimit) { try { dc.send(JSON.stringify({ t: 'error', message: 'Taille trop importante pour cet appareil — utilisez le mode Cloud.' })); } catch (x) { /* ignore */ } return fail(t, 'Mémoire insuffisante pour recevoir autant en direct : utilisez le mode Cloud.'); }
-    if (t.pos - lastAck >= (2 << 20)) { lastAck = t.pos; dc.send(JSON.stringify({ t: 'ack', pos: t.pos })); }
+    t.curPos += e.data.byteLength;
+    const memLimit = isMobile ? 500 * 1024 * 1024 : 2 * 1024 * 1024 * 1024;
+    if (t.mode === 'memory' && t.pos > memLimit) {
+      const message = `Le stockage disque sécurisé n'est pas disponible dans ce navigateur. La réception en mémoire est limitée à ${bytes(memLimit)} ; ouvrez TransferX dans un navigateur récent avec stockage OPFS.`;
+      try { dc.send(JSON.stringify({ t: 'error', message })); } catch (x) { /* ignore */ }
+      return fail(t, message);
+    }
+    if (t.bufBytes >= 2 * 1024 * 1024) flushNearBuffer(t);
   };
 }
 
-function finishReceive(t) {
-  t.urls = t.files.map((f, i) => ({ name: f.name.split('/').pop(), path: f.name, size: f.size, type: f.type, url: URL.createObjectURL(new Blob(t.parts[i], { type: f.type })) }));
-  t.parts = null;
+function supportsWorkerOPFS() { return !!(window.Worker && navigator.storage && navigator.storage.getDirectory && window.FileSystemFileHandle && isSecureContext); }
+
+async function initNearSink(t) {
+  const validation = validateDirectFiles(t.files);
+  if (!validation.ok) throw new Error(validation.error);
+  if (validation.total !== t.total) throw new Error('Métadonnées du transfert invalides.');
+  if (supportsWorkerOPFS()) {
+    let quotaFailure = false;
+    try {
+      t.worker = new Worker('/js/opfs-worker.js');
+      t.wcb = new Map();
+      t.wid = 0;
+      t.worker.onmessage = (e) => {
+        const cb = t.wcb.get(e.data.id);
+        if (!cb) return;
+        t.wcb.delete(e.data.id);
+        e.data.ok ? cb.resolve(e.data) : cb.reject(new Error(e.data.error));
+      };
+      try { await navigator.storage.persist(); } catch (e) { /* ignore */ }
+      const estimate = navigator.storage.estimate ? await navigator.storage.estimate() : null;
+      if (estimate && Number.isFinite(estimate.quota) && Number.isFinite(estimate.usage) && t.total > estimate.quota - estimate.usage) {
+        quotaFailure = true;
+        throw new Error(`Espace disque insuffisant : il faut ${bytes(t.total)} libres sur cet appareil.`);
+      }
+      for (let i = 0; i < t.files.length; i++) {
+        await nearWorkerCall(t, { cmd: 'open', name: nearFileName(t, i) });
+        await nearWorkerCall(t, { cmd: 'truncate', name: nearFileName(t, i), size: 0 });
+      }
+      t.mode = 'disk';
+      t.written = t.files.map(() => 0);
+      ls.set('tx_near_recv_' + t.id, { at: Date.now() });
+      return;
+    } catch (e) {
+      if (t.worker) {
+        t.worker.terminate();
+        t.worker = null;
+        if (navigator.storage && navigator.storage.getDirectory) {
+          navigator.storage.getDirectory().then(async root => {
+            for (let i = 0; i < t.files.length; i++) await root.removeEntry(nearFileName(t, i)).catch(() => {});
+          }).catch(() => {});
+        }
+      }
+      if (quotaFailure) throw e;
+      console.warn('OPFS indisponible', e);
+    }
+  }
+  const limit = isMobile ? 500 * 1024 * 1024 : 2 * 1024 * 1024 * 1024;
+  if (t.total > limit) throw new Error(`Le stockage disque sécurisé n'est pas disponible dans ce navigateur. La réception en mémoire est limitée à ${bytes(limit)} ; ouvrez TransferX dans un navigateur récent avec stockage OPFS.`);
+  t.mode = 'memory';
+  t.parts = t.files.map(() => []);
+  t.written = t.files.map(() => 0);
+}
+
+const nearFileName = (t, i) => `near_${t.id}_${i}`;
+
+function nearWorkerCall(t, msg, transfer) {
+  return new Promise((resolve, reject) => {
+    const id = ++t.wid;
+    t.wcb.set(id, { resolve, reject });
+    t.worker.postMessage(Object.assign({ id }, msg), transfer || []);
+  });
+}
+
+function flushNearBuffer(t) {
+  if (!t.bufBytes || t.cur < 0 || t.status !== 'active') return t.writing;
+  const index = t.cur, pos = t.curPos - t.bufBytes, data = new Uint8Array(t.bufBytes);
+  let offset = 0;
+  for (const part of t.buf) { data.set(new Uint8Array(part), offset); offset += part.byteLength; }
+  t.buf = [];
+  t.bufBytes = 0;
+  t.writing = t.writing.then(async () => {
+    if (t.mode === 'disk') await nearWorkerCall(t, { cmd: 'write', name: nearFileName(t, index), pos, data: data.buffer }, [data.buffer]);
+    else t.parts[index].push(data);
+    t.written[index] = pos + offset;
+    const committed = t.written.reduce((sum, size) => sum + size, 0);
+    if (committed - t.lastAck >= 2 * 1024 * 1024 && t.dc.readyState === 'open') {
+      t.lastAck = committed;
+      t.dc.send(JSON.stringify({ t: 'ack', pos: committed }));
+    }
+  });
+  t.writing.catch(e => {
+    try { if (t.dc.readyState === 'open') t.dc.send(JSON.stringify({ t: 'error', message: 'Écriture du fichier impossible : ' + e.message })); } catch (x) { /* ignore */ }
+    fail(t, 'Écriture du fichier impossible : ' + e.message);
+  });
+  return t.writing;
+}
+
+async function finishReceive(t) {
+  if (t.finishing || t.status !== 'active') return;
+  t.finishing = true;
+  await flushNearBuffer(t);
+  await t.writing;
+  if (t.written.some((size, index) => size !== t.files[index].size)) {
+    const message = 'Réception incomplète : certains fichiers ne correspondent pas à la taille annoncée.';
+    try { if (t.dc.readyState === 'open') t.dc.send(JSON.stringify({ t: 'error', message })); } catch (e) { /* ignore */ }
+    fail(t, message);
+    return;
+  }
+  const urls = [];
+  if (t.mode === 'disk') {
+    await Promise.all(t.files.map((f, i) => nearWorkerCall(t, { cmd: 'close', name: nearFileName(t, i) })));
+    const root = await navigator.storage.getDirectory();
+    for (let i = 0; i < t.files.length; i++) {
+      const file = t.files[i], handle = await root.getFileHandle(nearFileName(t, i));
+      const received = await handle.getFile();
+      if (received.size !== file.size) throw new Error('Le fichier enregistré ne correspond pas à la taille annoncée.');
+      urls.push({ name: file.name.split('/').pop(), path: file.name, size: file.size, type: file.type, url: URL.createObjectURL(received) });
+    }
+    t.worker.terminate();
+    t.worker = null;
+  } else {
+    t.files.forEach((file, i) => urls.push({ name: file.name.split('/').pop(), path: file.name, size: file.size, type: file.type, url: URL.createObjectURL(new Blob(t.parts[i], { type: file.type })) }));
+    t.parts = null;
+  }
+  t.urls = urls;
   try { t.dc.send(JSON.stringify({ t: 'done' })); } catch (e) { /* ignore */ }
   done(t);
 }
@@ -389,6 +532,21 @@ function fail(t, msg) {
   if (t.status === 'done' || t.status === 'failed') return;
   t.status = 'failed'; t.error = msg;
   try { t.pc && t.pc.close(); } catch (e) { /* ignore */ }
+  if (t.dir === 'in' && t.worker) {
+    const worker = t.worker;
+    nearWorkerCall(t, { cmd: 'closeAll' }).catch(() => {}).finally(async () => {
+      t.worker = null;
+      worker.terminate();
+      if (navigator.storage && navigator.storage.getDirectory) {
+        try {
+          const root = await navigator.storage.getDirectory();
+          for (let i = 0; i < t.files.length; i++) await root.removeEntry(nearFileName(t, i)).catch(() => {});
+        } catch (e) { console.warn('Nettoyage du transfert OPFS impossible', e); }
+      }
+    });
+    ls.del('tx_near_recv_' + t.id);
+  }
+  if (t.dir === 'in') { t.buf = []; t.bufBytes = 0; t.parts = null; }
   if (![...N.transfers.values()].some(x => x.status === 'active')) keepAwake(false);
   toast(msg, 'error');
   renderTransfers();
