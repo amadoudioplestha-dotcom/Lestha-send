@@ -42,7 +42,7 @@ function renderCreate() {
         <label class="field"><span>Nom de l’enseignant</span><input class="input" name="moderatorName" maxlength="64" minlength="2" required autocomplete="name" placeholder="Votre nom"></label>
         <label class="field"><span>Code de création fourni par l’établissement</span><input class="input" name="code" type="password" required autocomplete="off"></label>
         <label class="switch"><input type="checkbox" name="record"><span class="track"></span><span class="small">Enregistrer automatiquement le cours (les participants en seront avertis par BigBlueButton)</span></label>
-        <p class="small faint">Limite configurée : 25 participants. La présence est conservée pour export pendant 30 jours et n’est relevée que lorsque la page enseignant est ouverte.</p>
+        <p id="classParticipantLimit" class="small faint">Limite configurée : 2 participants. La présence est conservée pour export pendant 30 jours et n’est relevée que lorsque la page enseignant est ouverte.</p>
         <button class="btn primary xl block" type="submit">${icon('plus')}Créer la classe</button>
       </form>
       <p id="classCreateError" class="small hidden" role="alert" style="color:var(--rose)"></p>
@@ -87,6 +87,8 @@ function renderCreate() {
   };
 
   api('/api/classrooms/config').then(config => {
+    const limit = $('#classParticipantLimit', root);
+    if (limit) limit.textContent = `Limite configurée : ${config.maxParticipants} participants. La présence est conservée pour export pendant 30 jours et n’est relevée que lorsque la page enseignant est ouverte.`;
     if (config.enabled && config.canCreate) return;
     const note = $('#classConfigNote', root);
     if (!note) return;

@@ -45,13 +45,13 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 ## Classe virtuelle hébergée BigBlueButton (`/classe`)
 
 Une option distincte du mode Direct 3.5 : TransferX peut déléguer les réunions à un serveur BigBlueButton existant. L’interface native BBB fournit caméra, micro, partage d’écran, chat, sondages, main levée, modération et enregistrement; ces fonctions ne sont pas réimplémentées dans le mode Direct existant.
-- création protégée par `CLASSROOM_CREATE_CODE` (16 caractères aléatoires minimum), liens séparés participant et enseignant, maximum configuré de 25 participants ;
+- création protégée par `CLASSROOM_CREATE_CODE` (16 caractères aléatoires minimum), liens séparés participant et enseignant, maximum BBB de 2 participants par défaut ;
 - signature des appels API et génération côté serveur des liens d’entrée; le secret BBB n’est jamais envoyé au navigateur ;
 - fin de réunion, relevé de présence à la demande/toutes les 30 s tant que l’enseignant garde la page ouverte, export CSV et consultation des enregistrements ;
 - l’enregistrement est facultatif et activé explicitement à la création. BBB notifie les participants; les vidéos restent sur le stockage BBB ;
 - l’historique TransferX est conservé jusqu’à 30 jours et n’est pas une preuve certifiée de présence.
 
-Configurer dans l’environnement Render : `BBB_URL` (par exemple `https://bbb.exemple.org/bigbluebutton`, sans `/api`), `BBB_SECRET` (secret partagé/securitySalt de BBB) et un `CLASSROOM_CREATE_CODE` aléatoire d’au moins 16 caractères. Les serveurs distants doivent utiliser HTTPS. Sans ces réglages, aucune réunion BBB n’est créée; le mode Direct demeure indépendant.
+Configurer dans l’environnement Render : `BBB_URL` (par exemple `https://bbb.exemple.org/bigbluebutton`, sans `/api`), `BBB_SECRET` (secret partagé/securitySalt de BBB) et un `CLASSROOM_CREATE_CODE` aléatoire d’au moins 16 caractères. `BBB_MAX_PARTICIPANTS` vaut 2 par défaut pour correspondre à l’offre d’essai décrite; ne l’augmentez qu’après confirmation d’une capacité supérieure par votre fournisseur. Les serveurs distants doivent utiliser HTTPS. Sans ces réglages, aucune réunion BBB n’est créée; le mode Direct demeure indépendant.
 
 ## Nouveautés 3.4 — Direct (`/direct` → salle `/live/:id`)
 - **Lien de plateforme** : YouTube (vidéo et live), Facebook (vidéo et live), Vimeo, Twitch, publications Instagram / TikTok — lecteur **officiel** intégré, rien n'est recopié. (Les lives Instagram/TikTok ne sont pas intégrables : limite des plateformes.)

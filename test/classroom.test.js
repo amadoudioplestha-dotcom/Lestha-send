@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const {
-  apiBase, checksum, parseAttendance, parseRecordings, createBigBlueButton
+  apiBase, checksum, parseAttendance, parseRecordings, createBigBlueButton, configuredMaxParticipants
 } = require('../lib/classroom');
 
 test('matches the BigBlueButton documented SHA-1 checksum example', () => {
@@ -20,6 +20,15 @@ test('normalizes the BBB API base and rejects insecure or credential-bearing end
   assert.equal(apiBase('http://localhost:8080/bigbluebutton').protocol, 'http:');
   assert.throws(() => apiBase('http://bbb.example.org/bigbluebutton'), /HTTPS/);
   assert.throws(() => apiBase('https://user:pass@bbb.example.org/bigbluebutton'), /HTTPS/);
+});
+
+test('defaults BBB rooms to two participants and validates configured limits', () => {
+  assert.equal(configuredMaxParticipants(), 2);
+  assert.equal(configuredMaxParticipants('2'), 2);
+  assert.equal(configuredMaxParticipants('25'), 25);
+  assert.throws(() => configuredMaxParticipants('0'), /entre 1 et 1000/);
+  assert.throws(() => configuredMaxParticipants('25.5'), /entre 1 et 1000/);
+  assert.throws(() => configuredMaxParticipants('1001'), /entre 1 et 1000/);
 });
 
 test('parses attendance with XML entity decoding and returns only intended fields', () => {
@@ -49,7 +58,7 @@ test('recording URLs must stay on the configured BBB origin', () => {
   }]);
 });
 
-test('keeps BBB shared secrets server-side and caps created meetings at 25 participants', async () => {
+test('keeps BBB shared secrets server-side and caps created meetings at the configured limit', async () => {
   const urls = [];
   const bbb = createBigBlueButton({
     url: 'https://bbb.example.org/bigbluebutton',
@@ -66,7 +75,7 @@ test('keeps BBB shared secrets server-side and caps created meetings at 25 parti
   request.searchParams.delete('checksum');
   const query = request.searchParams.toString();
   assert.equal(signature, checksum('create', query, 'test-secret'));
-  assert.equal(request.searchParams.get('maxParticipants'), '25');
+  assert.equal(request.searchParams.get('maxParticipants'), '2');
   assert.equal(request.searchParams.get('record'), 'true');
   assert.equal(request.searchParams.get('autoStartRecording'), 'true');
   assert.equal(request.searchParams.has('test-secret'), false);

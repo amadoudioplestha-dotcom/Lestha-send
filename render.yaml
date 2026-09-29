@@ -41,5 +41,7 @@ services:
         sync: false
       - key: BBB_SECRET
         sync: false
+      - key: BBB_MAX_PARTICIPANTS
+        value: "2"
       - key: CLASSROOM_CREATE_CODE
         sync: false
