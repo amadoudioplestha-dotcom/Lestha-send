@@ -263,11 +263,13 @@ export const roomView = (() => {
     const reacts = `<span class="react-row" role="group" aria-label="Réactions">${REACTIONS.map(e => `<button type="button" class="react-btn" data-react="${e}" title="${reactionNames[e]}" aria-label="${reactionNames[e]}">${e}</button>`).join('')}</span>`;
     if (role === 'host') {
       const canShareScreen = !!(window.isSecureContext && navigator.mediaDevices?.getDisplayMedia);
+      const canSwitchCamera = out.source === 'camera' && !!out.stream?.getVideoTracks().length && !!navigator.mediaDevices?.getUserMedia;
       bar.innerHTML = `
         <button type="button" class="btn sm ${out.source === 'camera' ? 'primary' : ''}" data-src="camera" aria-pressed="${out.source === 'camera'}">${icon('camera', 'sm')}${out.source === 'screen' ? 'Revenir à la caméra' : 'Caméra'}</button>
         <button type="button" class="btn sm ${out.source === 'screen' ? 'primary' : ''}" data-src="screen" aria-pressed="${out.source === 'screen'}" ${canShareScreen ? '' : 'disabled title="Le partage d’écran n’est pas disponible dans ce navigateur ou contexte."'}>${icon('monitor', 'sm')}Présenter l'écran</button>
         <button type="button" class="btn sm ${out.source === 'audio' ? 'primary' : ''}" data-src="audio" aria-pressed="${out.source === 'audio'}">${icon('music', 'sm')}Micro seul</button>
         ${out.stream ? `<button type="button" class="btn sm ${out.mic ? '' : 'danger'}" id="bMic" aria-label="${out.mic ? 'Couper le micro' : 'Réactiver le micro'}" aria-pressed="${!out.mic}">${out.mic ? '🎤 Micro actif · couper' : '🔇 Micro coupé · réactiver'}</button>
+        ${canSwitchCamera ? '<button type="button" class="btn sm" id="bFlip" aria-label="Changer de caméra">🔄 Changer de caméra</button>' : ''}
         <button type="button" class="btn sm ${rec.mr ? 'danger' : ''}" id="bRec">${rec.mr ? '⏹ Arrêter l\'enregistrement' : '⏺ Enregistrer'}</button>
         <button type="button" class="btn sm danger" id="bStop" aria-label="${out.source === 'screen' ? 'Arrêter le partage d’écran et revenir à la salle' : 'Arrêter la diffusion'}">${icon('x', 'sm')}${out.source === 'screen' ? 'Arrêter la présentation' : 'Arrêter la diffusion'}</button>` : ''}
         <span class="grow"></span>${reacts}
@@ -285,6 +287,7 @@ export const roomView = (() => {
       const s = e.target.closest('[data-src]'); if (s) return startOut(s.dataset.src);
       const b = e.target.closest('button'); if (!b) return;
       if (b.id === 'bMic') toggleMic();
+      else if (b.id === 'bFlip') switchCamera();
       else if (b.id === 'bCam') toggleCam();
       else if (b.id === 'bStop') { const wasPresenting = out.source === 'screen'; stopOut(); renderBar(); renderStage(); toast(wasPresenting ? 'Présentation arrêtée' : 'Diffusion arrêtée', 'info'); }
       else if (b.id === 'bRec') rec.mr ? stopRecording() : startRecording();
@@ -553,6 +556,51 @@ export const roomView = (() => {
       senders.forEach(sd => { if (sd.track && !out.stream.getTracks().includes(sd.track)) sd.replaceTrack(null); });
       sendOffer(pc, peer);
     }
+  }
+
+  async function switchCamera() {
+    if (!out.stream || out.source !== 'camera' || !navigator.mediaDevices?.getUserMedia) return;
+    const oldTrack = out.stream.getVideoTracks().find(track => track.readyState === 'live');
+    if (!oldTrack) { toast('Aucune caméra active à changer.', 'error'); return; }
+    const settings = oldTrack.getSettings();
+    let nextTrack;
+    try {
+      const cameras = navigator.mediaDevices.enumerateDevices
+        ? (await navigator.mediaDevices.enumerateDevices()).filter(device => device.kind === 'videoinput')
+        : [];
+      const currentIndex = cameras.findIndex(device => device.deviceId && device.deviceId === settings.deviceId);
+      if (cameras.length > 1 && currentIndex >= 0) {
+        const nextCamera = cameras[(currentIndex + 1) % cameras.length];
+        try {
+          const selected = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: nextCamera.deviceId } }, audio: false });
+          nextTrack = selected.getVideoTracks()[0];
+        } catch (e) { /* Retente avec facingMode quand la sélection par appareil échoue. */ }
+      }
+      if (!nextTrack) {
+        const facingMode = settings.facingMode === 'environment' ? 'user' : 'environment';
+        const selected = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facingMode }, width: { ideal: 640 }, height: { ideal: 360 } }, audio: false });
+        nextTrack = selected.getVideoTracks()[0];
+      }
+      if (!nextTrack) throw new Error('Aucune piste caméra n’a été fournie.');
+    } catch (e) {
+      toast('Impossible de changer de caméra. Vérifiez les permissions et les caméras disponibles.', 'error');
+      return;
+    }
+
+    const stream = out.stream;
+    stream.removeTrack(oldTrack);
+    stream.addTrack(nextTrack);
+    oldTrack.stop();
+    nextTrack.onended = () => {
+      if (out.stream !== stream || !stream.getTracks().includes(nextTrack)) return;
+      if (role === 'host') { stopOut(); renderBar(); renderStage(); }
+      else toggleCam(false);
+    };
+    if (out.pcs.size) swapTracks();
+    if (rec.mr) restartRecordingPart();
+    renderBar();
+    renderTiles();
+    toast('Caméra changée', 'success');
   }
 
   async function startOut(kind) {
