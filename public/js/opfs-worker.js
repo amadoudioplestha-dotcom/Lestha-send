@@ -23,7 +23,13 @@ async function handle(msg) {
     }
     if (cmd === 'write') {
       const h = await open(name);
-      h.sync.write(new Uint8Array(msg.data), { at: msg.pos });
+      const data = new Uint8Array(msg.data);
+      let written = 0;
+      while (written < data.byteLength) {
+        const count = h.sync.write(data.subarray(written), { at: msg.pos + written });
+        if (!count) throw new Error('Écriture disque incomplète.');
+        written += count;
+      }
       h.writes = (h.writes || 0) + 1;
       if (h.writes % 16 === 0) h.sync.flush();
       return { id, ok: true, size: h.sync.getSize(), end: msg.pos + msg.data.byteLength };
