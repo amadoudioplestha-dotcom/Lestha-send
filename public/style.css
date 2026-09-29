@@ -630,3 +630,23 @@ textarea.input { min-height: 84px; resize: vertical; line-height: 1.5; }
 .side-tabs { flex-wrap: wrap; overflow: visible; }
 .p-row .grow { flex: 1 1 0; }
 .p-actions { flex-basis: 100%; padding-left: 38px; }
+
+@media (max-width: 680px) {
+  .class-room { display: flex; flex-direction: column; gap: 10px; }
+  .class-room .watch-main { display: contents; }
+  .class-room #stage { order: 1; width: 100%; aspect-ratio: 4 / 3; max-height: 60vh; max-height: min(60svh, 420px); min-height: min(220px, 40vh); }
+  .class-room .tiles { order: 2; margin-top: 0; }
+  .class-room #bar { order: 3; width: 100%; padding: 10px; }
+  .class-room #bar > .btn { flex: 1 1 140px; min-width: 0; min-height: 44px; height: auto; padding: 8px 10px; white-space: normal; text-align: center; }
+  .class-room #bar > .grow { display: none; }
+  .class-room .react-row { display: grid; flex: 1 0 100%; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; width: 100%; }
+  .class-room .react-btn { width: 100%; height: 44px; border-radius: 12px; touch-action: manipulation; }
+  .class-room .watch-head { order: 4; width: 100%; }
+  .class-room .message-bubble { order: 5; }
+  .class-room .watch-side { order: 6; width: 100%; min-width: 0; }
+  .class-room .watch-main > .card { order: 7; width: 100%; }
+  .class-room .side-tabs { flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
+  .class-room .side-tabs .chip { min-height: 44px; padding: 0 12px; }
+  .class-room .chat-list { height: min(34vh, 320px); height: min(34svh, 320px); min-height: 150px; }
+  .class-room #pane-people, .class-room #pane-poll { max-height: min(44vh, 380px); max-height: min(44svh, 380px); }
+}
