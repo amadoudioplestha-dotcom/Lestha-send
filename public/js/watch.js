@@ -8,6 +8,7 @@ import { FPS_LIST, tc, short, contentRect, drawShapes, exportEDL, exportCSV, pri
 
 let root = null, id = null, data = null, cur = null, reportTimer = null, wmTimer = null, pollTimer = null, lastReport = 0;
 let player = null, tsPlayer = null, rafId = 0, onKey = null, onResize = null;
+let onFullscreenKey = null;
 let fps = 25, inPt = null, outPt = null, loop = false, filter = 'all';
 let drawMode = false, tool = 'arrow', color = '#f43f5e', shapes = [], shown = null, drawing = null, replyOpen = null;
 
@@ -39,6 +40,7 @@ export default {
   destroy() {
     report(true); clearInterval(reportTimer); clearInterval(wmTimer); clearInterval(pollTimer); cancelAnimationFrame(rafId);
     if (onKey) document.removeEventListener('keydown', onKey);
+    if (onFullscreenKey) document.removeEventListener('keydown', onFullscreenKey);
     if (onResize) window.removeEventListener('resize', onResize);
     if (tsPlayer) { try { tsPlayer.destroy(); } catch (e) { /* ignore */ } tsPlayer = null; }
     root = null; player = null;
@@ -72,6 +74,9 @@ function renderPage(media) {
           ? `<video id="player" class="player" controls playsinline preload="metadata" ${only ? 'controlsList="nodownload noremoteplayback" disableRemotePlayback' : ''}></video>`
           : `<div class="audio-art">${icon('music', 'xl')}</div><audio id="player" controls preload="metadata" ${only ? 'controlsList="nodownload"' : ''} style="width:100%"></audio>`}
         ${isVideo ? '<canvas class="draw-layer" id="draw"></canvas>' : ''}
+        <div class="player-toolbar">
+          <button type="button" class="btn sm fullscreen-btn" id="fullscreen" aria-label="Passer en plein écran" title="Plein écran (F)">${icon('fullscreen', 'sm')}<span>Plein écran</span></button>
+        </div>
         ${data.watermark ? `<div class="watermark" id="wm">${esc(data.watermark)}</div>` : ''}
         <div class="player-error hidden" id="perr"></div>
       </div>
@@ -131,6 +136,18 @@ function renderPage(media) {
   </section>`;
   player = $('#player');
   attachSource(k);
+  const fullscreenButton = $('#fullscreen', root);
+  const playerBox = $('#pbox', root);
+  fullscreenButton.disabled = !playerBox.requestFullscreen && !(isVideo && player.webkitEnterFullscreen);
+  fullscreenButton.onclick = () => togglePlayerFullscreen(playerBox, player);
+  onFullscreenKey = (e) => {
+    if (e.key.toLowerCase() !== 'f' || e.metaKey || e.ctrlKey || e.altKey ||
+        /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '') ||
+        document.activeElement?.isContentEditable) return;
+    e.preventDefault();
+    togglePlayerFullscreen(playerBox, player);
+  };
+  document.addEventListener('keydown', onFullscreenKey);
   subtitlesFor(cur).forEach(async (s, i) => {
     try {
       let txt = await (await fetch(src(s.id))).text();
@@ -170,6 +187,16 @@ function showError(extra) {
   e.classList.remove('hidden');
   const only = data.playback === 'only';
   e.innerHTML = `${icon('x', 'lg')}<b>Lecture impossible dans ce navigateur</b><span class="small">${extra || 'Format probablement non pris en charge (MKV, AVI, H.265…).'} ${only ? 'Demandez à l\'expéditeur un export MP4 (H.264).' : 'Téléchargez le fichier pour le lire avec VLC, ou demandez un export MP4.'}</span>`;
+}
+
+async function togglePlayerFullscreen(box, media) {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else if (box.requestFullscreen) await box.requestFullscreen();
+    else if (media.webkitEnterFullscreen) media.webkitEnterFullscreen();
+  } catch (e) {
+    toast('Impossible d’activer le plein écran dans ce navigateur.', 'warn');
+  }
 }
 
 /** Source : lecture native, ou MPEG-TS (.ts / .m2ts) via mpegts.js (Media Source Extensions) */

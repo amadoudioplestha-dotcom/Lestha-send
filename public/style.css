@@ -504,6 +504,12 @@ textarea.input { min-height: 84px; resize: vertical; line-height: 1.5; }
 .player-box { position: relative; border-radius: 20px; overflow: hidden; background: #000; box-shadow: var(--shadow); border: 1px solid var(--border); }
 .player { width: 100%; max-height: 72vh; display: block; background: #000; }
 .player-box.protected video::-internal-media-controls-download-button { display: none; }
+.player-toolbar { display: flex; justify-content: flex-end; padding: 8px 12px; background: #0b1222; border-top: 1px solid var(--border); }
+.player-box:fullscreen { width: 100vw; height: 100vh; height: 100dvh; display: flex; flex-direction: column; justify-content: center; border: 0; border-radius: 0; }
+.player-box:fullscreen .player { width: 100%; max-height: calc(100vh - 60px); max-height: calc(100dvh - 60px); flex: 1; min-height: 0; object-fit: contain; }
+.player-box:fullscreen .draw-layer { height: auto; max-height: calc(100vh - 60px); max-height: calc(100dvh - 60px); }
+.player-box:fullscreen .player-toolbar { flex: none; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+.fullscreen-btn[disabled] { opacity: .55; cursor: not-allowed; }
 .audio-art { height: 220px; display: grid; place-items: center; background: radial-gradient(circle at 30% 30%, rgba(139, 123, 255, .35), transparent 60%), radial-gradient(circle at 70% 70%, rgba(6, 214, 160, .3), transparent 60%), #0b1222; color: #fff; }
 .player-box audio { display: block; padding: 10px; background: #0b1222; }
 .watermark { position: absolute; z-index: 2; pointer-events: none; color: rgba(255, 255, 255, .28); font-weight: 700; font-size: clamp(11px, 1.6vw, 15px); letter-spacing: .08em; text-shadow: 0 1px 2px rgba(0, 0, 0, .5); transition: left 2s ease, top 2s ease; user-select: none; }

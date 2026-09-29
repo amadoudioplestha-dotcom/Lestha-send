@@ -37,3 +37,9 @@ services:
         sync: false
       - key: TURN_CREDENTIAL
         sync: false
+      - key: BBB_URL
+        sync: false
+      - key: BBB_SECRET
+        sync: false
+      - key: CLASSROOM_CREATE_CODE
+        sync: false

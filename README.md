@@ -42,6 +42,17 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 - **Enregistrement du cours** (vidéo du tuteur + voix des intervenants) → téléchargement ou **publication en replay TransferX** (lecture en ligne + remarques horodatées), lien posté dans la discussion.
 - Limite : 25 participants (diffusion pair-à-pair). Mosaïque de toutes les caméras = serveur vidéo SFU payant (évolution possible).
 
+## Classe virtuelle hébergée BigBlueButton (`/classe`)
+
+Une option distincte du mode Direct 3.5 : TransferX peut déléguer les réunions à un serveur BigBlueButton existant. L’interface native BBB fournit caméra, micro, partage d’écran, chat, sondages, main levée, modération et enregistrement; ces fonctions ne sont pas réimplémentées dans le mode Direct existant.
+- création protégée par `CLASSROOM_CREATE_CODE` (16 caractères aléatoires minimum), liens séparés participant et enseignant, maximum configuré de 25 participants ;
+- signature des appels API et génération côté serveur des liens d’entrée; le secret BBB n’est jamais envoyé au navigateur ;
+- fin de réunion, relevé de présence à la demande/toutes les 30 s tant que l’enseignant garde la page ouverte, export CSV et consultation des enregistrements ;
+- l’enregistrement est facultatif et activé explicitement à la création. BBB notifie les participants; les vidéos restent sur le stockage BBB ;
+- l’historique TransferX est conservé jusqu’à 30 jours et n’est pas une preuve certifiée de présence.
+
+Configurer dans l’environnement Render : `BBB_URL` (par exemple `https://bbb.exemple.org/bigbluebutton`, sans `/api`), `BBB_SECRET` (secret partagé/securitySalt de BBB) et un `CLASSROOM_CREATE_CODE` aléatoire d’au moins 16 caractères. Les serveurs distants doivent utiliser HTTPS. Sans ces réglages, aucune réunion BBB n’est créée; le mode Direct demeure indépendant.
+
 ## Nouveautés 3.4 — Direct (`/direct` → salle `/live/:id`)
 - **Lien de plateforme** : YouTube (vidéo et live), Facebook (vidéo et live), Vimeo, Twitch, publications Instagram / TikTok — lecteur **officiel** intégré, rien n'est recopié. (Les lives Instagram/TikTok ne sont pas intégrables : limite des plateformes.)
 - **Caméra / écran / micro** diffusés depuis le navigateur (WebRTC, jusqu'à 25 spectateurs, débit adapté automatiquement, changement de source à chaud).
@@ -111,8 +122,9 @@ views/admin.html     page de la console (servie uniquement sur ADMIN_PATH)
 lib/requests.js      demandes de fichiers (liens de dépôt)
 lib/nearby.js        À proximité : présence, appairage signé, relais de signalisation
 lib/live.js          Direct : salles, discussion, signalisation caméra (lives/<id>.json)
+lib/classroom.js     intégration serveur BigBlueButton : réunions, accès enseignant, présences et enregistrements
 public/js/nearby.js  radar + transfert direct · watch.js lecteur · request.js dépôts
-public/js/*.js       modules ES : envoi, uploader, réception, P2P, tableau de bord, gestion
+public/js/*.js       modules ES : envoi, uploader, réception, P2P, tableau de bord, gestion et classe BBB
 public/js/opfs-worker.js   écriture disque synchrone pour le P2P
 ```
 
@@ -152,7 +164,14 @@ Coûts R2 : 10 Go gratuits, puis ~0,015 $/Go/mois, **sortie (téléchargements) 
 | POST | `/api/public/t/:id/unlock` | vérifier le PIN → jeton |
 | GET | `/api/public/t/:id/f/:fid` | télécharger un fichier (reprise) |
 | GET | `/api/public/t/:id/zip` | tout en ZIP |
+| POST | `/api/classrooms` | créer une réunion BigBlueButton (code enseignant requis) |
+| POST | `/api/classrooms/:id/join` | demander un lien signé participant/enseignant |
+| GET | `/api/classrooms/:id/attendance` | lire l’historique des présences (enseignant) |
+| POST | `/api/classrooms/:id/attendance/refresh` | relever les présences BBB en direct (enseignant) |
+| GET | `/api/classrooms/:id/recordings` | lister les replays BBB (enseignant) |
 
 ## Sécurité
 Identifiants de lien aléatoires (62¹⁰), clé de gestion 192 bits stockée hachée, PIN haché (scrypt) avec limitation des tentatives, URLs R2 signées et temporaires, noms de fichiers jamais utilisés comme clés de stockage, e-mails P2P limités au domaine de l'appli (plus de relais de spam), limitation de débit par IP, **code d'accès optionnel à l'envoi** (`UPLOAD_CODE`) pour réserver la création de liens à votre équipe.
 Mode Cloud : chiffrement en transit (HTTPS) et au repos (R2). Mode Direct : chiffrement de bout en bout WebRTC, rien n'est stocké.
+
+Les types téléversés ne sont pas considérés comme fiables : l’affichage intégré est limité aux images matricielles, médias audio/vidéo et PDF; les autres contenus, notamment HTML et SVG, sont servis en pièce jointe avec `application/octet-stream` et `X-Content-Type-Options: nosniff`.

@@ -16,6 +16,7 @@ const { mountAdmin } = require('./lib/admin');
 const { mountRequests } = require('./lib/requests');
 const { mountNearby } = require('./lib/nearby');
 const { mountLive } = require('./lib/live');
+const { mountClassroom } = require('./lib/classroom');
 const VERSION = require('./package.json').version;
 
 const env = process.env;
@@ -165,11 +166,12 @@ async function main() {
   mountRequests(app, { env, storage, db, mailer, signer, io, ctx, cloud });
   mountNearby(io, { secret, security });
   mountLive(app, { storage, io, env });
+  mountClassroom(app, { env, storage, signer });
   mountAdmin(app, { env, db, storage, mailer, signer, io, security, cloud, p2p, ctx, publicDir: pub });
 
   /* ---------- Routes de l'application (SPA) ---------- */
   const sendIndex = (req, res) => { res.set('Cache-Control', 'no-cache'); res.sendFile(path.join(pub, 'index.html')); };
-  app.get(['/t/:id', '/m/:id', '/w/:id', '/d/:id', '/r/:id', '/dashboard', '/proximite', '/demande', '/send', '/p2p', '/direct', '/live/:id'], sendIndex);
+  app.get(['/t/:id', '/m/:id', '/w/:id', '/d/:id', '/r/:id', '/classe', '/classe/:id', '/dashboard', '/proximite', '/demande', '/send', '/p2p', '/direct', '/live/:id'], sendIndex);
 
   // Erreurs API au format JSON
   app.use('/api', (req, res) => res.status(404).json({ error: 'Route inconnue.' }));
