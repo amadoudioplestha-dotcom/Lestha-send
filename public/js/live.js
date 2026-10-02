@@ -192,7 +192,7 @@ export const roomView = (() => {
     if (L.status === 'ended' && !staff()) { stg.innerHTML = overlay('Ce direct est terminé', 'Merci de l\'avoir suivi !'); return; }
     if (waiting) { stg.innerHTML = overlay('Salle d\'attente', 'L\'animateur va vous faire entrer dans un instant…'); return; }
     if (early && !staff()) {
-      stg.innerHTML = overlay('Le direct commence bientôt', '<b class="countdown" id="cd"></b>');
+      stg.innerHTML = overlay('Le direct commence bientôt', '<b class="live-countdown" id="cd"></b>');
       const tick = () => { const s = Math.max(0, Math.round((L.startsAt - Date.now()) / 1000)); const e = $('#cd', root); if (e) e.textContent = (s >= 86400 ? Math.floor(s / 86400) + ' j ' : '') + [Math.floor(s % 86400 / 3600), Math.floor(s % 3600 / 60), s % 60].map(n => String(n).padStart(2, '0')).join(':'); if (!s) { L.status = 'live'; renderStage(); } };
       tick(); timer = setInterval(tick, 1000); return;
     }
