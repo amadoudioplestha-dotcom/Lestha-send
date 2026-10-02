@@ -1,5 +1,6 @@
 /* Lestha Send — page de téléchargement (mode Cloud) */
 import { $, $$, esc, icon, bytes, fileKind, relTime, ls, ss, api, visitorId, toast, modal, copyText, isMobile } from './core.js';
+import { brandHeader } from './profile.js';
 
 let root = null, id = null, data = null, timer = null, poll = null;
 
@@ -96,7 +97,8 @@ function renderReady() {
   const playable = files.filter(watchable).filter(isLatest);
   root.innerHTML = `
   <section class="receive-card stack">
-    <div class="card glow stack">
+    <div class="card glow stack ${d.brand && d.brand.color ? 'branded' : ''}" style="${d.brand && d.brand.color ? '--bc:' + esc(d.brand.color) : ''}">
+      ${d.brand ? brandHeader(d.brand, { sub: icon('check', 'sm') + ' Adresse vérifiée · nom choisi par l\'expéditeur' }) : ''}
       <div class="sender-head">
         <div class="avatar">${esc(initial)}</div>
         <div class="grow" style="min-width:0">

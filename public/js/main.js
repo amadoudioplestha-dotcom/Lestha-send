@@ -18,7 +18,10 @@ route(/^\/r\/([A-Za-z0-9]{6,32})\/?$/, () => import('./request.js').then(m => ({
 route(/^\/direct\/?$/, () => import('./live.js').then(m => ({ default: m.studioView })), 'live');
 route(/^\/live\/([A-Za-z0-9]{6,32})\/?$/, () => import('./live.js').then(m => ({ default: m.roomView })), 'live');
 route(/^\/(conditions|confidentialite)\/?$/, () => import('./legal.js'), null);
-route(/^.*$/, () => import('./send.js'), 'send');
+route(/^\/@([A-Za-z0-9-]{3,30})\/?$/, () => import('./handle.js'), null);
+route(/^\/(a-propos|securite|faq)\/?$/, () => import('./pages.js'), null);
+route(/^\/(send|p2p|index\.html)?\/?$/, () => import('./send.js'), 'send');
+route(/^.*$/, () => import('./pages.js'), null);
 
 enableRipples();
 startRouter();

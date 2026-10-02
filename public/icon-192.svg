@@ -1,13 +1,8 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
-  <defs>
-    <linearGradient id="grad192" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#00b4d8;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#0077b6;stop-opacity:1" />
-    </linearGradient>
-  </defs>
-  <rect width="192" height="192" fill="#0f172a" rx="24"/>
-  <circle cx="96" cy="96" r="72" fill="url(#grad192)"/>
-  <path d="M96 52 L118 84 H104 v44 H88 V84 H74 Z" fill="#0f172a" stroke="#ffffff" stroke-width="3" stroke-linejoin="round"/>
-  <circle cx="96" cy="136" r="4" fill="#22c55e"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00b4d8"/><stop offset="1" stop-color="#06d6a0"/></linearGradient>
+  <radialGradient id="bg" cx=".5" cy=".3" r=".8"><stop offset="0" stop-color="#10213d"/><stop offset="1" stop-color="#070b16"/></radialGradient></defs>
+  <rect width="192" height="192" fill="url(#bg)"/>
+  <g transform="translate(23 23) scale(4.5625)">
+    <path d="M6 9.5 16 4l10 5.5v13L16 28 6 22.5z" fill="url(#g)"/>
+    <g transform="translate(9 9.2) scale(.58)" fill="none" stroke="#04121f" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="m22 2-7 20-4-9-9-4z"/></g>
+  </g></svg>

@@ -4,6 +4,19 @@ import { Uploader } from './uploader.js';
 import { navigate } from './router.js';
 import * as p2p from './p2p.js';
 import { MAX_DIRECT_BYTES, validateDirectFiles } from './direct-limits.mjs';
+import { openProfile, openHandle } from './profile.js';
+
+/* Compteurs publics de la page d'accueil (vrais chiffres, affichés seulement à partir d'un certain volume) */
+let statsCache = null;
+async function homeStats(box) {
+  if (!box) return;
+  try { statsCache = statsCache || await api('/api/public/stats'); } catch (e) { return; }
+  const s = statsCache;
+  if (!s || !s.show || !box.isConnected) return;
+  const n = (v) => Number(v).toLocaleString('fr-FR');
+  box.innerHTML = `<div class="home-stat"><b>${n(s.transfers)}</b><span>envois Cloud</span></div><div class="home-stat"><b>${n(s.files)}</b><span>fichiers partagés</span></div><div class="home-stat"><b>${bytes(s.bytes, 0)}</b><span>transférés</span></div>${s.direct ? `<div class="home-stat"><b>${n(s.direct)}</b><span>liens directs</span></div>` : ''}`;
+  box.classList.remove('hidden');
+}
 
 const HOUR = 3600e3, DAY = 24 * HOUR;
 const S = {
@@ -50,6 +63,7 @@ async function renderCompose() {
         <span class="hero-badge">${icon('lock')}PIN & expiration</span>
         <span class="hero-badge">${icon('chart')}Suivi en temps réel</span>
       </div>
+      <div class="home-stats hidden" id="homeStats" aria-label="Lestha Send en chiffres"></div>
     </div>
 
     ${restoreBanner()}
@@ -185,6 +199,9 @@ function renderFileRows() {
 function bindCompose(cfg) {
   const r = rootEl;
   const bv = $('#btnVerify', r); if (bv) bv.onclick = async () => { readOpts(); if (await ensureVerified()) renderCompose(); };
+  homeStats($('#homeStats', r));
+  const bp = $('#btnProfile', r); if (bp) bp.onclick = () => openProfile();
+  const bh = $('#btnMyHandle', r); if (bh) bh.onclick = () => openHandle();
   const bf = $('#btnForget', r); if (bf) bf.onclick = async () => { await forgetSender(); toast('Adresse oubliée sur cet appareil', 'info'); renderCompose(); };
   $('#modeSeg', r).addEventListener('click', (e) => {
     const b = e.target.closest('[data-mode]');
@@ -428,10 +445,10 @@ async function startCloud(cfg) {
 
 /** Rappel de l'offre en cours : sans compte, ou adresse confirmée */
 function tierBanner(cfg) {
-  if (cfg.tier === 'full') return cfg.admin ? `<div class="banner info" id="tierBanner">${icon('shield')}<span><b>Mode administrateur</b> sur cet appareil : aucune limite de taille, de durée ni d'envois. Se déconnecter de la console rétablit l'offre normale.</span></div>` : '';
+  if (cfg.tier === 'full') return cfg.admin ? `<div class="banner info" id="tierBanner">${icon('shield')}<span><b>Mode administrateur</b> sur cet appareil : aucune limite de taille, de durée ni d'envois. Se déconnecter de la console rétablit l'offre normale.<span class="banner-links"><button type="button" class="link-btn" id="btnProfile">Personnaliser ma page</button><button type="button" class="link-btn" id="btnMyHandle">Mon lien @</button></span></span></div>` : '';
   const v = cfg.limits && cfg.limits.verified;
   if (cfg.tier === 'verified') {
-    return `<div class="banner info" id="tierBanner">${icon('check')}<span>Connecté en tant que <b>${esc(cfg.verifiedEmail)}</b> · envois Cloud jusqu'à ${bytes(cfg.maxTransferBytes, 0)}, liens de ${Math.round(cfg.maxTtl / DAY)} jours. <button type="button" class="link-btn" id="btnForget">Changer d'adresse</button></span></div>`;
+    return `<div class="banner info" id="tierBanner">${icon('check')}<span>Connecté en tant que <b>${esc(cfg.verifiedEmail)}</b> · envois Cloud jusqu'à ${bytes(cfg.maxTransferBytes, 0)}, liens de ${Math.round(cfg.maxTtl / DAY)} jours.<span class="banner-links"><button type="button" class="link-btn" id="btnProfile">Personnaliser ma page</button><button type="button" class="link-btn" id="btnMyHandle">Mon lien @</button><button type="button" class="link-btn" id="btnForget">Changer d'adresse</button></span></span></div>`;
   }
   return `<div class="banner info" id="tierBanner">${icon('sparkles')}<span>Sans compte : envois Cloud jusqu'à ${bytes(cfg.maxTransferBytes, 0)}, liens de ${Math.round(cfg.maxTtl / DAY)} jours. Le mode Direct reste <b>illimité</b>.${v && cfg.email ? ` <button type="button" class="link-btn" id="btnVerify">Confirmer mon e-mail</button> pour passer à ${bytes(v.maxBytes, 0)} et envoyer le lien par e-mail.` : ''}</span></div>`;
 }

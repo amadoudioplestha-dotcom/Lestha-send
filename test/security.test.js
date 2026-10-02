@@ -273,3 +273,109 @@ test('adresse vérifiée : code par e-mail, offre élargie, plafond de destinata
   assert.ok(smtp.messages.length > before);
   assert.match(smtp.messages[smtp.messages.length - 1], /amadou@exemple\.com/);
 });
+
+/* ------------------------------------------------------------------ */
+/*  Profil, lien personnel @nom, compteurs et pages                     */
+/* ------------------------------------------------------------------ */
+async function verifiedHeaders(srv, smtp, email, n) {
+  await call(srv.base, '/api/verify/start', { method: 'POST', body: { email }, fromIp: ip(n) });
+  await new Promise(r => setTimeout(r, 200));
+  const all = smtp.messages.join('\n');
+  const codes = [...all.matchAll(/(\d{6}) est votre code/g)].map(m => m[1]);
+  const ok = await call(srv.base, '/api/verify/confirm', { method: 'POST', body: { email, code: codes[codes.length - 1] }, fromIp: ip(n) });
+  assert.equal(ok.status, 200);
+  return { 'x-sender-token': ok.data.token };
+}
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 1)]).toString('base64');
+
+test('profil : nom, couleur et logo contrôlé, affichés sur la page de téléchargement', async (t) => {
+  const smtp = await fakeSmtp();
+  const srv = await startServer({ SMTP_HOST: '127.0.0.1', SMTP_PORT: String(smtp.port), SMTP_FROM: 'noreply@test.local' });
+  t.after(async () => { await srv.stop(); await smtp.close(); });
+  assert.equal((await call(srv.base, '/api/profile')).status, 401);
+  const H = await verifiedHeaders(srv, smtp, 'studio@exemple.sn', 70);
+
+  assert.equal((await call(srv.base, '/api/profile', { method: 'PUT', headers: H, body: { displayName: 'Studio', color: 'red' } })).status, 400);
+  assert.equal((await call(srv.base, '/api/profile', { method: 'PUT', headers: H, body: { displayName: 'Studio', website: 'javascript:alert(1)' } })).status, 400);
+  const put = await call(srv.base, '/api/profile', { method: 'PUT', headers: H, body: { displayName: '<b>Studio Ndiaye</b>', color: '#06D6A0', website: 'studio.sn' } });
+  assert.equal(put.status, 200);
+  assert.equal(put.data.displayName, 'bStudio Ndiaye/b');
+  assert.equal(put.data.website, 'https://studio.sn/');
+
+  // une image SVG (qui peut contenir du script) est refusée, même déguisée
+  const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>').toString('base64');
+  assert.equal((await call(srv.base, '/api/profile/logo', { method: 'POST', headers: H, body: { data: svg } })).status, 415);
+  const logo = await call(srv.base, '/api/profile/logo', { method: 'POST', headers: H, body: { data: 'data:image/png;base64,' + PNG } });
+  assert.equal(logo.status, 200);
+  const img = await fetch(srv.base + logo.data.logo);
+  assert.equal(img.headers.get('content-type'), 'image/png');
+  assert.equal(img.headers.get('x-content-type-options'), 'nosniff');
+
+  const c = await call(srv.base, '/api/transfers', { method: 'POST', headers: H, body: { files: [smallFile()] }, fromIp: ip(71) });
+  const pub = await call(srv.base, `/api/public/t/${c.data.id}`);
+  assert.equal(pub.data.brand.displayName, 'bStudio Ndiaye/b');
+  assert.equal(pub.data.brand.color, '#06d6a0');
+  // un envoi sans adresse vérifiée n'a jamais d'habillage
+  const anon = await call(srv.base, '/api/transfers', { method: 'POST', body: { files: [smallFile()] }, fromIp: ip(72) });
+  assert.equal((await call(srv.base, `/api/public/t/${anon.data.id}`)).data.brand, undefined);
+});
+
+test('lien personnel @nom : réservation, unicité, dépôt, reprise sur un autre appareil', async (t) => {
+  const smtp = await fakeSmtp();
+  const srv = await startServer({ SMTP_HOST: '127.0.0.1', SMTP_PORT: String(smtp.port), SMTP_FROM: 'noreply@test.local' });
+  t.after(async () => { await srv.stop(); await smtp.close(); });
+  assert.equal((await call(srv.base, '/api/handles', { method: 'POST', body: { name: 'amadou' }, fromIp: ip(80) })).status, 401);
+  const H = await verifiedHeaders(srv, smtp, 'amadou@exemple.sn', 81);
+  assert.equal((await call(srv.base, '/api/handles', { method: 'POST', headers: H, body: { name: 'admin' }, fromIp: ip(81) })).status, 400);
+  assert.equal((await call(srv.base, '/api/handles', { method: 'POST', headers: H, body: { name: 'lestha-officiel' }, fromIp: ip(81) })).status, 400);
+  assert.equal((await call(srv.base, '/api/handles', { method: 'POST', headers: H, body: { name: 'A' }, fromIp: ip(81) })).status, 400);
+  const mk = await call(srv.base, '/api/handles', { method: 'POST', headers: H, body: { name: 'amadou-diop', title: 'Mes dépôts' }, fromIp: ip(81) });
+  assert.equal(mk.status, 200);
+  assert.match(mk.data.link, /\/@amadou-diop$/);
+  assert.equal((await call(srv.base, '/api/handles', { method: 'POST', headers: H, body: { name: 'autre-nom' }, fromIp: ip(81) })).status, 409);
+  const H2 = await verifiedHeaders(srv, smtp, 'intrus@exemple.sn', 82);
+  assert.equal((await call(srv.base, '/api/handles', { method: 'POST', headers: H2, body: { name: 'amadou-diop' }, fromIp: ip(82) })).status, 409);
+  assert.equal((await call(srv.base, '/api/handles/check/amadou-diop')).data.available, false);
+
+  const h = await call(srv.base, '/api/public/h/Amadou-Diop');
+  assert.equal(h.data.id, mk.data.id);
+  const box = await call(srv.base, `/api/public/d/${h.data.id}`);
+  assert.equal(box.data.permanent, true);
+  assert.equal(box.data.state, 'open');
+  const dep = await call(srv.base, `/api/public/d/${h.data.id}/deposit`, { method: 'POST', body: { name: 'Fatou', files: [smallFile()] }, fromIp: ip(83) });
+  assert.equal(dep.status, 200);
+
+  // depuis un autre appareil : l'adresse vérifiée redonne la gestion, l'ancienne clé ne sert plus
+  assert.equal((await call(srv.base, '/api/handles/recover', { method: 'POST', headers: H2, body: {} })).status, 404);
+  const rec = await call(srv.base, '/api/handles/recover', { method: 'POST', headers: H, body: {} });
+  assert.equal(rec.status, 200);
+  assert.equal((await call(srv.base, `/api/requests/${mk.data.id}`, { headers: { 'x-owner-key': mk.data.ownerKey } })).status, 403);
+  const own = await call(srv.base, `/api/requests/${mk.data.id}`, { headers: { 'x-owner-key': rec.data.ownerKey } });
+  assert.equal(own.status, 200);
+  assert.equal(own.data.deposits.length, 1);
+  assert.equal((await call(srv.base, `/api/transfers/${dep.data.transferId}`, { headers: { 'x-owner-key': rec.data.ownerKey } })).status, 200);
+
+  // supprimer le lien libère le nom
+  assert.equal((await call(srv.base, `/api/requests/${mk.data.id}`, { method: 'DELETE', headers: { 'x-owner-key': rec.data.ownerKey } })).status, 200);
+  assert.equal((await call(srv.base, '/api/handles/check/amadou-diop')).data.available, true);
+  assert.equal((await call(srv.base, '/api/public/h/amadou-diop')).status, 404);
+});
+
+test('pages publiques, page introuvable et compteurs', async (t) => {
+  const srv = await startServer({ STATS_MIN_TRANSFERS: '0' });
+  t.after(srv.stop);
+  for (const p of ['/', '/a-propos', '/securite', '/faq', '/@amadou']) assert.equal((await fetch(srv.base + p)).status, 200, p);
+  const nf = await fetch(srv.base + '/une-page-qui-n-existe-pas');
+  assert.equal(nf.status, 404);
+  assert.match(await nf.text(), /Lestha Send/);
+  assert.equal((await fetch(srv.base + '/fichier-absent.png')).status, 404);
+  const s = await call(srv.base, '/api/public/stats');
+  assert.equal(s.data.show, true);
+  assert.equal(typeof s.data.transfers, 'number');
+});
+
+test('compteurs masqués tant que les chiffres sont trop petits', async (t) => {
+  const srv = await startServer();
+  t.after(srv.stop);
+  assert.equal((await call(srv.base, '/api/public/stats')).data.show, false);
+});

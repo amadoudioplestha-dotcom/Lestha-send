@@ -22,10 +22,13 @@ Le serveur Render reste joignable en direct à l'adresse `xxx.onrender.com`. Un 
 
 1. Générez un secret d'au moins 32 caractères, par exemple avec `node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"`.
 2. Dans **Cloudflare → lestha-send.com → Rules → Transform Rules → Modify Request Header → Create rule** :
-   - Nom : `Origine Lestha Send`
-   - Si : *All incoming requests* (ou `Hostname equals lestha-send.com`)
-   - Action : **Set static**, en-tête `X-Origin-Secret`, valeur : votre secret
-   - Déployez la règle.
+   - **Rule name** : `Origine Lestha Send`
+   - **If incoming requests match…** : cochez **All incoming requests** (aucun champ à remplir)
+   - **Then… Modify request header** :
+     - Operation : **Set static**
+     - Header name : `X-Origin-Secret` (uniquement ce texte)
+     - Value : votre secret
+   - Cliquez sur **Deploy**.
 3. **Ensuite seulement**, dans **Render → Environment**, ajoutez `ORIGIN_SECRET` avec la même valeur.
 4. Vérifiez :
    - `https://lestha-send.com` s'ouvre normalement ;
@@ -84,3 +87,25 @@ Faites un essai complet :
 2. la confirmation de votre adresse depuis un autre navigateur ;
 3. un envoi avec e-mail ;
 4. un signalement de test, puis la réactivation depuis la console.
+
+## 9. Nouveautés de la version 3.7
+
+Ces fonctions ne demandent aucun réglage : elles marchent dès le déploiement.
+
+- **Mode clair.** Le bouton rond en haut à droite passe de Automatique (suit le téléphone) à Clair, puis à Sombre. Le choix est mémorisé sur l'appareil.
+- **Nouvelles pages.**
+  - `/a-propos` : votre histoire.
+  - `/securite` : comment les fichiers sont protégés.
+  - `/faq` : questions fréquentes.
+  - Une vraie page 404 pour les adresses inconnues.
+  - Les liens vers ces pages sont en bas de chaque page.
+- **Page À propos.** Elle contient votre photo (`public/img/fondateur.jpg`, déjà en place), une courte présentation, vos engagements et votre contact. Pour afficher un bouton LinkedIn, ajoutez sur Render `FOUNDER_LINKEDIN = https://www.linkedin.com/in/votre-profil`.
+- **Compteurs sur l'accueil.** Ce sont les vrais chiffres : envois, fichiers, volume, liens directs. Ils restent cachés tant qu'il y a moins de 20 envois Cloud. La variable `STATS_MIN_TRANSFERS` change ce seuil.
+- **Personnaliser ma page.** Un expéditeur à l'adresse confirmée choisit un nom affiché, une couleur, un site web et un logo (PNG, JPEG ou WebP, 300 Ko maximum). Ils apparaissent en haut de ses pages de téléchargement. Les liens signalés ne sont jamais personnalisés.
+- **Lien personnel `lestha-send.com/@nom`.**
+  - C'est une boîte de dépôt permanente, une seule par adresse confirmée.
+  - Le titulaire reçoit un e-mail à chaque dépôt. Depuis un autre appareil, il reprend la gestion en confirmant à nouveau son adresse.
+  - Les noms sensibles (admin, lestha, support, banques, opérateurs…) sont réservés.
+  - Une boîte reçoit au plus 100 dépôts par jour (variable `HANDLE_DEPOSITS_PER_DAY`).
+- **E-mails.** Tous les e-mails (code, lien, alerte, dépôt, signalement) utilisent un modèle clair aux couleurs du logo.
+- **Icônes.** L'icône de l'application installée reprend le nouveau logo (avion en papier). Les téléphones peuvent garder l'ancienne icône quelques jours.

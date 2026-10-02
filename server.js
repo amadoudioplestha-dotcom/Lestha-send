@@ -18,6 +18,7 @@ const { mountRequests } = require('./lib/requests');
 const { mountNearby } = require('./lib/nearby');
 const { mountLive } = require('./lib/live');
 const { mountClassroom } = require('./lib/classroom');
+const { mountProfiles, createStats } = require('./lib/profiles');
 const VERSION = require('./package.json').version;
 
 const env = process.env;
@@ -183,8 +184,10 @@ async function main() {
   });
 
   /* ---------- Modes Cloud + P2P ---------- */
+  ctx.stats = createStats(storage, db);
+  ctx.profiles = mountProfiles(app, { env, storage, ctx, db });
   const cloud = mountCloud(app, { storage, db, mailer, signer, io, env, ctx });
-  const p2p = mountP2P(io, { security, storage });
+  const p2p = mountP2P(io, { security, storage, stats: ctx.stats });
   mountRequests(app, { env, storage, db, mailer, signer, io, ctx, cloud });
   mountNearby(io, { secret, security });
   mountLive(app, { storage, io, env });
@@ -192,7 +195,14 @@ async function main() {
   mountAdmin(app, { env, db, storage, mailer, signer, io, security, cloud, p2p, ctx, publicDir: pub });
 
   /* ---------- Routes de l'application (SPA) ---------- */
-  app.get(['/conditions', '/confidentialite', '/t/:id', '/m/:id', '/w/:id', '/d/:id', '/r/:id', '/classe', '/classe/:id', '/dashboard', '/proximite', '/demande', '/send', '/p2p', '/direct', '/live/:id'], sendIndex);
+  app.get(/^\/@[A-Za-z0-9-]{3,30}\/?$/, sendIndex);
+  app.get(['/a-propos', '/securite', '/faq', '/conditions', '/confidentialite', '/t/:id', '/m/:id', '/w/:id', '/d/:id', '/r/:id', '/classe', '/classe/:id', '/dashboard', '/proximite', '/demande', '/send', '/p2p', '/direct', '/live/:id'], sendIndex);
+
+  // Toute autre adresse : l'application affiche « page introuvable », avec un vrai code 404
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' || req.path.startsWith('/api/') || req.path.startsWith('/socket.io') || /\.[A-Za-z0-9]{1,8}$/.test(req.path)) return next();
+    res.status(404); sendIndex(req, res);
+  });
 
   // Erreurs API au format JSON
   app.use('/api', (req, res) => res.status(404).json({ error: 'Route inconnue.' }));
@@ -209,7 +219,7 @@ async function main() {
     console.log(`🔄 TURN : ${env.TURN_URL ? 'configuré' : 'STUN uniquement'}`);
   });
 
-  const shutdown = async () => { try { await db.flushAll(); } catch (e) { /* ignore */ } process.exit(0); };
+  const shutdown = async () => { try { await db.flushAll(); if (ctx.stats) await ctx.stats.flush(); } catch (e) { /* ignore */ } process.exit(0); };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 }

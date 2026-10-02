@@ -3,6 +3,7 @@ import { $, $$, esc, icon, bytes, speed, duration, timeLeft, relTime, fmtDate, f
 import { navigate } from './router.js';
 import { Uploader } from './uploader.js';
 import { pick, bindShare, shareGrid } from './send.js';
+import { brandHeader, openHandle } from './profile.js';
 
 const HOUR = 3600e3, DAY = 24 * HOUR, GB = 1024 ** 3, MB = 1024 ** 2;
 const owned = {
@@ -27,7 +28,11 @@ export const createView = {
         <h1 style="font-size:clamp(30px,5.4vw,46px)">Recevez des fichiers <span class="grad-text">sans effort.</span></h1>
         <p class="lead">Créez un lien de dépôt et partagez-le : apprenants, clients ou collègues y déposent leurs fichiers, vous les retrouvez tous au même endroit.</p>
       </div>
-      ${cfg.cloudEnabled === false ? `<div class="banner bad">${icon('x')}<span>Le stockage Cloud n'est pas configuré sur ce serveur : la demande de fichiers est indisponible.</span></div>` : ''}
+      ${cfg.cloudEnabled === false ? `<div class="banner bad">${icon('x')}<span>Le stockage Cloud n'est pas configuré sur ce serveur : la demande de fichiers est indisponible.</span></div>` : `
+      <div class="card handle-cta row wrap between">
+        <div class="row grow" style="min-width:220px"><div class="ficon" style="--c:#8b7bff;width:46px;height:46px;border-radius:14px">${icon('sparkles')}</div><div class="fmeta"><b>Votre lien personnel permanent</b><div class="small muted">${esc(location.host)}/@votre-nom : une boîte de dépôt toujours ouverte, à mettre dans votre signature ou votre bio.</div></div></div>
+        <button type="button" class="btn" id="btnHandle">${icon('link', 'sm')}Mon lien @</button>
+      </div>`}
       <form class="card glow stack" id="rf">
         <label class="field"><span>Titre de la demande</span><input class="input" id="rTitle" maxlength="140" required placeholder="Ex. Rendus TP infographie — Groupe A"></label>
         <label class="field"><span>Consignes (facultatif)</span><textarea class="input" id="rMsg" maxlength="1500" placeholder="Format attendu, nommage des fichiers, date limite…"></textarea></label>
@@ -40,6 +45,7 @@ export const createView = {
         <button class="btn primary xl block" type="submit" ${cfg.cloudEnabled === false ? 'disabled' : ''}>${icon('inbox')}Créer le lien de dépôt</button>
       </form>
     </section>`;
+    const bh = $('#btnHandle', root); if (bh) bh.onclick = () => openHandle();
     const chips = (sel, key) => $(sel, root).addEventListener('click', (e) => { const c = e.target.closest('[data-v]'); if (!c) return; o[key] = Number(c.dataset.v); $$(sel + ' .chip', root).forEach(x => x.classList.toggle('active', x === c)); });
     chips('#rTtl', 'ttl'); chips('#rMax', 'maxBytes');
     const pin = $('#rPin', root); pin.oninput = () => { pin.value = pin.value.replace(/\D/g, '').slice(0, 8); };
@@ -132,7 +138,8 @@ export const depositView = (() => {
     root.innerHTML = `
     <section class="narrow stack">
       <div class="card glow stack">
-        <div class="sender-head"><div class="avatar">${icon('inbox')}</div><div style="min-width:0"><div class="small muted">${info.ownerName ? esc(info.ownerName) + ' vous demande des fichiers' : 'Demande de fichiers'} · ouvert encore ${timeLeft(info.expiresAt - Date.now())}</div><h2 style="font-size:clamp(20px,4vw,28px)">${esc(info.title)}</h2></div></div>
+        ${info.brand ? brandHeader(info.brand, { label: info.permanent ? 'Boîte de dépôt de' : 'Demande de', sub: icon('check', 'sm') + ' Adresse vérifiée' }) : ''}
+        <div class="sender-head"><div class="avatar">${icon('inbox')}</div><div style="min-width:0"><div class="small muted">${info.ownerName ? esc(info.ownerName) + (info.permanent ? ' reçoit vos fichiers ici' : ' vous demande des fichiers') : 'Demande de fichiers'}${info.permanent ? (info.handle ? ' · @' + esc(info.handle) : '') : ' · ouvert encore ' + timeLeft(info.expiresAt - Date.now())}</div><h2 style="font-size:clamp(20px,4vw,28px)">${esc(info.title)}</h2></div></div>
         ${info.message ? `<div class="message-bubble">${esc(info.message)}</div>` : ''}
         <label class="field"><span>Votre nom *</span><input class="input" id="dName" maxlength="80" value="${esc(ls.get('tx_depositor_name', ''))}" placeholder="Prénom et nom"></label>
         <div id="dz" class="dropzone ${items.length ? 'compact' : ''}" tabindex="0" role="button">
@@ -242,7 +249,7 @@ export const manageView = (() => {
     <section class="stack">
       <a href="/dashboard" data-link class="btn ghost sm" style="align-self:flex-start">${icon('arrow-left', 'sm')}Tableau de bord</a>
       <div class="card glow stack">
-        <div class="row wrap between"><div class="row grow" style="min-width:240px"><div class="ficon" style="--c:#06d6a0;width:52px;height:52px;border-radius:16px">${icon('inbox', 'lg')}</div><div class="fmeta"><h2 style="font-size:clamp(20px,3.6vw,28px)">${esc(q.title)}</h2><div class="small muted">Demande de fichiers · créée le ${fmtDate(q.createdAt)} · ${q.state === 'expired' ? 'terminée' : 'ouverte encore ' + timeLeft(q.expiresAt - Date.now())}</div></div></div><span class="pill ${st[0]}" style="font-size:13px">${st[1]}</span></div>
+        <div class="row wrap between"><div class="row grow" style="min-width:240px"><div class="ficon" style="--c:#06d6a0;width:52px;height:52px;border-radius:16px">${icon('inbox', 'lg')}</div><div class="fmeta"><h2 style="font-size:clamp(20px,3.6vw,28px)">${esc(q.title)}</h2><div class="small muted">${q.permanent ? `Lien personnel @${esc(q.handle || '')} · créé le ${fmtDate(q.createdAt)} · toujours ouvert` : `Demande de fichiers · créée le ${fmtDate(q.createdAt)} · ${q.state === 'expired' ? 'terminée' : 'ouverte encore ' + timeLeft(q.expiresAt - Date.now())}`}</div></div></div><span class="pill ${st[0]}" style="font-size:13px">${st[1]}</span></div>
         <div class="link-box"><input id="shareLink" readonly value="${esc(q.link)}"><button type="button" class="btn primary sm" id="btnCopy">${icon('copy', 'sm')}Copier</button></div>
         ${shareGrid()}
       </div>
@@ -256,11 +263,11 @@ export const manageView = (() => {
         <div class="card"><div class="card-title"><h3>${icon('inbox')}Dépôts</h3><span class="live-badge off" id="rLive"><i></i><span>…</span></span></div><div class="stack" style="gap:10px" id="dList"></div></div>
         <div class="card"><div class="card-title"><h3>${icon('settings')}Contrôles</h3></div><div class="controls">
           <div class="control"><div class="control-text"><b>Dépôts ouverts</b><span>Fermez pour ne plus rien recevoir</span></div><label class="switch"><input type="checkbox" id="cOpen" ${q.closed ? '' : 'checked'}><span class="track"></span></label></div>
-          <div class="control"><div class="control-text"><b>Prolonger</b><span>Repousser la date limite</span></div><div class="chips"><button type="button" class="chip" data-ext="${DAY}">+1 j</button><button type="button" class="chip" data-ext="${7 * DAY}">+7 j</button></div></div>
+          ${q.permanent ? '' : `<div class="control"><div class="control-text"><b>Prolonger</b><span>Repousser la date limite</span></div><div class="chips"><button type="button" class="chip" data-ext="${DAY}">+1 j</button><button type="button" class="chip" data-ext="${7 * DAY}">+7 j</button></div></div>`}
           <div class="control"><div class="control-text"><b>Code pour déposer</b><span>${q.pinEnabled ? 'Actif' : 'Aucun'}</span></div><div class="row"><button type="button" class="btn sm" id="cPin">${icon('lock', 'sm')}${q.pinEnabled ? 'Changer' : 'Définir'}</button>${q.pinEnabled ? '<button type="button" class="btn sm ghost" id="cPinOff">Retirer</button>' : ''}</div></div>
           <div class="control"><div class="control-text"><b>Taille max par dépôt</b><span>${bytes(q.maxBytes, 0)}</span></div><div class="chips">${[[GB, '1 Go'], [5 * GB, '5 Go'], [20 * GB, '20 Go']].map(([v, l]) => `<button type="button" class="chip ${q.maxBytes === v ? 'active' : ''}" data-max="${v}">${l}</button>`).join('')}</div></div>
           <div class="control"><div class="control-text"><b>QR code</b><span>À projeter en classe</span></div><button type="button" class="btn sm icon" id="cQr">${icon('qr', 'sm')}</button></div>
-          <div class="control"><div class="control-text"><b>Supprimer la demande</b><span>Efface aussi tous les dépôts</span></div><button type="button" class="btn sm danger" id="cDel">${icon('trash', 'sm')}Supprimer</button></div>
+          <div class="control"><div class="control-text"><b>${q.permanent ? 'Supprimer mon lien @' + esc(q.handle || '') : 'Supprimer la demande'}</b><span>${q.permanent ? 'Libère le nom et efface tous les dépôts' : 'Efface aussi tous les dépôts'}</span></div><button type="button" class="btn sm danger" id="cDel">${icon('trash', 'sm')}Supprimer</button></div>
         </div></div>
       </div>
     </section>`;
