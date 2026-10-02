@@ -1,4 +1,4 @@
-/* TransferX — « À proximité » : partage instantané entre appareils (Android, iPhone, Mac, Windows, Linux)
+/* Lestha Send — « À proximité » : partage instantané entre appareils (Android, iPhone, Mac, Windows, Linux)
  * Découverte automatique sur le même Wi-Fi + appareils appairés par code.
  * Les fichiers passent directement d'un appareil à l'autre (WebRTC), jamais par le serveur. */
 import { $, $$, esc, icon, bytes, speed, fileKind, ls, toast, modal, confirmDialog, copyText, keepAwake, notify, getSocket, isMobile, lowMemory, renderQR } from './core.js';
@@ -29,7 +29,7 @@ const pairs = () => ls.get('tx_pairs', []);
 const osIcon = (p) => p.kind === 'mobile' ? 'phone' : p.kind === 'tablet' ? 'phone' : 'monitor';
 
 /* ---------------- état ---------------- */
-const N = { root: null, sock: null, peers: [], transfers: new Map(), bound: false, joined: false };
+const N = { root: null, sock: null, peers: [], transfers: new Map(), bound: false, joined: false, tag: '', crowded: false };
 
 export default {
   async render(root, { params }) {
@@ -50,7 +50,7 @@ async function join() {
   N.sock = await getSocket();
   bindSocket();
   const doJoin = () => N.sock.emit('near-join', Object.assign(me(), { pairs: pairs().map(p => ({ peer: p.peer, token: p.token })) }), (r) => {
-    if (r && r.ok) { N.joined = true; N.peers = r.peers; renderPeers(); }
+    if (r && r.ok) { N.joined = true; N.peers = r.peers; N.crowded = !!r.crowded; N.tag = r.tag || ''; renderTag(); renderPeers(); }
   });
   if (N.sock.connected) doJoin(); else N.sock.once('connect', doJoin);
   N.rejoin = doJoin;
@@ -61,7 +61,7 @@ function bindSocket() {
   N.bound = true;
   const s = N.sock;
   s.on('connect', () => { if (N.root || N.joined) N.rejoin && N.rejoin(); });
-  s.on('near-changed', () => s.emit('near-list', (r) => { N.peers = (r && r.peers) || []; renderPeers(); }));
+  s.on('near-changed', () => s.emit('near-list', (r) => { N.peers = (r && r.peers) || []; N.crowded = !!(r && r.crowded); renderPeers(); }));
   s.on('pair-done', ({ peer, token }) => { savePair(peer, token); toast(`Appareil associé : ${peer.name}`, 'success'); N.rejoin && N.rejoin(); });
   s.on('near-incoming', onIncoming);
   s.on('near-reply', onReply);
@@ -84,7 +84,7 @@ function renderShell() {
       <div>
         <span class="eyebrow"><span class="pulse-dot"></span>À proximité</span>
         <h2 style="margin-top:8px">Partage instantané</h2>
-        <p class="muted small" style="margin-top:4px;max-width:560px">Ouvrez TransferX sur vos autres appareils connectés au même Wi-Fi : ils apparaissent ici. Android, iPhone, Mac, Windows : tout le monde se parle.</p>
+        <p class="muted small" style="margin-top:4px;max-width:560px">Ouvrez Lestha Send sur vos autres appareils connectés au même Wi-Fi : ils apparaissent ici. Android, iPhone, Mac, Windows : tout le monde se parle. Les appareils que vous n'avez pas associés ne voient jamais votre nom, seulement un repère comme « Android · <span class="near-tag">K7F</span> ».</p>
       </div>
       <div class="row wrap">
         <button type="button" class="btn sm" id="nPair">${icon('link', 'sm')}Associer un appareil</button>
@@ -95,7 +95,7 @@ function renderShell() {
         <span class="radar-ring r1"></span><span class="radar-ring r2"></span><span class="radar-ring r3"></span><span class="radar-sweep"></span>
         <button type="button" class="radar-me" id="nMe" title="Renommer cet appareil">
           <span class="radar-avatar">${icon(osIcon(m), 'lg')}</span>
-          <b id="nMeName">${esc(m.name)}</b><small>Cet appareil ${icon('edit', 'sm')}</small>
+          <b id="nMeName">${esc(m.name)}</b><small>Cet appareil <span class="near-tag" id="nMeTag"></span> ${icon('edit', 'sm')}</small>
         </button>
         <div id="nPeers"></div>
       </div>
@@ -119,6 +119,11 @@ function renderShell() {
   renderTransfers();
 }
 
+function renderTag() {
+  const el = N.root && $('#nMeTag', N.root);
+  if (el) el.textContent = N.tag ? '· ' + N.tag : '';
+}
+
 function renderPeers() {
   if (!N.root) return;
   const box = $('#nPeers'); if (!box) return;
@@ -134,7 +139,8 @@ function renderPeers() {
     </button>`;
   }).join('');
   const hint = $('#nHint');
-  if (hint) hint.innerHTML = n ? `Touchez un appareil pour lui envoyer des fichiers ou du texte${isMobile ? '' : ' — ou glissez des fichiers dessus'}.` : `<span class="spinner" style="display:inline-block;vertical-align:middle;width:16px;height:16px;border-width:2px;margin-right:8px"></span>Recherche d'appareils… Ouvrez <b>${esc(location.host)}/proximite</b> sur l'autre appareil.`;
+  const crowd = N.crowded ? `<br><span style="color:var(--amber, #fbbf24)">Vous êtes sur un réseau partagé par beaucoup de monde (données mobiles, Wi-Fi public) : pour votre sécurité, seuls vos appareils associés apparaissent. Touchez « Associer un appareil ».</span>` : '';
+  if (hint) hint.innerHTML = (n ? `Touchez un appareil pour lui envoyer des fichiers ou du texte${isMobile ? '' : ' — ou glissez des fichiers dessus'}. Vérifiez son repère (${esc(N.tag ? 'le vôtre : ' + N.tag : 'trois caractères')}) avant d'envoyer.` : `<span class="spinner" style="display:inline-block;vertical-align:middle;width:16px;height:16px;border-width:2px;margin-right:8px"></span>Recherche d'appareils… Ouvrez <b>${esc(location.host)}/proximite</b> sur l'autre appareil.`) + crowd;
 }
 
 async function rename() {
@@ -392,7 +398,7 @@ function setupReceiver(t, dc) {
     t.curPos += e.data.byteLength;
     const memLimit = isMobile ? 500 * 1024 * 1024 : 2 * 1024 * 1024 * 1024;
     if (t.mode === 'memory' && t.pos > memLimit) {
-      const message = `Le stockage disque sécurisé n'est pas disponible dans ce navigateur. La réception en mémoire est limitée à ${bytes(memLimit)} ; ouvrez TransferX dans un navigateur récent avec stockage OPFS.`;
+      const message = `Le stockage disque sécurisé n'est pas disponible dans ce navigateur. La réception en mémoire est limitée à ${bytes(memLimit)} ; ouvrez Lestha Send dans un navigateur récent avec stockage OPFS.`;
       try { dc.send(JSON.stringify({ t: 'error', message })); } catch (x) { /* ignore */ }
       return fail(t, message);
     }
@@ -447,7 +453,7 @@ async function initNearSink(t) {
     }
   }
   const limit = isMobile ? 500 * 1024 * 1024 : 2 * 1024 * 1024 * 1024;
-  if (t.total > limit) throw new Error(`Le stockage disque sécurisé n'est pas disponible dans ce navigateur. La réception en mémoire est limitée à ${bytes(limit)} ; ouvrez TransferX dans un navigateur récent avec stockage OPFS.`);
+  if (t.total > limit) throw new Error(`Le stockage disque sécurisé n'est pas disponible dans ce navigateur. La réception en mémoire est limitée à ${bytes(limit)} ; ouvrez Lestha Send dans un navigateur récent avec stockage OPFS.`);
   t.mode = 'memory';
   t.parts = t.files.map(() => []);
   t.written = t.files.map(() => 0);

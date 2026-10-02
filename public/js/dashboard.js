@@ -1,4 +1,4 @@
-/* TransferX — Tableau de bord : tous vos transferts, statistiques et activité en direct */
+/* Lestha Send — Tableau de bord : tous vos transferts, statistiques et activité en direct */
 import { $, $$, esc, icon, bytes, num, timeLeft, relTime, fileKind, ls, owned, api, getConfig, toast, modal, copyText, animateCount, getSocket, notify, sparkPath, confirmDialog } from './core.js';
 import { navigate } from './router.js';
 import { bucketize, barChart, feedItem, refreshTimes } from './charts.js';
@@ -77,7 +77,7 @@ function bindStatic() {
   upd();
   nb.onclick = async () => {
     if (!('Notification' in window)) return toast('Notifications non prises en charge par ce navigateur', 'warn');
-    if (Notification.permission === 'granted') return toast('Vous serez alerté à chaque téléchargement tant que TransferX est ouvert', 'info');
+    if (Notification.permission === 'granted') return toast('Vous serez alerté à chaque téléchargement tant que Lestha Send est ouvert', 'info');
     const p = await Notification.requestPermission(); upd();
     if (p === 'granted') toast('Alertes activées 🔔', 'success');
   };
@@ -305,7 +305,7 @@ async function tools() {
     }
   });
   if (choice === 'export') {
-    const blob = new Blob([JSON.stringify({ app: 'TransferX', version: 3, exportedAt: new Date().toISOString(), owned: owned.all(), p2pHistory: ls.get('transferx_history', []) }, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ app: 'Lestha Send', version: 3, exportedAt: new Date().toISOString(), owned: owned.all(), p2pHistory: ls.get('transferx_history', []) }, null, 2)], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'transferx-sauvegarde-' + new Date().toISOString().slice(0, 10) + '.json';
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
     toast('Sauvegarde téléchargée — elle contient vos clés de gestion, gardez-la privée', 'warn');

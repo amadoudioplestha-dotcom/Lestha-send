@@ -1,5 +1,5 @@
-/* TransferX — Console d'administration (accès réservé) */
-import { $, $$, esc, icon, bytes, num, relTime, fmtDate, timeLeft, fileKind, ss, api, toast, modal, confirmDialog, animateCount, getSocket, enableRipples, copyText } from './core.js';
+/* Lestha Send — Console d'administration (accès réservé) */
+import { $, $$, esc, icon, bytes, num, relTime, fmtDate, timeLeft, fileKind, ss, adminPass, api, toast, modal, confirmDialog, animateCount, getSocket, enableRipples, copyText } from './core.js';
 import { barChart, feedItem, refreshTimes } from './charts.js';
 
 const TOKEN_KEY = 'tx_admin_token';
@@ -17,7 +17,7 @@ async function aapi(path, opts = {}) {
   }
 }
 function logout(expired) {
-  A.token = null; ss.del(TOKEN_KEY);
+  A.token = null; ss.del(TOKEN_KEY); adminPass.clear();
   $('#admLogout').classList.add('hidden'); $('#admLive').classList.add('hidden');
   if (expired) toast('Session expirée, reconnectez-vous', 'warn');
   renderLogin();
@@ -54,11 +54,13 @@ function renderLogin(err = '') {
 /* ---------------- Coque ---------------- */
 const TABS = [['overview', 'chart', 'Vue d\'ensemble'], ['transfers', 'folder', 'Transferts'], ['activity', 'bolt', 'Activité'], ['security', 'shield', 'Sécurité'], ['system', 'settings', 'Système']];
 function start() {
+  // Le jeton porte sa propre date d'expiration : on la reprend pour l'accès administrateur des pages publiques
+  try { const exp = JSON.parse(atob(A.token.split('.')[0].replace(/-/g, '+').replace(/_/g, '/'))).exp; if (exp > Date.now()) adminPass.set(A.token, exp - Date.now() - 60e3); } catch (e) { /* ignore */ }
   $('#admLogout').classList.remove('hidden');
   root.innerHTML = `
   <section>
     <div class="dash-head">
-      <div><span class="eyebrow"><span class="pulse-dot"></span>Administration</span><h2 style="margin-top:8px">Console TransferX</h2>
+      <div><span class="eyebrow"><span class="pulse-dot"></span>Administration</span><h2 style="margin-top:8px">Console Lestha Send</h2>
       <p class="muted small" style="margin-top:4px">Métadonnées uniquement : le contenu des fichiers et les messages ne sont jamais visibles ici.</p></div>
       <button type="button" class="btn sm" id="admRefresh">${icon('refresh', 'sm')}Actualiser</button>
     </div>
@@ -99,7 +101,7 @@ function renderOverview(body) {
       <div class="kpi" style="--kc:#8b7bff"><div class="kpi-top">Visiteurs uniques<span class="kpi-icon">${icon('eye')}</span></div><div class="kpi-value" id="k4">0</div><div class="kpi-foot">${num(T.views)} ouverture(s) de liens</div></div>
     </div>
     <div class="kpis">
-      <div class="kpi" style="--kc:#10d49a"><div class="kpi-top">Connexions en direct<span class="kpi-icon">${icon('users')}</span></div><div class="kpi-value" id="k5">0</div><div class="kpi-foot">onglets TransferX ouverts</div></div>
+      <div class="kpi" style="--kc:#10d49a"><div class="kpi-top">Connexions en direct<span class="kpi-icon">${icon('users')}</span></div><div class="kpi-value" id="k5">0</div><div class="kpi-foot">onglets Lestha Send ouverts</div></div>
       <div class="kpi" style="--kc:#8b7bff"><div class="kpi-top">Liens P2P actifs<span class="kpi-icon">${icon('bolt')}</span></div><div class="kpi-value" id="k6">0</div><div class="kpi-foot">${num(L.p2pOnline)} expéditeur(s) en ligne · ${num(L.p2pReceivers)} destinataire(s)</div></div>
       <div class="kpi" style="--kc:#00b4d8"><div class="kpi-top">Envois (24 h)<span class="kpi-icon">${icon('upload')}</span></div><div class="kpi-value" id="k7">0</div><div class="kpi-foot">${bytes(T.volume.d7)} envoyés sur 7 jours</div></div>
       <div class="kpi" style="--kc:#fb7185"><div class="kpi-top">PIN erronés<span class="kpi-icon">${icon('lock')}</span></div><div class="kpi-value" id="k8">0</div><div class="kpi-foot">${num(T.emails)} e-mail(s) de lien envoyé(s)</div></div>
@@ -183,7 +185,7 @@ async function loadList(reset) {
       <div class="ficon" style="--c:${k.c}">${icon(x.fileCount > 1 ? 'folder' : k.icon)}</div>
       <div class="fmeta" style="text-align:left"><div class="fname">${esc(x.title)}</div><div class="fsub">${esc(x.id)} · ${x.fileCount} fichier(s) · ${bytes(x.totalSize)} · ${relTime(x.createdAt)}${x.senderName ? ' · ' + esc(x.senderName) : ''}</div></div>
       <div class="adm-cols">
-        <span class="t-stats"><span title="Téléchargements">${icon('download')}${num(x.downloads)}</span><span title="Visiteurs uniques">${icon('eye')}${num(x.visitors)}</span>${x.pin ? `<span title="PIN">${icon('lock')}</span>` : ''}</span>
+        <span class="t-stats"><span title="Téléchargements">${icon('download')}${num(x.downloads)}</span><span title="Visiteurs uniques">${icon('eye')}${num(x.visitors)}</span>${x.pin ? `<span title="PIN">${icon('lock')}</span>` : ''}${x.reports ? `<span title="Signalements" style="color:var(--rose)">${icon('flag')}${num(x.reports)}</span>` : ''}</span>
         <span class="small faint adm-creator" title="Expéditeur">${x.creator ? `${icon(x.creator.device === 'mobile' ? 'phone' : 'monitor', 'sm')} ${esc(x.creator.ipMasked)}${x.creator.blocked ? ' · <b style="color:var(--rose)">bloqué</b>' : ''}` : '—'}</span>
         ${pillOf(x.state)}
       </div>
@@ -208,7 +210,10 @@ async function openDetail(id) {
         <div><span>Données servies</span><b>${bytes(t.bytesOut)}</b></div>
         <div><span>Expéditeur</span><b>${t.senderName ? esc(t.senderName) + ' · ' : ''}${t.creator ? esc(t.creator.ipMasked) + ' · ' + esc(t.creator.device || '') + ' ' + esc(t.creator.browser || '') : '—'}</b></div>
         <div><span>E-mails envoyés</span><b>${t.emails.length ? t.emails.map(e => esc(e.to)).join(', ') : '—'}</b></div>
+        <div><span>Offre</span><b>${t.tier === 'free' ? 'Sans compte' : t.tier === 'verified' ? 'Adresse vérifiée' : t.tier === 'deposit' ? 'Dépôt' : t.tier ? 'Complète' : '—'}${t.senderVerified ? ' · expéditeur vérifié' : ''}</b></div>
+        <div><span>Signalements</span><b style="${t.reports ? 'color:var(--rose)' : ''}">${t.reports ? num(t.reports) + (t.disabledBy === 'reports' ? ' · suspendu automatiquement' : '') : '—'}</b></div>
       </div>
+      ${(t.reportsDetail || []).length ? `<h3 style="margin:16px 0 8px">Motifs signalés</h3><div class="stack" style="gap:6px">${t.reportsDetail.slice().reverse().map(r => `<div class="small"><span class="faint">${relTime(r.at)}</span> · ${esc(r.reason || 'sans motif')}</div>`).join('')}</div>` : ''}
       <h3 style="margin:16px 0 8px">Fichiers</h3>
       <div class="file-list" style="max-height:180px">${t.files.slice(0, 100).map(f => { const k = fileKind(f.name, f.type); return `<div class="file-row"><div class="ficon" style="--c:${k.c};width:32px;height:32px">${icon(k.icon, 'sm')}</div><div class="fmeta"><div class="fname">${esc(f.path || f.name)}</div><div class="fsub">${bytes(f.size)} · ${num(f.downloads)} téléch.${f.done ? '' : ' · incomplet'}</div></div></div>`; }).join('')}</div>
       <h3 style="margin:16px 0 8px">Activité</h3>
@@ -325,7 +330,7 @@ function renderSystem(body) {
       <div class="stack">
         <div class="card"><div class="card-title"><h3>${icon('monitor')}Serveur</h3></div>
           <div class="adm-info">
-            <div><span>Version</span><b>TransferX ${esc(s.version)}</b></div><div><span>Node.js</span><b>${esc(s.node)}</b></div>
+            <div><span>Version</span><b>Lestha Send ${esc(s.version)}</b></div><div><span>Node.js</span><b>${esc(s.node)}</b></div>
             <div><span>En ligne depuis</span><b>${up}</b></div><div><span>Mémoire</span><b>${s.memoryMb} Mo</b></div>
             <div><span>Hébergement</span><b>${s.isRender ? 'Render' : 'Autre'}</b></div><div><span>Console</span><b>${esc(s.adminPath)}</b></div>
           </div>
@@ -410,6 +415,7 @@ async function connectLive() {
     if (A.tab === 'activity') { const f = $('#afeed'); if (f) { const em = f.querySelector('.empty'); if (em) em.remove(); f.insertAdjacentHTML('afterbegin', admFeed(event, title, true)); } }
     if (event.type === 'created') toast(`Nouvel envoi : ${title} (${bytes(event.size)})`, 'info');
     if (event.type === 'pin_fail') toast(`PIN erroné sur « ${title} »`, 'warn');
+    if (event.type === 'report') toast(`Signalement sur « ${title} »`, 'warn');
     clearTimeout(ovTimer);
     ovTimer = setTimeout(async () => { try { await loadOverview(true); if (A.tab === 'overview') renderTab(); } catch (e) { /* ignore */ } }, 4000);
   });

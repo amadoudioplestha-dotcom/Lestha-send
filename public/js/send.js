@@ -1,5 +1,5 @@
-/* TransferX — vue "Envoyer" (Cloud & Direct P2P) */
-import { $, $$, esc, icon, bytes, speed, duration, timeLeft, fileKind, ls, ss, owned, api, getConfig, toast, modal, copyText, shareTo, renderQR, confetti, keepAwake, notify, isMobile, sparkPath } from './core.js';
+/* Lestha Send — vue "Envoyer" (Cloud & Direct P2P) */
+import { $, $$, esc, icon, bytes, speed, duration, timeLeft, fileKind, ls, ss, owned, api, getConfig, toast, modal, copyText, shareTo, renderQR, confetti, keepAwake, notify, isMobile, sparkPath, ensureVerified, verifiedEmail, captchaToken, forgetSender } from './core.js';
 import { Uploader } from './uploader.js';
 import { navigate } from './router.js';
 import * as p2p from './p2p.js';
@@ -53,6 +53,7 @@ async function renderCompose() {
     </div>
 
     ${restoreBanner()}
+    ${cloud && cfg.cloudEnabled !== false ? tierBanner(cfg) : ''}
     <div class="grid-2">
       <div class="stack">
         <div class="segmented" id="modeSeg" data-value="${S.mode}" role="tablist" aria-label="Mode d'envoi">
@@ -62,7 +63,7 @@ async function renderCompose() {
         </div>
         <div class="mode-hint ${cloud ? '' : 'p2p'}">${cloud
           ? `${icon('cloud')}<span>Vos fichiers sont déposés de façon sécurisée : <b>vous pouvez fermer l'application</b>, le lien reste valide jusqu'à son expiration puis tout est supprimé automatiquement.</span>`
-          : `${icon('bolt')}<span>Transfert direct d'appareil à appareil, chiffré de bout en bout, <b>rien n'est stocké</b>. Le destinataire télécharge tant que TransferX reste ouvert chez vous ; si vous le quittez un instant, le transfert reprend à votre retour.</span>`}</div>
+          : `${icon('bolt')}<span>Transfert direct d'appareil à appareil, chiffré de bout en bout, <b>rien n'est stocké</b>. Le destinataire télécharge tant que Lestha Send reste ouvert chez vous ; si vous le quittez un instant, le transfert reprend à votre retour.</span>`}</div>
 
         <div id="dropzone" class="dropzone ${S.items.length ? 'compact' : ''}" tabindex="0" role="button" aria-label="Ajouter des fichiers">
           <div class="dz-orb">${icon(S.items.length ? 'plus' : 'upload')}</div>
@@ -105,7 +106,7 @@ async function renderCompose() {
                 <div class="chips" id="ttlChips">${ttlChoices(cfg).map(([v, l]) => `<button type="button" class="chip ${curTtl() === v ? 'active' : ''}" data-ttl="${v}">${l}</button>`).join('')}</div>
               </div>
               <label class="field"><span>${icon('lock', 'sm')}Code PIN (optionnel)</span>
-                <input class="input" id="optPin" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="off" placeholder="4 à 8 chiffres" value="${esc(S.opts.pin)}">
+                <input class="input" id="optPin" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="off" placeholder="6 à 8 chiffres" value="${esc(S.opts.pin)}">
               </label>
               ${cloud ? `<div class="field"><span>${icon('download', 'sm')}Téléchargements</span>
                 <div class="chips" id="limitChips">${[[0, 'Illimité'], [1, '1 seul'], [3, '3'], [10, '10']].map(([v, l]) => `<button type="button" class="chip ${S.opts.limit === v ? 'active' : ''}" data-limit="${v}">${l}</button>`).join('')}</div>
@@ -124,7 +125,7 @@ async function renderCompose() {
               ${cfg.email ? `<div class="field full"><span>${icon('mail', 'sm')}Envoyer le lien par e-mail à</span>
                 <div class="tag-input" id="emailTags">${S.opts.emails.map(e => `<span class="tag">${esc(e)}<button type="button" data-rm-email="${esc(e)}" aria-label="Retirer">${icon('x')}</button></span>`).join('')}<input id="emailEntry" type="email" inputmode="email" placeholder="${S.opts.emails.length ? '' : 'adresse@exemple.com, puis Entrée'}"></div></div>
               <label class="switch full"><input type="checkbox" id="optNotify" ${S.opts.notify ? 'checked' : ''}><span class="track"></span><span class="small">M'avertir par e-mail au premier téléchargement</span></label>
-              <label class="field full ${S.opts.notify ? '' : 'hidden'}" id="notifyEmailField"><span>Votre e-mail</span><input class="input" id="optSenderEmail" type="email" placeholder="vous@exemple.com" value="${esc(S.opts.senderEmail)}"></label>` : ''}` : ''}
+              <label class="field full ${S.opts.notify ? '' : 'hidden'}" id="notifyEmailField"><span>Votre e-mail (confirmé par un code)</span><input class="input" id="optSenderEmail" type="email" placeholder="vous@exemple.com" value="${esc(verifiedEmail() || S.opts.senderEmail)}" ${verifiedEmail() ? 'readonly' : ''}></label>` : ''}` : ''}
             </div>
           </div></div>
         </div>
@@ -132,7 +133,7 @@ async function renderCompose() {
         <button type="button" class="btn primary xl block" id="btnGo" ${S.items.length && (cloud ? total <= cfg.maxTransferBytes : directValidation.ok) ? '' : 'disabled'}>
           ${icon(cloud ? 'upload' : 'link')}${cloud ? (S.items.length ? 'Envoyer · ' + bytes(total) : 'Envoyer') : 'Créer le lien direct'}
         </button>
-        <p class="small faint center">${cloud ? 'Upload direct vers le stockage, en parallèle et reprenable. Aucune limite de débit imposée.' : `Jusqu'à ${bytes(MAX_DIRECT_BYTES, 0)} par transfert ; réception sur disque si le navigateur et l'espace disponible le permettent. Gardez TransferX ouvert pendant le téléchargement.`}</p>
+        <p class="small faint center">${cloud ? 'Upload direct vers le stockage, en parallèle et reprenable. Aucune limite de débit imposée.' : `Jusqu'à ${bytes(MAX_DIRECT_BYTES, 0)} par transfert ; réception sur disque si le navigateur et l'espace disponible le permettent. Gardez Lestha Send ouvert pendant le téléchargement.`}</p>
         <a class="card request-cta" href="/demande" data-link>
           <span class="ficon" style="--c:#06d6a0">${icon('inbox')}</span>
           <span class="fmeta"><b>Besoin de <span class="grad-text">recevoir</span> des fichiers ?</b><span class="small muted">Créez un lien de dépôt : vos apprenants, clients ou collègues vous envoient leurs fichiers.</span></span>
@@ -183,6 +184,8 @@ function renderFileRows() {
 
 function bindCompose(cfg) {
   const r = rootEl;
+  const bv = $('#btnVerify', r); if (bv) bv.onclick = async () => { readOpts(); if (await ensureVerified()) renderCompose(); };
+  const bf = $('#btnForget', r); if (bf) bf.onclick = async () => { await forgetSender(); toast('Adresse oubliée sur cet appareil', 'info'); renderCompose(); };
   $('#modeSeg', r).addEventListener('click', (e) => {
     const b = e.target.closest('[data-mode]');
     if (!b || b.dataset.mode === S.mode) return;
@@ -352,7 +355,7 @@ async function startP2P() {
   if (!S.items.length) return;
   const validation = validateDirectFiles(S.items.map(it => it.file));
   if (!validation.ok) return toast(validation.error, 'error');
-  if (S.opts.pin && !/^\d{4,8}$/.test(S.opts.pin)) { S.optsOpen = true; renderCompose(); return toast('Le PIN doit contenir 4 à 8 chiffres', 'warn'); }
+  if (S.opts.pin && !/^\d{6,8}$/.test(S.opts.pin)) { S.optsOpen = true; renderCompose(); return toast('Le PIN doit contenir 6 à 8 chiffres', 'warn'); }
   if (!window.RTCPeerConnection) return toast('Ce navigateur ne gère pas le transfert direct. Utilisez le mode Cloud.', 'error');
   const btn = $('#btnGo'); if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Création du lien…'; }
   try {
@@ -367,8 +370,18 @@ async function startCloud(cfg) {
   const total = S.items.reduce((s, it) => s + it.file.size, 0);
   if (total > cfg.maxTransferBytes) return toast('Envoi trop volumineux (max ' + bytes(cfg.maxTransferBytes, 0) + ')', 'error');
   if (S.items.length > cfg.maxFiles) return toast('Maximum ' + cfg.maxFiles + ' fichiers par envoi', 'error');
-  if (S.opts.pin && !/^\d{4,8}$/.test(S.opts.pin)) { S.optsOpen = true; renderCompose(); return toast('Le PIN doit contenir 4 à 8 chiffres', 'warn'); }
-  if (S.opts.notify && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(S.opts.senderEmail)) { S.optsOpen = true; renderCompose(); return toast('Indiquez votre e-mail pour être averti', 'warn'); }
+  if (S.opts.pin && !/^\d{6,8}$/.test(S.opts.pin)) { S.optsOpen = true; renderCompose(); return toast('Le PIN doit contenir 6 à 8 chiffres', 'warn'); }
+  // E-mails et alertes : uniquement depuis une adresse confirmée (sauf instance privée avec code d'accès)
+  if ((S.opts.emails.length || S.opts.notify) && cfg.tier !== 'full' && !verifiedEmail()) {
+    const ok = await ensureVerified('Pour envoyer le lien par e-mail ou être averti des téléchargements, confirmez d\'abord votre adresse.');
+    if (!ok) { S.optsOpen = true; return toast('Retirez les destinataires e-mail ou confirmez votre adresse pour continuer.', 'warn'); }
+  }
+  if (S.opts.notify && cfg.tier === 'full' && !verifiedEmail() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(S.opts.senderEmail)) { S.optsOpen = true; renderCompose(); return toast('Indiquez votre e-mail pour être averti', 'warn'); }
+  if (cfg.emailRecipients && S.opts.emails.length > cfg.emailRecipients) {
+    S.opts.emails = S.opts.emails.slice(0, cfg.emailRecipients);
+    toast(`Le lien sera envoyé par e-mail à ${cfg.emailRecipients} destinataire(s) maximum. Partagez-le directement aux autres.`, 'warn');
+  }
+  if (total > cfg.maxTransferBytes) return toast('Envoi trop volumineux (max ' + bytes(cfg.maxTransferBytes, 0) + ')', 'error');
   const btn = $('#btnGo'); if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Préparation…'; }
   const items = S.items.slice();
   try {
@@ -376,18 +389,29 @@ async function startCloud(cfg) {
       title: S.opts.title, message: S.opts.message, senderName: S.opts.senderName, ttl: S.opts.ttl,
       pin: S.opts.pin || null, maxDownloads: S.opts.limit || null,
       playback: S.opts.playback, allowComments: S.opts.playback !== 'off' && S.opts.allowComments, watermark: S.opts.watermark,
-      notifyOnDownload: S.opts.notify, senderEmail: S.opts.notify ? S.opts.senderEmail : '',
+      notifyOnDownload: S.opts.notify, senderEmail: S.opts.notify ? (verifiedEmail() || S.opts.senderEmail) : '',
       files: items.map(it => ({ name: it.file.name, size: it.file.size, type: it.file.type, lastModified: it.file.lastModified, path: it.path }))
     };
     let r;
-    for (;;) {
+    for (let attempt = 0; ; attempt++) {
       if (cfg.uploadCodeRequired && !ls.get('tx_upload_code', '')) {
-        const code = await modal({ title: 'Code d\'accès', body: '<p class="small muted" style="margin-bottom:10px">Cette instance TransferX est privée : saisissez le code d\'accès à l\'envoi (il sera mémorisé sur cet appareil).</p><input class="input" id="upCode" type="password" autocomplete="off">', actions: [{ label: 'Annuler', cls: 'ghost', value: null }, { label: 'Valider', cls: 'primary', handler: (bd) => bd.querySelector('#upCode').value.trim() || false }] });
+        const code = await modal({ title: 'Code d\'accès', body: '<p class="small muted" style="margin-bottom:10px">Cette instance Lestha Send est privée : saisissez le code d\'accès à l\'envoi (il sera mémorisé sur cet appareil).</p><input class="input" id="upCode" type="password" autocomplete="off">', actions: [{ label: 'Annuler', cls: 'ghost', value: null }, { label: 'Valider', cls: 'primary', handler: (bd) => bd.querySelector('#upCode').value.trim() || false }] });
         if (!code) throw new Error('Envoi annulé');
         ls.set('tx_upload_code', code);
       }
-      try { r = await api('/api/transfers', { method: 'POST', body, headers: cfg.uploadCodeRequired ? { 'X-Upload-Code': ls.get('tx_upload_code', '') } : {} }); break; }
-      catch (e) { if (e.status === 401 && e.data && e.data.needCode) { ls.del('tx_upload_code'); if (!cfg.uploadCodeRequired) cfg.uploadCodeRequired = true; toast('Code d\'accès incorrect', 'warn'); continue; } throw e; }
+      const headers = cfg.uploadCodeRequired ? { 'X-Upload-Code': ls.get('tx_upload_code', '') } : {};
+      if (cfg.tier !== 'full') { const cap = await captchaToken(); if (cap) headers['X-Turnstile'] = cap; }
+      try { r = await api('/api/transfers', { method: 'POST', body, headers }); break; }
+      catch (e) {
+        const d = e.data || {};
+        if (e.status === 401 && d.needCode) { ls.del('tx_upload_code'); if (!cfg.uploadCodeRequired) cfg.uploadCodeRequired = true; toast('Code d\'accès incorrect', 'warn'); continue; }
+        if (d.needCaptcha && attempt < 2) continue;
+        if (d.needVerify && attempt < 2) {
+          toast(e.message, 'warn', { duration: 9000 });
+          if (await ensureVerified()) continue;
+        }
+        throw e;
+      }
     }
     const title = S.opts.title || (items.length === 1 ? items[0].file.name : (items[0].path ? items[0].path.split('/')[0] : items.length + ' fichiers'));
     owned.upsert({ id: r.id, key: r.ownerKey, title, createdAt: Date.now(), totalSize: total, fileCount: items.length, mode: 'cloud' });
@@ -402,6 +426,16 @@ async function startCloud(cfg) {
   }
 }
 
+/** Rappel de l'offre en cours : sans compte, ou adresse confirmée */
+function tierBanner(cfg) {
+  if (cfg.tier === 'full') return cfg.admin ? `<div class="banner info" id="tierBanner">${icon('shield')}<span><b>Mode administrateur</b> sur cet appareil : aucune limite de taille, de durée ni d'envois. Se déconnecter de la console rétablit l'offre normale.</span></div>` : '';
+  const v = cfg.limits && cfg.limits.verified;
+  if (cfg.tier === 'verified') {
+    return `<div class="banner info" id="tierBanner">${icon('check')}<span>Connecté en tant que <b>${esc(cfg.verifiedEmail)}</b> · envois Cloud jusqu'à ${bytes(cfg.maxTransferBytes, 0)}, liens de ${Math.round(cfg.maxTtl / DAY)} jours. <button type="button" class="link-btn" id="btnForget">Changer d'adresse</button></span></div>`;
+  }
+  return `<div class="banner info" id="tierBanner">${icon('sparkles')}<span>Sans compte : envois Cloud jusqu'à ${bytes(cfg.maxTransferBytes, 0)}, liens de ${Math.round(cfg.maxTtl / DAY)} jours. Le mode Direct reste <b>illimité</b>.${v && cfg.email ? ` <button type="button" class="link-btn" id="btnVerify">Confirmer mon e-mail</button> pour passer à ${bytes(v.maxBytes, 0)} et envoyer le lien par e-mail.` : ''}</span></div>`;
+}
+
 /** Lance (ou relance) un envoi et affiche la progression */
 export function runUpload(ctx) {
   active = Object.assign(ctx, { phase: 'upload', startedAt: Date.now() });
@@ -413,7 +447,7 @@ export function runUpload(ctx) {
     const ban = rootEl && $('#upBanner', rootEl);
     const msg = e.detail.kind === 'cors'
       ? 'L\'envoi n\'arrive pas à démarrer : le stockage refuse ce site. Administrateur : vérifiez la règle CORS du bucket R2 (console admin → Système → Lancer le test).'
-      : 'Le fichier est envoyé mais son assemblage échoue (« ' + e.detail.message + ' »). TransferX réessaie automatiquement ; si ça dure, notez ce message.';
+      : 'Le fichier est envoyé mais son assemblage échoue (« ' + e.detail.message + ' »). Lestha Send réessaie automatiquement ; si ça dure, notez ce message.';
     if (ban) ban.innerHTML = `<div class="banner bad">${icon('shield')}<span>${esc(msg)}</span></div>`; else toast(msg, 'error', { duration: 15000 });
   });
   up.addEventListener('error', (e) => { toast('Envoi interrompu : ' + e.detail.message, 'error'); keepAwake(false); active = null; if (rootEl) renderCompose(); });
@@ -451,7 +485,7 @@ function renderUploading() {
       </div>
     </div>
     <div class="card"><div class="card-title"><h3>${icon('file')}Fichiers</h3><span class="small faint" id="upDoneTxt"></span></div><div class="file-list" id="upList"></div></div>
-    <div class="tip">${icon('refresh')}<span>Coupure réseau, écran verrouillé ou page fermée : <b>l'envoi reprend automatiquement</b>. Si vous fermez TransferX, rouvrez le <a href="/dashboard" data-link>tableau de bord</a> et touchez « Reprendre ».</span></div>
+    <div class="tip">${icon('refresh')}<span>Coupure réseau, écran verrouillé ou page fermée : <b>l'envoi reprend automatiquement</b>. Si vous fermez Lestha Send, rouvrez le <a href="/dashboard" data-link>tableau de bord</a> et touchez « Reprendre ».</span></div>
   </section>`;
   $('#btnPause', rootEl).onclick = () => { const u = active.uploader; if (u.state === 'paused') u.resumeUpload(); else u.pause(); };
   $('#btnCancelUp', rootEl).onclick = async () => {
@@ -461,7 +495,7 @@ function renderUploading() {
     await active.uploader.cancel();
     const pend = ls.get('tx_pending', {}); delete pend[id]; ls.set('tx_pending', pend);
     owned.remove(id);
-    keepAwake(false); active = null; document.title = 'TransferX';
+    keepAwake(false); active = null; document.title = 'Lestha Send';
     toast('Envoi annulé', 'info');
     renderCompose();
   };
@@ -484,7 +518,7 @@ function updateUploading(d) {
   $('#upEta', rootEl).textContent = d.speed >= 1 && !waiting ? duration(d.eta) : '—';
   const stEl = $('#upState', rootEl);
   if (stEl && active.uploader.state === 'running') stEl.textContent = d.phase === 'assembling' ? 'Assemblage du fichier…' : d.phase === 'confirming' ? 'Derniers octets en route…' : 'Envoi en cours';
-  document.title = Math.floor(pct * 100) + ' % · Envoi TransferX';
+  document.title = Math.floor(pct * 100) + ' % · Envoi Lestha Send';
   const h = d.history || [];
   if (h.length > 1) {
     const line = sparkPath(h, 300, 44, 3);
@@ -532,9 +566,12 @@ async function finalize() {
   const pend = ls.get('tx_pending', {}); delete pend[ctx.id]; ls.set('tx_pending', pend);
   owned.upsert({ id: ctx.id, key: ctx.key, finalizedAt: Date.now(), expiresAt: res.expiresAt });
   ctx.link = res.link; ctx.manageLink = res.manageLink; ctx.expiresAt = res.expiresAt; ctx.emailed = res.emailed || [];
+  if (res.emailNote === 'needVerify') toast('Le lien n\'a pas été envoyé par e-mail : confirmez votre adresse, puis utilisez le bouton E-mail.', 'warn');
+  else if (res.emailNote === 'capped') toast('Le lien a été envoyé au nombre maximal de destinataires. Partagez-le directement aux autres.', 'warn');
+  else if (res.emailNote === 'dailyCap') toast('Le service a atteint sa limite d\'e-mails du jour : partagez le lien directement.', 'warn');
   ctx.phase = 'done';
   keepAwake(false);
-  document.title = 'TransferX — Lien prêt';
+  document.title = 'Lestha Send — Lien prêt';
   notify('Envoi terminé ✅', ctx.title + ' est prêt à être téléchargé');
   if (rootEl && location.pathname === '/') { renderSuccess(); confetti(); }
   else toast('Envoi terminé : ' + ctx.title, 'success', { action: 'Voir', onAction: () => navigate('/') });
@@ -580,7 +617,7 @@ function renderSuccess() {
   bindShare(rootEl, c.link, c.title, c);
   renderQR($('#qrBox', rootEl), c.link);
   $('#btnMgmt', rootEl).onclick = async () => { await copyText(c.manageLink); toast('Lien de gestion copié — gardez-le privé : il permet de gérer ce transfert', 'success'); };
-  $('#btnNew', rootEl).onclick = () => { active = null; clearItems(); S.opts.emails = []; S.opts.title = ''; S.opts.message = ''; S.opts.pin = ''; document.title = 'TransferX'; renderCompose(); };
+  $('#btnNew', rootEl).onclick = () => { active = null; clearItems(); S.opts.emails = []; S.opts.title = ''; S.opts.message = ''; S.opts.pin = ''; document.title = 'Lestha Send'; renderCompose(); };
 }
 
 export function shareGrid() {
@@ -604,7 +641,7 @@ export function bindShare(root, link, title, ctx) {
   const inp = $('#shareLink', root); if (inp) inp.onclick = () => inp.select();
   root.querySelectorAll('[data-share]').forEach(b => b.onclick = async () => {
     const kind = b.dataset.share;
-    const text = `Je t'ai envoyé « ${title} » via TransferX`;
+    const text = `Je t'ai envoyé « ${title} » via Lestha Send`;
     if (kind === 'mail') {
       const cfg = await getConfig();
       if (cfg.email && ctx && (ctx.key || ctx.p2p)) return emailDialog(link, title, ctx);
@@ -621,9 +658,16 @@ async function emailDialog(link, title, ctx) {
     onMount: (m) => { const i = m.querySelector('#mailTo'); i.addEventListener('keydown', (e) => { if (e.key === 'Enter') m.querySelector('.btn.primary').click(); }); }
   });
   if (!addr) return;
+  const send = () => ctx.p2p
+    ? api('/api/send-email', { method: 'POST', body: { to: addr, link, fileName: title } })
+    : api(`/api/transfers/${ctx.id}/email`, { method: 'POST', key: ctx.key, body: { emails: [addr] } });
   try {
-    if (ctx.p2p) await api('/api/send-email', { method: 'POST', body: { to: addr, link, fileName: title } });
-    else await api(`/api/transfers/${ctx.id}/email`, { method: 'POST', key: ctx.key, body: { emails: [addr] } });
+    try { await send(); }
+    catch (e) {
+      if (!(e.data && e.data.needVerify)) throw e;
+      if (!(await ensureVerified('Pour envoyer un lien par e-mail, confirmez d\'abord votre adresse.'))) return;
+      await send();
+    }
     toast('E-mail envoyé à ' + addr, 'success');
   } catch (e) { toast(e.message, 'error'); }
 }

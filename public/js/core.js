@@ -1,4 +1,4 @@
-/* TransferX — utilitaires partagés */
+/* Lestha Send — utilitaires partagés */
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
@@ -94,9 +94,23 @@ export const owned = {
   remove(id) { ls.set('tx_owned', this.all().filter(x => x.id !== id)); }
 };
 
+/* ---------------- Accès administrateur sur les pages publiques ----------------
+ * Une connexion à la console (12 h) lève aussi les limites sur cet appareil :
+ * envois sans plafond, e-mails, demandes de fichiers. */
+const ADMIN_PASS = 'tx_admin_pass';
+export const adminPass = {
+  get() { const p = ls.get(ADMIN_PASS, null); if (!p || !p.t || !(p.exp > Date.now())) { if (p) ls.del(ADMIN_PASS); return null; } return p.t; },
+  set(t, ms) { ls.set(ADMIN_PASS, { t, exp: Date.now() + ms }); },
+  clear() { ls.del(ADMIN_PASS); }
+};
+
 /* ---------------- API ---------------- */
 export async function api(path, { method = 'GET', body, key, token, signal, headers: extra } = {}) {
   const headers = Object.assign({}, extra || {});
+  const st = senderToken();
+  if (st && !headers['X-Sender-Token']) headers['X-Sender-Token'] = st;
+  const ap = !headers.Authorization && adminPass.get();
+  if (ap) headers['X-Admin-Token'] = ap;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (key) headers['X-Owner-Key'] = key;
   if (token) headers['X-Access-Token'] = token;
@@ -116,8 +130,100 @@ export async function api(path, { method = 'GET', body, key, token, signal, head
 let _config = null;
 export async function getConfig() {
   if (_config) return _config;
-  try { _config = await api('/api/config'); } catch (e) { _config = { driver: 'local', maxTransferBytes: 250 * 1024 ** 3, maxFiles: 10000, email: false, p2p: true }; }
+  try { _config = await api('/api/config'); } catch (e) { _config = { driver: 'local', maxTransferBytes: 2 * 1024 ** 3, maxFiles: 10000, email: false, p2p: true }; }
   return _config;
+}
+/** Recharge la configuration (les limites changent quand l'adresse e-mail est confirmée) */
+export async function refreshConfig() {
+  const prev = _config; _config = null;
+  const next = await getConfig();
+  if (prev && next) { Object.keys(prev).forEach(k => { if (!(k in next)) delete prev[k]; }); Object.assign(prev, next); _config = prev; }
+  return _config;
+}
+
+/* ---------------- Adresse e-mail vérifiée de l'expéditeur ---------------- */
+export function senderToken() {
+  const t = ls.get('tx_sender_token', null);
+  if (!t || !t.token || !t.exp || t.exp < Date.now()) return '';
+  return t.token;
+}
+export const verifiedEmail = () => (senderToken() ? ls.get('tx_sender_token', {}).email : '');
+export function forgetSender() { ls.del('tx_sender_token'); return refreshConfig(); }
+
+/**
+ * Demande à l'utilisateur de confirmer son adresse (code à 6 chiffres reçu par e-mail).
+ * Renvoie l'adresse vérifiée, ou null si l'utilisateur abandonne.
+ */
+export async function ensureVerified(reason = '') {
+  const known = verifiedEmail();
+  if (known) return known;
+  const cfg = await getConfig();
+  if (!cfg.email) { toast('L\'envoi d\'e-mails n\'est pas disponible sur ce serveur.', 'warn'); return null; }
+  const lim = cfg.limits && cfg.limits.verified;
+  const email = await modal({
+    title: 'Confirmez votre adresse e-mail',
+    body: `<p class="small muted" style="margin-bottom:10px">${esc(reason || 'C\'est gratuit et sans mot de passe.')}${lim ? ` Une fois confirmée : envois Cloud jusqu'à ${bytes(lim.maxBytes, 0)}, liens de ${Math.round(lim.maxTtl / 86400000)} jours, envoi du lien par e-mail et demandes de fichiers.` : ''}</p>
+      <label class="field"><span>Votre e-mail</span><input class="input" id="veMail" type="email" inputmode="email" autocomplete="email" placeholder="vous@exemple.com" value="${esc(ls.get('tx_sender_email', ''))}"></label>
+      <div id="veCaptcha" style="margin-top:10px"></div>`,
+    actions: [{ label: 'Annuler', cls: 'ghost', value: null }, { label: 'Recevoir le code', cls: 'primary', icon: 'mail', handler: (bd) => { const v = bd.querySelector('#veMail').value.trim().toLowerCase(); if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)) { toast('Adresse e-mail invalide', 'warn'); return false; } return v; } }]
+  });
+  if (!email) return null;
+  try {
+    const headers = {};
+    const cap = await captchaToken();
+    if (cap) headers['X-Turnstile'] = cap;
+    await api('/api/verify/start', { method: 'POST', body: { email }, headers });
+  } catch (e) { toast(e.message, 'error'); return null; }
+  ls.set('tx_sender_email', email);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = await modal({
+      title: 'Saisissez le code reçu',
+      body: `<p class="small muted" style="margin-bottom:10px">Un code à 6 chiffres vient d'être envoyé à <b>${esc(email)}</b>. Pensez à regarder dans les courriers indésirables.</p><input class="input pin-input" id="veCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456">`,
+      actions: [{ label: 'Annuler', cls: 'ghost', value: null }, { label: 'Confirmer', cls: 'primary', icon: 'check', handler: (bd) => { const v = bd.querySelector('#veCode').value.replace(/\D/g, ''); if (v.length !== 6) { toast('Le code contient 6 chiffres', 'warn'); return false; } return v; } }]
+    });
+    if (!code) return null;
+    try {
+      const r = await api('/api/verify/confirm', { method: 'POST', body: { email, code } });
+      ls.set('tx_sender_token', { token: r.token, email: r.email, exp: Date.now() + 29 * 86400000 });
+      await refreshConfig();
+      toast('Adresse confirmée : ' + r.email, 'success');
+      return r.email;
+    } catch (e) {
+      toast(e.message, 'error');
+      if (e.status !== 403) return null;   // code expiré ou trop d'essais : on arrête
+    }
+  }
+  return null;
+}
+
+/* ---------------- Anti-robot Cloudflare Turnstile (si activé sur le serveur) ---------------- */
+let _ts = null;
+function loadTurnstile() {
+  if (window.turnstile) return Promise.resolve(window.turnstile);
+  if (_ts) return _ts;
+  _ts = new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    s.async = true; s.onload = () => res(window.turnstile); s.onerror = () => { _ts = null; rej(new Error('turnstile')); };
+    document.head.appendChild(s);
+  });
+  return _ts;
+}
+/** Jeton anti-robot à usage unique, ou '' si Turnstile n'est pas configuré */
+export async function captchaToken() {
+  const cfg = await getConfig();
+  if (!cfg.turnstileSiteKey) return '';
+  try {
+    const ts = await loadTurnstile();
+    return await new Promise((resolve) => {
+      const box = document.createElement('div');
+      box.style.cssText = 'position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 16px);transform:translateX(-50%);z-index:9999';
+      document.body.appendChild(box);
+      const done = (v) => { try { ts.remove(id); } catch (e) { /* ignore */ } box.remove(); resolve(v || ''); };
+      const id = ts.render(box, { sitekey: cfg.turnstileSiteKey, appearance: 'interaction-only', callback: done, 'error-callback': () => done(''), 'timeout-callback': () => done('') });
+      setTimeout(() => done(''), 30000);
+    });
+  } catch (e) { return ''; }
 }
 
 /* ---------------- Toasts ---------------- */
@@ -179,7 +285,7 @@ export async function copyText(text) {
     ta.remove(); return ok;
   }
 }
-export function shareTo(kind, { link, text = 'Je t\'ai envoyé des fichiers via TransferX', title = 'TransferX' }) {
+export function shareTo(kind, { link, text = 'Je t\'ai envoyé des fichiers via Lestha Send', title = 'Lestha Send' }) {
   const t = encodeURIComponent(text), l = encodeURIComponent(link);
   if (kind === 'native') {
     if (navigator.share) return navigator.share({ title, text, url: link }).catch(() => {});

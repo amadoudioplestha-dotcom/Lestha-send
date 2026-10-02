@@ -1,13 +1,14 @@
-/* TransferX — page de téléchargement (mode Cloud) */
+/* Lestha Send — page de téléchargement (mode Cloud) */
 import { $, $$, esc, icon, bytes, fileKind, relTime, ls, ss, api, visitorId, toast, modal, copyText, isMobile } from './core.js';
 
 let root = null, id = null, data = null, timer = null, poll = null;
 
 export default {
-  async render(r, { match }) {
+  async render(r, { match, params }) {
     root = r; id = match[1];
     root.innerHTML = skeleton();
     await load();
+    if (params && params.get('signaler') === '1') { history.replaceState({}, '', '/t/' + id); reportDialog(); }
   },
   destroy() { clearInterval(timer); clearTimeout(poll); root = null; }
 };
@@ -37,7 +38,9 @@ async function load() {
   if (data.locked && data.pinRequired && data.state !== 'expired' && data.state !== 'disabled') return renderPin();
   switch (data.state) {
     case 'expired': root.innerHTML = state('warn', 'clock', 'Ce transfert a expiré', `Les fichiers ont été supprimés le ${new Date(data.expiresAt).toLocaleDateString('fr-FR')}. Demandez à l'expéditeur un nouveau lien.`, cta()); return;
-    case 'disabled': root.innerHTML = state('warn', 'power', 'Transfert désactivé', 'L\'expéditeur a temporairement désactivé ce lien.', cta()); return;
+    case 'disabled': root.innerHTML = data.reported
+      ? state('bad', 'shield', 'Transfert suspendu', 'Ce lien a été suspendu après plusieurs signalements, le temps d\'être examiné.', cta())
+      : state('warn', 'power', 'Transfert désactivé', 'L\'expéditeur a temporairement désactivé ce lien.', cta()); return;
     case 'uploading':
       root.innerHTML = state('info', 'upload', 'Envoi en cours…', `L'expéditeur est en train d'envoyer ${data.fileCount} fichier${data.fileCount > 1 ? 's' : ''} (${bytes(data.totalSize)}). Cette page s'actualise automatiquement dès que tout est prêt.`, '<div class="spinner lg"></div>');
       poll = setTimeout(load, 5000); return;
@@ -107,6 +110,7 @@ function renderReady() {
           <span class="pill info">${icon('file')}${files.length} fichier${files.length > 1 ? 's' : ''}</span>
           <span class="pill info">${icon('cloud')}${bytes(d.totalSize)}</span>
           ${d.pinRequired ? `<span class="pill violet">${icon('lock')}Protégé</span>` : ''}
+          ${d.senderVerified ? `<span class="pill ok" title="L'adresse e-mail de l'expéditeur a été confirmée par un code">${icon('check')}Expéditeur vérifié</span>` : ''}
           ${d.downloadsLeft != null ? `<span class="pill warn">${icon('download')}${d.alreadyRecipient ? 'Accès accordé' : d.downloadsLeft + ' téléchargement' + (d.downloadsLeft > 1 ? 's' : '') + ' restant' + (d.downloadsLeft > 1 ? 's' : '')}</span>` : ''}
         </div>
         <div class="countdown" id="cd" title="Temps restant avant suppression"></div>
@@ -138,7 +142,14 @@ function renderReady() {
         }).join('')}
       </div>
     </div>
-    <p class="center small faint">Vous aussi, envoyez vos fichiers lourds gratuitement · <a href="/" data-link>TransferX</a></p>
+    <div class="card invite-card">
+      <div class="stack" style="gap:4px;min-width:0">
+        <b>Envoyé avec Lestha Send</b>
+        <span class="small muted">Envoyez vous aussi vos fichiers lourds, gratuitement : sans limite en mode Direct, entre Android, iPhone et PC.</span>
+      </div>
+      <a class="btn primary" href="/" data-link>${icon('upload')}Envoyer mes fichiers</a>
+    </div>
+    <p class="center"><button type="button" class="report-link" id="btnReport">${icon('flag', 'sm')} Signaler un contenu abusif</button></p>
   </section>`;
   bindReady(files);
   tickCountdown();
@@ -171,6 +182,7 @@ function bindReady(files) {
     const pv = e.target.closest('[data-preview]');
     if (pv) { const f = files.find(x => x.id === pv.dataset.preview); if (f) preview(f); }
   };
+  const rep = $('#btnReport', root); if (rep) rep.onclick = reportDialog;
   const seq = $('#btnSeq', root);
   if (seq) seq.onclick = async () => {
     seq.disabled = true;
@@ -179,6 +191,21 @@ function bindReady(files) {
     for (const a of links) { a.click(); await new Promise(r => setTimeout(r, 1400)); }
     seq.disabled = false;
   };
+}
+
+/** Signalement d'un envoi abusif (arnaque, contenu illégal, logiciel malveillant…) */
+async function reportDialog() {
+  const reason = await modal({
+    title: 'Signaler ce transfert',
+    body: `<p class="small muted" style="margin-bottom:10px">Arnaque, hameçonnage, contenu illégal ou logiciel malveillant ? Votre signalement est examiné. Après plusieurs signalements, le lien est suspendu automatiquement.</p>
+      <div class="chips" id="rpChips" style="margin-bottom:10px">${['Arnaque ou hameçonnage', 'Logiciel malveillant', 'Contenu illégal', 'Contenu choquant', 'Autre'].map(l => `<button type="button" class="chip" data-r="${esc(l)}">${esc(l)}</button>`).join('')}</div>
+      <textarea class="input" id="rpText" maxlength="300" placeholder="Précisions (facultatif)"></textarea>`,
+    actions: [{ label: 'Annuler', cls: 'ghost', value: null }, { label: 'Envoyer le signalement', cls: 'danger', icon: 'flag', handler: (bd) => { const c = bd.querySelector('#rpChips .chip.active'); const t = bd.querySelector('#rpText').value.trim(); if (!c && !t) { toast('Choisissez un motif', 'warn'); return false; } return [c ? c.dataset.r : '', t].filter(Boolean).join(' · '); } }],
+    onMount: (m) => m.querySelector('#rpChips').addEventListener('click', (e) => { const b = e.target.closest('[data-r]'); if (!b) return; m.querySelectorAll('#rpChips .chip').forEach(x => x.classList.toggle('active', x === b)); })
+  });
+  if (!reason) return;
+  try { await api(`/api/public/t/${id}/report`, { method: 'POST', body: { reason } }); toast('Merci, votre signalement a été transmis.', 'success'); }
+  catch (e) { toast(e.message, 'error'); }
 }
 
 function preview(f) {

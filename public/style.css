@@ -1,5 +1,5 @@
 /* =====================================================================
-   TransferX — Design system premium (sombre, cyan → turquoise)
+   Lestha Send — Design system premium (sombre, cyan → turquoise)
    ===================================================================== */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -742,3 +742,17 @@ textarea.input { min-height: 84px; resize: vertical; line-height: 1.5; }
   .btn, .chip, .nav a, .icon-btn, .react-btn { touch-action: manipulation; }
   .btn:hover, .t-card:hover, .request-cta:hover, .adm-row:hover, .adm-mini:hover { transform: none; }
 }
+
+/* ---------- Lestha Send : ajouts lancement ---------- */
+.site-footer a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.site-footer a:hover { color: var(--text); }
+.link-btn { background: none; border: 0; padding: 0; font: inherit; color: var(--cyan, #22d3ee); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.link-btn:hover { filter: brightness(1.15); }
+.legal ul.plain { margin: 6px 0 0; padding-left: 20px; display: grid; gap: 6px; }
+.legal p, .legal li { line-height: 1.6; }
+.invite-card { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.report-link { background: none; border: 0; padding: 0; font: inherit; font-size: 12.5px; color: var(--faint); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.report-link:hover { color: var(--rose, #f43f5e); }
+.near-tag { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+
+#view:focus { outline: none; }

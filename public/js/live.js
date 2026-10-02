@@ -1,4 +1,4 @@
-/* TransferX — « Direct » : salles de diffusion en direct
+/* Lestha Send — « Direct » : salles de diffusion en direct
  *  - lien de plateforme (lecteur officiel YouTube / Facebook / Vimeo / Twitch / Instagram / TikTok)
  *  - caméra, écran ou micro diffusés depuis le navigateur (WebRTC, petits groupes)
  *  - flux .m3u8 (OBS, régie) lu avec hls.js
@@ -720,7 +720,7 @@ export const roomView = (() => {
     const size = files.reduce((s, f) => s + f.size, 0);
     modal({
       title: 'Enregistrement du cours prêt',
-      body: `<p class="muted">${files.length} fichier(s) · ${(size / 1048576).toFixed(1)} Mo. Publiez-le en replay : un lien TransferX avec lecture en ligne et remarques horodatées, à envoyer aux absents.</p><div id="recUp" class="stack" style="gap:6px"></div>`,
+      body: `<p class="muted">${files.length} fichier(s) · ${(size / 1048576).toFixed(1)} Mo. Publiez-le en replay : un lien Lestha Send avec lecture en ligne et remarques horodatées, à envoyer aux absents.</p><div id="recUp" class="stack" style="gap:6px"></div>`,
       actions: [{ label: 'Télécharger', value: 'dl' }, { label: 'Publier le replay', cls: 'primary', value: 'pub', handler: () => { publishReplay(files); return false; } }]
     }).then(v => { if (v === 'dl') files.forEach(f => { const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); }); });
   }

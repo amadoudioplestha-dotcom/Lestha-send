@@ -1,4 +1,4 @@
-/* TransferX — point d'entrée */
+/* Lestha Send — point d'entrée */
 import { $, ss, toast, enableRipples, lowMemory, isWebView } from './core.js';
 import { route, startRouter } from './router.js';
 
@@ -17,6 +17,7 @@ route(/^\/d\/([A-Za-z0-9]{6,32})\/?$/, () => import('./request.js').then(m => ({
 route(/^\/r\/([A-Za-z0-9]{6,32})\/?$/, () => import('./request.js').then(m => ({ default: m.manageView })), 'dashboard');
 route(/^\/direct\/?$/, () => import('./live.js').then(m => ({ default: m.studioView })), 'live');
 route(/^\/live\/([A-Za-z0-9]{6,32})\/?$/, () => import('./live.js').then(m => ({ default: m.roomView })), 'live');
+route(/^\/(conditions|confidentialite)\/?$/, () => import('./legal.js'), null);
 route(/^.*$/, () => import('./send.js'), 'send');
 
 enableRipples();
@@ -29,7 +30,7 @@ try {
     setTimeout(() => toast('Le téléphone a rechargé la page pendant la sélection (mémoire faible). Fermez quelques onglets ou applications puis réessayez.', 'warn', { duration: 9000 }), 500);
   }
 } catch (e) { /* ignore */ }
-if (isWebView) setTimeout(() => toast('Navigateur intégré détecté : pour les gros fichiers, ouvrez TransferX dans Chrome ou Safari.', 'info', { duration: 8000 }), 900);
+if (isWebView) setTimeout(() => toast('Navigateur intégré détecté : pour les gros fichiers, ouvrez Lestha Send dans Chrome ou Safari.', 'info', { duration: 8000 }), 900);
 
 /* Statut réseau */
 const net = $('#netStatus');

@@ -1,6 +1,6 @@
 {
-  "name": "TransferX — Transfert sans limites",
-  "short_name": "TransferX",
+  "name": "Lestha Send — Transfert sans limites",
+  "short_name": "Lestha Send",
   "description": "Envoyez jusqu'à 250 Go : lien persistant, reprise automatique, suivi en temps réel. Mode Direct P2P sans stockage.",
   "start_url": "/",
   "display": "standalone",

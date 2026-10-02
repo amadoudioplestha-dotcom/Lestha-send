@@ -1,4 +1,4 @@
-/* TransferX — lecteur en ligne + revue vidéo professionnelle
+/* Lestha Send — lecteur en ligne + revue vidéo professionnelle
  * timecode image par image, raccourcis J/K/L, plages In/Out, annotations dessinées sur l'image,
  * fils de discussion, remarques « traitées », décisions (approuvé / modifications), versions V1→Vn,
  * exports EDL (DaVinci Resolve) / CSV / PDF, lecture des fichiers .TS (MPEG-TS) */
@@ -48,7 +48,7 @@ export default {
 };
 
 function state(t, m) {
-  return `<section class="narrow"><div class="card"><div class="state-screen"><div class="state-icon warn">${icon('film')}</div><h2>${esc(t)}</h2><p class="muted">${esc(m)}</p><a class="btn" href="/" data-link>${icon('upload')}TransferX</a></div></div></section>`;
+  return `<section class="narrow"><div class="card"><div class="state-screen"><div class="state-icon warn">${icon('film')}</div><h2>${esc(t)}</h2><p class="muted">${esc(m)}</p><a class="btn" href="/" data-link>${icon('upload')}Lestha Send</a></div></div></section>`;
 }
 function chainOf(media, rid) { return media.filter(f => rootOf(f) === rid).sort((a, b) => (a.v || 1) - (b.v || 1)); }
 function latestOf(media, rid) { const c = chainOf(media, rid); return c[c.length - 1]; }

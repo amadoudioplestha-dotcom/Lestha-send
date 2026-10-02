@@ -1,5 +1,5 @@
-/* TransferX — « Demande de fichiers » : créer un lien de dépôt, déposer, gérer les dépôts reçus */
-import { $, $$, esc, icon, bytes, speed, duration, timeLeft, relTime, fmtDate, fileKind, ls, ss, api, getConfig, toast, modal, confirmDialog, renderQR, confetti, keepAwake, notify, getSocket, visitorId, copyText, isMobile, animateCount } from './core.js';
+/* Lestha Send — « Demande de fichiers » : créer un lien de dépôt, déposer, gérer les dépôts reçus */
+import { $, $$, esc, icon, bytes, speed, duration, timeLeft, relTime, fmtDate, fileKind, ls, ss, api, getConfig, toast, modal, confirmDialog, renderQR, confetti, keepAwake, notify, getSocket, visitorId, copyText, isMobile, animateCount, ensureVerified, verifiedEmail, captchaToken } from './core.js';
 import { navigate } from './router.js';
 import { Uploader } from './uploader.js';
 import { pick, bindShare, shareGrid } from './send.js';
@@ -34,9 +34,9 @@ export const createView = {
         <label class="field"><span>Votre nom</span><input class="input" id="rName" maxlength="80" value="${esc(ls.get('tx_sender_name', ''))}" placeholder="Affiché aux déposants"></label>
         <div class="field"><span>${icon('clock', 'sm')}Dépôts ouverts pendant</span><div class="chips" id="rTtl">${[[DAY, '1 jour'], [3 * DAY, '3 jours'], [7 * DAY, '7 jours'], [14 * DAY, '14 jours'], [30 * DAY, '30 jours']].filter(([v]) => v <= (cfg.maxTtl || 30 * DAY)).map(([v, l]) => `<button type="button" class="chip ${v === o.ttl ? 'active' : ''}" data-v="${v}">${l}</button>`).join('')}</div></div>
         <div class="field"><span>${icon('cloud', 'sm')}Taille maximale par dépôt</span><div class="chips" id="rMax">${[[100 * MB, '100 Mo'], [GB, '1 Go'], [5 * GB, '5 Go'], [20 * GB, '20 Go'], [100 * GB, '100 Go']].map(([v, l]) => `<button type="button" class="chip ${v === o.maxBytes ? 'active' : ''}" data-v="${v}">${l}</button>`).join('')}</div></div>
-        <label class="field"><span>${icon('lock', 'sm')}Code pour déposer (facultatif)</span><input class="input" id="rPin" inputmode="numeric" maxlength="8" placeholder="4 à 8 chiffres"></label>
+        <label class="field"><span>${icon('lock', 'sm')}Code pour déposer (facultatif)</span><input class="input" id="rPin" inputmode="numeric" maxlength="8" placeholder="6 à 8 chiffres"></label>
         ${cfg.email ? `<label class="switch"><input type="checkbox" id="rNotify"><span class="track"></span><span class="small">M'avertir par e-mail à chaque dépôt</span></label>
-        <label class="field hidden" id="rMailF"><span>Votre e-mail</span><input class="input" id="rMail" type="email" value="${esc(ls.get('tx_sender_email', ''))}"></label>` : ''}
+        <label class="field hidden" id="rMailF"><span>Votre e-mail (confirmé par un code)</span><input class="input" id="rMail" type="email" value="${esc(verifiedEmail() || ls.get('tx_sender_email', ''))}" ${verifiedEmail() ? 'readonly' : ''}></label>` : ''}
         <button class="btn primary xl block" type="submit" ${cfg.cloudEnabled === false ? 'disabled' : ''}>${icon('inbox')}Créer le lien de dépôt</button>
       </form>
     </section>`;
@@ -47,20 +47,29 @@ export const createView = {
     $('#rf', root).onsubmit = async (e) => {
       e.preventDefault();
       const body = { title: $('#rTitle', root).value.trim(), message: $('#rMsg', root).value.trim(), ownerName: $('#rName', root).value.trim(), ttl: o.ttl, maxBytes: o.maxBytes, pin: pin.value || null };
-      if (body.pin && !/^\d{4,8}$/.test(body.pin)) return toast('Le code contient 4 à 8 chiffres', 'warn');
-      if (nt && nt.checked) { body.notify = true; body.ownerEmail = $('#rMail', root).value.trim(); if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.ownerEmail)) return toast('E-mail invalide', 'warn'); ls.set('tx_sender_email', body.ownerEmail); }
+      if (body.pin && !/^\d{6,8}$/.test(body.pin)) return toast('Le code contient 6 à 8 chiffres', 'warn');
+      // Une demande de fichiers est réservée aux adresses confirmées (sauf instance privée avec code d'accès)
+      if (cfg.tier !== 'full' && !verifiedEmail()) {
+        const ok = await ensureVerified('Les demandes de fichiers sont réservées aux adresses e-mail confirmées. C\'est gratuit et prend une minute.');
+        if (!ok) return;
+      }
+      if (nt && nt.checked) { body.notify = true; body.ownerEmail = verifiedEmail() || $('#rMail', root).value.trim(); if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.ownerEmail)) return toast('E-mail invalide', 'warn'); ls.set('tx_sender_email', body.ownerEmail); }
       ls.set('tx_sender_name', body.ownerName);
       const btn = e.target.querySelector('button[type=submit]'); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Création…';
       let r;
-      for (;;) {
+      for (let attempt = 0; ; attempt++) {
         if (cfg.uploadCodeRequired && !ls.get('tx_upload_code', '')) {
-          const code = await modal({ title: 'Code d\'accès', body: '<p class="small muted" style="margin-bottom:10px">Saisissez le code d\'accès de cette instance TransferX.</p><input class="input" id="upCode" type="password">', actions: [{ label: 'Annuler', cls: 'ghost', value: null }, { label: 'Valider', cls: 'primary', handler: (bd) => bd.querySelector('#upCode').value.trim() || false }] });
+          const code = await modal({ title: 'Code d\'accès', body: '<p class="small muted" style="margin-bottom:10px">Saisissez le code d\'accès de cette instance Lestha Send.</p><input class="input" id="upCode" type="password">', actions: [{ label: 'Annuler', cls: 'ghost', value: null }, { label: 'Valider', cls: 'primary', handler: (bd) => bd.querySelector('#upCode').value.trim() || false }] });
           if (!code) { btn.disabled = false; btn.innerHTML = icon('inbox') + 'Créer le lien de dépôt'; return; }
           ls.set('tx_upload_code', code);
         }
-        try { r = await api('/api/requests', { method: 'POST', body, headers: { 'X-Upload-Code': ls.get('tx_upload_code', '') } }); break; }
+        const headers = { 'X-Upload-Code': ls.get('tx_upload_code', '') };
+        if (cfg.tier !== 'full') { const cap = await captchaToken(); if (cap) headers['X-Turnstile'] = cap; }
+        try { r = await api('/api/requests', { method: 'POST', body, headers }); break; }
         catch (err) {
           if (err.status === 401 && err.data && err.data.needCode) { ls.del('tx_upload_code'); cfg.uploadCodeRequired = true; toast('Code d\'accès incorrect', 'warn'); continue; }
+          if (attempt < 2 && err.data && err.data.needVerify && await ensureVerified()) continue;
+          if (attempt < 2 && err.data && err.data.needCaptcha) continue;
           toast(err.message, 'error'); btn.disabled = false; btn.innerHTML = icon('inbox') + 'Créer le lien de dépôt'; return;
         }
       }
@@ -155,7 +164,8 @@ export const depositView = (() => {
     const btn = $('#dGo', root); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Préparation…';
     let r;
     try {
-      r = await api(`/api/public/d/${id}/deposit`, { method: 'POST', token: token(), body: { name, message: ($('#dMsg', root).value || '').trim(), files: items.map(it => ({ name: it.file.name, size: it.file.size, type: it.file.type, lastModified: it.file.lastModified, path: it.path })) } });
+      const capTok = await captchaToken();
+      r = await api(`/api/public/d/${id}/deposit`, { method: 'POST', token: token(), headers: capTok ? { 'X-Turnstile': capTok } : {}, body: { name, message: ($('#dMsg', root).value || '').trim(), files: items.map(it => ({ name: it.file.name, size: it.file.size, type: it.file.type, lastModified: it.file.lastModified, path: it.path })) } });
     } catch (e) { toast(e.message, 'error'); btn.disabled = false; btn.innerHTML = icon('upload') + 'Déposer'; return; }
     const total = items.reduce((s, it) => s + it.file.size, 0);
     up = new Uploader({ id: r.transferId, key: r.uploadKey, items: items.map((it, i) => ({ file: it.file, meta: r.files[i] })) });
@@ -281,7 +291,7 @@ export const manageView = (() => {
     root.querySelectorAll('[data-ext]').forEach(b => b.onclick = () => patch({ extendMs: +b.dataset.ext }, 'Date limite prolongée'));
     root.querySelectorAll('[data-max]').forEach(b => b.onclick = () => patch({ maxBytes: +b.dataset.max }, 'Taille maximale mise à jour'));
     $('#cPin', root).onclick = async () => {
-      const pin = await modal({ title: 'Code pour déposer', body: '<input class="input pin-input" id="np" inputmode="numeric" maxlength="8" placeholder="••••">', actions: [{ label: 'Annuler', cls: 'ghost', value: null }, { label: 'Enregistrer', cls: 'primary', handler: (bd) => { const v = bd.querySelector('#np').value.trim(); if (!/^\d{4,8}$/.test(v)) { toast('4 à 8 chiffres', 'warn'); return false; } return v; } }] });
+      const pin = await modal({ title: 'Code pour déposer', body: '<input class="input pin-input" id="np" inputmode="numeric" maxlength="8" placeholder="••••">', actions: [{ label: 'Annuler', cls: 'ghost', value: null }, { label: 'Enregistrer', cls: 'primary', handler: (bd) => { const v = bd.querySelector('#np').value.trim(); if (!/^\d{6,8}$/.test(v)) { toast('6 à 8 chiffres', 'warn'); return false; } return v; } }] });
       if (pin) patch({ pin }, 'Code enregistré');
     };
     const off = $('#cPinOff', root); if (off) off.onclick = () => patch({ pin: null }, 'Code retiré');

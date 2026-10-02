@@ -1,4 +1,4 @@
-/* TransferX — graphiques SVG légers + fil d'activité */
+/* Lestha Send — graphiques SVG légers + fil d'activité */
 import { esc, icon, relTime, num } from './core.js';
 
 /** Regroupe des événements par jour (ou heure) : [{ key, label, views, downloads }] */

@@ -1,4 +1,4 @@
-/* TransferX — gestion d'un transfert : statistiques détaillées, contrôle et activité en direct */
+/* Lestha Send — gestion d'un transfert : statistiques détaillées, contrôle et activité en direct */
 import { $, esc, icon, bytes, num, timeLeft, fmtDate, fileKind, ls, owned, api, toast, modal, renderQR, animateCount, getSocket, notify, confirmDialog, keepAwake } from './core.js';
 import { navigate } from './router.js';
 import { bucketize, barChart, feedItem, refreshTimes } from './charts.js';
@@ -274,7 +274,7 @@ function renderControls() {
   el.querySelectorAll('[data-ext]').forEach(b => b.onclick = () => patch({ extendMs: +b.dataset.ext }, 'Expiration prolongée'));
   el.querySelectorAll('[data-lim]').forEach(b => b.onclick = () => patch({ maxDownloads: +b.dataset.lim || null }, 'Limite mise à jour'));
   $('#cPin', el).onclick = async () => {
-    const pin = await modal({ title: t.pinEnabled ? 'Changer le code PIN' : 'Protéger par un code PIN', body: `<p class="small muted" style="margin-bottom:10px">Les destinataires devront saisir ce code. Communiquez-le par un autre canal que le lien.</p><input class="input pin-input" id="newPin" inputmode="numeric" maxlength="8" placeholder="••••">`, actions: [{ label: 'Annuler', cls: 'ghost', value: null }, { label: 'Enregistrer', cls: 'primary', handler: (bd) => { const v = bd.querySelector('#newPin').value.trim(); if (!/^\d{4,8}$/.test(v)) { toast('4 à 8 chiffres', 'warn'); return false; } return v; } }] });
+    const pin = await modal({ title: t.pinEnabled ? 'Changer le code PIN' : 'Protéger par un code PIN', body: `<p class="small muted" style="margin-bottom:10px">Les destinataires devront saisir ce code. Communiquez-le par un autre canal que le lien.</p><input class="input pin-input" id="newPin" inputmode="numeric" maxlength="8" placeholder="••••">`, actions: [{ label: 'Annuler', cls: 'ghost', value: null }, { label: 'Enregistrer', cls: 'primary', handler: (bd) => { const v = bd.querySelector('#newPin').value.trim(); if (!/^\d{6,8}$/.test(v)) { toast('6 à 8 chiffres', 'warn'); return false; } return v; } }] });
     if (pin) patch({ pin }, 'Code PIN enregistré');
   };
   const off = $('#cPinOff', el); if (off) off.onclick = () => patch({ pin: null }, 'Code PIN retiré');

@@ -1,4 +1,4 @@
-/* TransferX — salles de classe hébergées par BigBlueButton */
+/* Lestha Send — salles de classe hébergées par BigBlueButton */
 import { $, esc, icon, api, toast, copyText } from './core.js';
 
 let root = null, id = null, hostToken = null, attendanceTimer = null;
@@ -49,7 +49,7 @@ function renderCreate() {
       <div id="classCreated" class="stack hidden"></div>
       <div id="classConfigNote" class="tip hidden"></div>
     </div>
-    <div class="tip">${icon('shield')}<span>Le secret API BigBlueButton reste sur le serveur TransferX. Configurez une URL HTTPS et un secret BBB, puis un code réservé aux enseignants avant d’activer la création.</span></div>
+    <div class="tip">${icon('shield')}<span>Le secret API BigBlueButton reste sur le serveur Lestha Send. Configurez une URL HTTPS et un secret BBB, puis un code réservé aux enseignants avant d’activer la création.</span></div>
   </section>`;
 
   const form = $('#classCreate', root);
@@ -114,7 +114,7 @@ async function renderJoin() {
           <button class="btn sm" id="loadRecordings" type="button">${icon('film', 'sm')}Enregistrements</button>
           <button class="btn sm danger" id="endClass" type="button">${icon('power', 'sm')}Terminer le cours</button>
         </div><p id="attendanceStatus" class="small muted" aria-live="polite"></p><div id="attendanceList" class="stack" style="gap:6px"></div><div id="recordingsList" class="stack" style="gap:6px"></div>` : ''}
-        <p class="small faint">La réunion s’ouvre sur le serveur BigBlueButton dans un nouvel onglet. Utilisez son interface pour caméra, microphone, partage d’écran, chat, sondages, main levée et outils de cours. Votre nom et des relevés de première/dernière présence peuvent être consultés et exportés par l’enseignant pendant 30 jours; le relevé est effectué toutes les 30 secondes tant que sa page TransferX est ouverte.</p>
+        <p class="small faint">La réunion s’ouvre sur le serveur BigBlueButton dans un nouvel onglet. Utilisez son interface pour caméra, microphone, partage d’écran, chat, sondages, main levée et outils de cours. Votre nom et des relevés de première/dernière présence peuvent être consultés et exportés par l’enseignant pendant 30 jours; le relevé est effectué toutes les 30 secondes tant que sa page Lestha Send est ouverte.</p>
       </div></section>`;
 
     $('#classJoin', root).onsubmit = async (event) => {

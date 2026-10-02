@@ -1,4 +1,4 @@
-/* TransferX — outils de revue vidéo partagés (lecteur + page de gestion)
+/* Lestha Send — outils de revue vidéo partagés (lecteur + page de gestion)
  * timecodes image par image, dessin des annotations, exports EDL / CSV / PDF */
 import { esc } from './core.js';
 

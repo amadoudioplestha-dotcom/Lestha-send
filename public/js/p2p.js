@@ -1,4 +1,4 @@
-/* TransferX — mode Direct P2P (WebRTC, zéro stockage)
+/* Lestha Send — mode Direct P2P (WebRTC, zéro stockage)
  * Améliorations clés :
  *  - le lien SURVIT quand l'expéditeur quitte l'appli un instant (veille, autre appli, réseau)
  *  - reprise à l'octet près (écriture disque en place côté destinataire)
@@ -42,7 +42,7 @@ export async function startSend(items, { ttl, pin, destroy }) {
   if (!socket.connected) await new Promise(r => socket.once('connect', r));
   const info = { files: items.map(it => ({ name: it.path || it.file.name, size: it.file.size })) };
   const r = await emitAck(socket, 'create-room', { ttl, pin: pin || null, destroyOnDownload: !!destroy, info });
-  if (!r || !r.success) throw new Error('Impossible de créer le lien. Réessayez.');
+  if (!r || !r.success) throw new Error((r && r.error) || 'Impossible de créer le lien. Réessayez.');
   Object.assign(P, { active: true, roomId: r.roomId, senderKey: r.senderKey, expiresAt: r.expiresAt, pin: pin || '', destroy: !!destroy, items, info, total: items.reduce((s, it) => s + it.file.size, 0), downloads: 0 });
   P.peers.clear();
   ls.set('tx_p2p_active', { roomId: P.roomId, senderKey: P.senderKey, expiresAt: P.expiresAt, pin: P.pin, destroy: P.destroy, info, sig: sig(items) });
@@ -294,7 +294,7 @@ function renderSenderLive() {
   const live = $('#p2pLive', senderRoot); live.classList.toggle('off', !P.online); live.lastChild.textContent = P.online ? 'En ligne' : 'Reconnexion…';
   $('#p2pBanner', senderRoot).innerHTML = !P.online
     ? `<div class="banner warn">${icon('wifi-off')}<span>Connexion au serveur perdue — le lien reste valide, reconnexion automatique en cours…</span></div>`
-    : `<div class="banner info">${icon('bolt')}<span><b>Gardez TransferX ouvert</b> pendant les téléchargements. Si vous changez d'appli, les transferts reprennent à votre retour.</span></div>`;
+    : `<div class="banner info">${icon('bolt')}<span><b>Gardez Lestha Send ouvert</b> pendant les téléchargements. Si vous changez d'appli, les transferts reprennent à votre retour.</span></div>`;
   if (now > P.expiresAt) { toast('Le lien direct a expiré', 'info'); stopSend(false); }
 }
 
@@ -305,7 +305,7 @@ export const receiveView = {
   async render(root, { params }) {
     R.root = root;
     const room = (params.get('room') || '').toUpperCase().trim();
-    if (!/^TX-[A-Z0-9]{6}$/.test(room)) { root.innerHTML = stateScreen('bad', 'x', 'Lien invalide', 'Vérifiez le lien reçu.'); return; }
+    if (!/^TX-[A-Z0-9]{6,8}$/.test(room)) { root.innerHTML = stateScreen('bad', 'x', 'Lien invalide', 'Vérifiez le lien reçu.'); return; }
     if (R.roomId !== room) resetReceiver(room);
     renderReceiver();
     if (!R.started) { R.started = true; connectReceiver(); }
@@ -354,7 +354,7 @@ function renderReceiver() {
           <div class="ring-center"><div class="ring-pct"><span id="rxPct">0</span><small>%</small></div><div class="ring-sub" id="rxBytes">${total ? '0 o / ' + bytes(total) : 'Préparation…'}</div></div>
         </div>
         <div class="metrics"><div class="metric"><b id="rxSpeed">—</b><span>Vitesse</span></div><div class="metric"><b id="rxEta">—</b><span>Restant</span></div><div class="metric"><b id="rxFiles">${files.length || '—'}</b><span>Fichiers</span></div></div>
-        <div id="rxBanner">${waiting ? `<div class="banner warn">${icon('clock')}<span>L'expéditeur a quitté TransferX un instant. <b>Le téléchargement reprendra automatiquement</b> dès son retour — gardez cette page ouverte.</span></div>` : ''}</div>
+        <div id="rxBanner">${waiting ? `<div class="banner warn">${icon('clock')}<span>L'expéditeur a quitté Lestha Send un instant. <b>Le téléchargement reprendra automatiquement</b> dès son retour — gardez cette page ouverte.</span></div>` : ''}</div>
         <button type="button" class="btn ghost" id="rxStop">${icon('x')}Arrêter</button>
       </div>
     </div>
@@ -385,7 +385,7 @@ function updateRxProgress() {
   $('#rxBytes', root).textContent = bytes(R.pos) + ' / ' + bytes(R.total);
   $('#rxSpeed', root).textContent = R.state === 'receiving' && inst > 0 ? speed(inst) : '—';
   $('#rxEta', root).textContent = inst > 0 ? duration((R.total - R.pos) / inst) : '—';
-  document.title = Math.floor(pct * 100) + ' % · Réception TransferX';
+  document.title = Math.floor(pct * 100) + ' % · Réception Lestha Send';
 }
 
 async function connectReceiver() {
@@ -602,7 +602,7 @@ async function finishReceive() {
   socket.emit('download-complete', { roomId: R.roomId });
   keepAwake(false);
   R.state = 'done';
-  document.title = 'TransferX — Reçu';
+  document.title = 'Lestha Send — Reçu';
   renderReceiver();
   confetti(50);
 }
@@ -639,7 +639,7 @@ export async function cleanupOPFS() {
       if (v && Date.now() - v.at < 2 * 86400e3) keep.add(id); else ls.del(k);
     });
     for await (const name of root.keys()) {
-      const m = name.match(/^p2p_(TX-[A-Z0-9]{6})_\d+$/);
+      const m = name.match(/^p2p_(TX-[A-Z0-9]{6,8})_\d+$/);
       const near = name.match(/^near_([A-Za-z0-9_-]{8,40})_\d+$/);
       if ((m && !keep.has(m[1])) || (near && !keep.has(near[1])) || /^transferx(\.tmp|_sender\.zip|_multi\.zip)$/.test(name)) root.removeEntry(name).catch(() => {});
     }

@@ -1,10 +1,10 @@
-/* TransferX — Service Worker
+/* Lestha Send — Service Worker
  * - cache de l'interface (démarrage instantané, fonctionne hors ligne)
- * - cible de partage Android ("Partager vers TransferX")
+ * - cible de partage Android ("Partager vers Lestha Send")
  * - n'intercepte JAMAIS les API, les téléchargements ni socket.io
  */
 'use strict';
-const VERSION = 'tx-v3.5.0';
+const VERSION = 'tx-v3.6.0';
 const SHELL = ['/', '/style.css', '/js/main.js', '/js/core.js', '/js/router.js', '/js/send.js', '/js/uploader.js', '/js/p2p.js', '/js/receive.js', '/js/dashboard.js', '/js/manage.js', '/js/charts.js', '/js/opfs-worker.js', '/js/nearby.js', '/js/watch.js', '/js/request.js', '/js/review-tools.js', '/js/live.js', '/manifest.json', '/icon-192.png', '/icon-512.png', '/icon-192.svg', '/vendor/qrcode.js'];
 
 self.addEventListener('install', (event) => {

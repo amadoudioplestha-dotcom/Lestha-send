@@ -1,4 +1,4 @@
-/* TransferX — moteur d'envoi Cloud
+/* Lestha Send — moteur d'envoi Cloud
  * - morceaux de 16 Mo envoyés en parallèle directement vers R2 (URLs présignées)
  * - reprise automatique : coupure réseau, onglet en arrière-plan, rechargement de page
  * - aucun fichier chargé en mémoire : le navigateur lit chaque morceau depuis le disque

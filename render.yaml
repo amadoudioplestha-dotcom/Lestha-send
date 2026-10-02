@@ -45,3 +45,18 @@ services:
         value: "2"
       - key: CLASSROOM_CREATE_CODE
         sync: false
+      # À renseigner APRÈS avoir créé la règle Cloudflare qui ajoute l'en-tête X-Origin-Secret
+      - key: ORIGIN_SECRET
+        sync: false
+      - key: TURNSTILE_SITE_KEY
+        sync: false
+      - key: TURNSTILE_SECRET
+        sync: false
+      - key: STORAGE_QUOTA_GB
+        value: "200"
+      - key: EMAIL_DAILY_CAP
+        value: "300"
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: CONTACT_EMAIL
+        sync: false
