@@ -3,6 +3,7 @@ import { $, $$, esc, icon, bytes, speed, duration, timeLeft, fileKind, ls, ss, o
 import { Uploader } from './uploader.js';
 import { navigate } from './router.js';
 import * as p2p from './p2p.js';
+import { codeBox } from './p2p.js';
 import { track, afterSuccess } from './ux.js';
 import { MAX_DIRECT_BYTES, validateDirectFiles } from './direct-limits.mjs';
 import { openProfile, openHandle } from './profile.js';
@@ -584,6 +585,7 @@ async function finalize() {
   }
   const pend = ls.get('tx_pending', {}); delete pend[ctx.id]; ls.set('tx_pending', pend);
   owned.upsert({ id: ctx.id, key: ctx.key, finalizedAt: Date.now(), expiresAt: res.expiresAt });
+  ctx.code = res.code ? res.code.code : null; ctx.codeExp = res.code ? res.code.expiresAt : 0;
   ctx.link = res.link; ctx.manageLink = res.manageLink; ctx.expiresAt = res.expiresAt; ctx.emailed = res.emailed || [];
   if (res.emailNote === 'needVerify') toast('Le lien n\'a pas été envoyé par e-mail : confirmez votre adresse, puis utilisez le bouton E-mail.', 'warn');
   else if (res.emailNote === 'capped') toast('Le lien a été envoyé au nombre maximal de destinataires. Partagez-le directement aux autres.', 'warn');
@@ -619,6 +621,7 @@ function renderSuccess() {
         ${c.emailed && c.emailed.length ? `<span class="pill ok">${icon('mail')}Envoyé à ${c.emailed.length} destinataire${c.emailed.length > 1 ? 's' : ''}</span>` : ''}
       </div>
       <div class="link-box"><input id="shareLink" readonly value="${esc(c.link)}" aria-label="Lien de téléchargement"><button type="button" class="btn primary sm" id="btnCopy">${icon('copy', 'sm')}Copier</button></div>
+      ${c.code && c.codeExp > Date.now() ? codeBox(c.code, 'Code valable ' + timeLeft(c.codeExp - Date.now()) + ' · le lien, lui, reste valable jusqu\'à son expiration') : ''}
       ${shareGrid()}
       <div class="qr-card card" style="box-shadow:none">
         <div class="qr" id="qrBox"></div>

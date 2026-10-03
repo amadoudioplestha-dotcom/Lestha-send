@@ -21,6 +21,7 @@ const { mountClassroom } = require('./lib/classroom');
 const { mountProfiles, createStats } = require('./lib/profiles');
 const { createIce } = require('./lib/turn');
 const { createInsights } = require('./lib/insights');
+const { createCodes } = require('./lib/codes');
 const VERSION = require('./package.json').version;
 
 const env = process.env;
@@ -180,7 +181,8 @@ async function main() {
   ctx.stats = createStats(storage, db);
   ctx.profiles = mountProfiles(app, { env, storage, ctx, db });
   const cloud = mountCloud(app, { storage, db, mailer, signer, io, env, ctx });
-  const p2p = mountP2P(io, { security, storage, stats: ctx.stats });
+  ctx.codes = createCodes({ storage });
+  const p2p = mountP2P(io, { security, storage, stats: ctx.stats, codes: ctx.codes });
   mountRequests(app, { env, storage, db, mailer, signer, io, ctx, cloud });
   mountNearby(io, { secret, security });
   mountLive(app, { storage, io, env });
@@ -189,7 +191,7 @@ async function main() {
 
   /* ---------- Routes de l'application (SPA) ---------- */
   app.get(/^\/@[A-Za-z0-9-]{3,30}\/?$/, sendIndex);
-  app.get(['/a-propos', '/securite', '/faq', '/conditions', '/confidentialite', '/t/:id', '/m/:id', '/w/:id', '/d/:id', '/r/:id', '/classe', '/classe/:id', '/dashboard', '/proximite', '/demande', '/send', '/p2p', '/direct', '/live/:id'], sendIndex);
+  app.get(['/a-propos', '/securite', '/faq', '/conditions', '/confidentialite', '/t/:id', '/m/:id', '/w/:id', '/d/:id', '/r/:id', '/classe', '/classe/:id', '/dashboard', '/proximite', '/recevoir', '/demande', '/send', '/p2p', '/direct', '/live/:id'], sendIndex);
 
   // Toute autre adresse : l'application affiche « page introuvable », avec un vrai code 404
   app.use((req, res, next) => {

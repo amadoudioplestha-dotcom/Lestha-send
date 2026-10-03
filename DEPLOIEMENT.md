@@ -142,3 +142,10 @@ Pour savoir d'où viennent vos visiteurs, ajoutez `?src=` à vos liens publics :
 - Site : bouton « Votre avis » et « Proposer une idée » en pied de page ; petite invitation après un envoi
   réussi (au plus une fois tous les 20 jours, jamais au premier envoi).
 - Confidentialité : compteurs anonymes et agrégés uniquement ; « Ne pas me suivre » respecté ; page Confidentialité mise à jour.
+
+## 11. Version 3.8.1 : bouton « Recevoir » et code à 6 chiffres
+- Menu : « Recevoir » à côté de « Envoyer ». Le destinataire tape le code affiché chez l'expéditeur (ou colle un lien).
+- Mode Direct : le code reste valable tant que le lien direct est actif ; l'expéditeur doit **accepter** chaque appareil qui le saisit.
+- Mode Cloud : le code est valable 24 h au plus (le lien, lui, garde sa durée normale) ; le PIN éventuel reste demandé.
+- Protections : 15 essais par connexion toutes les 10 minutes, pause générale après 400 échecs en 10 minutes.
+- Aucune variable à ajouter.

@@ -915,3 +915,8 @@ ul.checks li > .i { flex: none; margin-top: 3px; color: var(--ok); }
 .fb-idea.on .fb-vote { color: var(--t-violet, #8b7bff); }
 .fb-idea-t { display: flex; flex-direction: column; gap: 2px; }
 @media (max-width: 420px) { .fb-mood small { display: none; } }
+
+/* ---------- v3.8.1 : code « Recevoir » ---------- */
+.rx-codebox { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px; border-radius: 16px; border: 1px dashed rgba(0, 180, 216, .45); background: rgba(0, 180, 216, .06); text-align: center; }
+.rx-code-v { font-family: 'Space Grotesk', ui-monospace, monospace; font-size: clamp(30px, 8vw, 42px); letter-spacing: .12em; line-height: 1.1; user-select: all; }
+.rc-code { font-family: 'Space Grotesk', ui-monospace, monospace; font-size: 30px; text-align: center; letter-spacing: .2em; padding: 14px; }

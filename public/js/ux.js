@@ -52,7 +52,7 @@ try {
 addEventListener('tx:err', (ev) => track('err', { msg: String(ev.detail || '').slice(0, 200) }));
 
 /* Pages par mode (navigation) */
-const PAGE_OF = [[/^\/proximite/, 'nearby'], [/^\/classe/, 'classe'], [/^\/(direct|live\/)/, 'live'], [/^\/demande/, 'request'], [/^\/[dr]\//, 'request'], [/^\/w\//, 'review'], [/^\/t\//, 'receive'], [/^\/dashboard|^\/m\//, 'dashboard'], [/^\/@/, 'profile'], [/^\/(a-propos|securite|faq|conditions|confidentialite)/, 'infos']];
+const PAGE_OF = [[/^\/recevoir/, 'receive-code'], [/^\/proximite/, 'nearby'], [/^\/classe/, 'classe'], [/^\/(direct|live\/)/, 'live'], [/^\/demande/, 'request'], [/^\/[dr]\//, 'request'], [/^\/w\//, 'review'], [/^\/t\//, 'receive'], [/^\/dashboard|^\/m\//, 'dashboard'], [/^\/@/, 'profile'], [/^\/(a-propos|securite|faq|conditions|confidentialite)/, 'infos']];
 let lastPage = '';
 export function trackPage() {
   const p = location.pathname, room = new URLSearchParams(location.search).get('room');

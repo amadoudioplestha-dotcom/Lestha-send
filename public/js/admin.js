@@ -146,7 +146,7 @@ function miniList(items, right) {
 
 /* ---------------- Retours & usage (anonyme, agrégé) ---------------- */
 const MODE_L = { cloud: 'Cloud (lien)', direct: 'Direct (P2P)', nearby: 'À proximité', live: 'Direct vidéo', classe: 'Classe', review: 'Relecture', request: 'Demande de fichiers' };
-const PAGE_L = { home: 'Accueil', nearby: 'À proximité', classe: 'Classe', live: 'Direct vidéo', request: 'Demandes', review: 'Relecture', receive: 'Lien reçu (Cloud)', 'receive-direct': 'Lien reçu (Direct)', dashboard: 'Mes envois', profile: 'Profils @', infos: 'Pages d\'info' };
+const PAGE_L = { home: 'Accueil', nearby: 'À proximité', classe: 'Classe', live: 'Direct vidéo', request: 'Demandes', review: 'Relecture', receive: 'Lien reçu (Cloud)', 'receive-direct': 'Lien reçu (Direct)', 'receive-code': 'Recevoir (code)', dashboard: 'Mes envois', profile: 'Profils @', infos: 'Pages d\'info' };
 const HEARD_L = { tiktok: 'TikTok', whatsapp: 'WhatsApp', linkedin: 'LinkedIn', facebook: 'Facebook', instagram: 'Instagram', google: 'Google', ami: 'Un proche', ecole: 'École / travail', autre: 'Autre' };
 const USE_L = { etudes: 'Études', enseignement: 'Enseignement', travail: 'Travail', creation: 'Création', perso: 'Personnel', autre: 'Autre' };
 const KIND_L = { avis: ['info', 'Avis'], idee: ['violet', 'Idée'], probleme: ['bad', 'Problème'] };

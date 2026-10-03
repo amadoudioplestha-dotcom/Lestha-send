@@ -11,6 +11,7 @@ route((path, params) => (path === '/' && params.get('room') ? [path] : null), ()
 route(/^\/t\/([A-Za-z0-9]{6,32})\/?$/, () => import('./receive.js'), null);
 route(/^\/m\/([A-Za-z0-9]{6,32})\/?$/, () => import('./manage.js'), 'dashboard');
 route(/^\/dashboard\/?$/, () => import('./dashboard.js'), 'dashboard');
+route(/^\/recevoir\/?$/, () => import('./receive-code.js'), 'receive');
 route(/^\/proximite\/?$/, () => import('./nearby.js'), 'nearby');
 route(/^\/classe(?:\/([A-Za-z0-9]{20}))?\/?$/, () => import('./classroom.js'), 'classroom');
 route(/^\/w\/([A-Za-z0-9]{6,32})\/?$/, () => import('./watch.js'), null);

@@ -28,6 +28,13 @@ async function getIce() {
 /** relayOnly : après deux échecs de suite, on passe d'office par le relais (réseaux mobiles CGNAT, Wi-Fi filtrés) */
 const rtcConfig = (cfg, relayOnly) => ({ iceServers: cfg.iceServers, iceCandidatePoolSize: 2, bundlePolicy: 'max-bundle', iceTransportPolicy: relayOnly && cfg.relay ? 'relay' : 'all' });
 getIce();
+/** Code à 6 chiffres pour le bouton « Recevoir » */
+export function codeBox(code, note) {
+  if (!code) return '';
+  const pretty = code.slice(0, 3) + ' ' + code.slice(3);
+  return `<div class="rx-codebox"><span class="small muted">Ou donnez ce code : il suffit d'appuyer sur <b>Recevoir</b></span>
+    <b class="rx-code-v" data-code="${code}">${pretty}</b><span class="small faint">${note || ''}</span></div>`;
+}
 const emitAck = (socket, ev, data) => new Promise((res) => { socket.timeout(10000).emit(ev, data, (err, r) => res(err ? null : r)); });
 
 /* ======================================================================
@@ -50,7 +57,7 @@ export async function startSend(items, { ttl, pin, destroy }) {
   const info = { files: items.map(it => ({ name: it.path || it.file.name, size: it.file.size })) };
   const r = await emitAck(socket, 'create-room', { ttl, pin: pin || null, destroyOnDownload: !!destroy, info });
   if (!r || !r.success) throw new Error((r && r.error) || 'Impossible de créer le lien. Réessayez.');
-  Object.assign(P, { active: true, roomId: r.roomId, senderKey: r.senderKey, expiresAt: r.expiresAt, pin: pin || '', destroy: !!destroy, items, info, total: items.reduce((s, it) => s + it.file.size, 0), downloads: 0 });
+  Object.assign(P, { active: true, code: r.code || null, roomId: r.roomId, senderKey: r.senderKey, expiresAt: r.expiresAt, pin: pin || '', destroy: !!destroy, items, info, total: items.reduce((s, it) => s + it.file.size, 0), downloads: 0 });
   P.peers.clear();
   ls.set('tx_p2p_active', { roomId: P.roomId, senderKey: P.senderKey, expiresAt: P.expiresAt, pin: P.pin, destroy: P.destroy, info, sig: sig(items) });
   const hist = ls.get('transferx_history', []);
@@ -98,6 +105,7 @@ async function reclaim(socket) {
   const r = await emitAck(socket, 'reclaim-room', { roomId: P.roomId, senderKey: P.senderKey, expiresAt: P.expiresAt, pin: P.pin || null, destroyOnDownload: P.destroy, info: P.info });
   if (!r || !r.success) return false;
   if (typeof r.downloadCount === 'number') P.downloads = Math.max(P.downloads, r.downloadCount);
+  if (r.code && r.code !== P.code) { P.code = r.code; const el = senderRoot && senderRoot.querySelector('#p2pCode'); if (el) el.innerHTML = codeBox(P.code, 'Valable tant que ce lien direct est actif · vous acceptez chaque appareil'); }
   (r.receivers || []).forEach(id => createPeer(socket, id));
   renderSenderLive();
   return true;
@@ -136,6 +144,20 @@ function bindSenderSocket(socket) {
     notify('Fichiers téléchargés', 'Un destinataire a terminé le téléchargement');
     renderSenderLive();
   });
+  /* Quelqu'un a saisi le code : rien ne part sans votre accord */
+  const asks = new Map();
+  socket.on('join-request', ({ reqId, name, device, browser }) => {
+    if (!P.active || !reqId) return;
+    const who = (name ? `<b>${esc(name)}</b> · ` : '') + esc([device, browser].filter(Boolean).join(' · ') || 'appareil inconnu');
+    notify('Demande de réception', (name ? name + ' — ' : '') + 'un appareil veut recevoir vos fichiers');
+    modal({
+      title: 'Un appareil veut recevoir vos fichiers',
+      body: `<p class="muted">${who}</p><p class="small faint">Il a saisi votre code à 6 chiffres. Acceptez seulement si vous savez qui c'est.</p>`,
+      actions: [{ label: 'Refuser', cls: 'ghost', value: false }, { label: 'Accepter', cls: 'primary', icon: 'check', value: true }],
+      onMount: (_root, close) => asks.set(reqId, close)
+    }).then(ok => { asks.delete(reqId); if (ok !== undefined) socket.emit('join-answer', { reqId, ok: ok === true }); });
+  });
+  socket.on('join-request-cancel', ({ reqId }) => { const c = asks.get(reqId); if (c) { asks.delete(reqId); c(undefined); toast('La demande de réception a expiré', 'info'); } });
   socket.on('transfer-destroyed', () => { toast('Lien auto-détruit après le téléchargement 🔥', 'info'); stopSend(false); });
 }
 
@@ -246,6 +268,7 @@ export function renderSender(root) {
         ${P.destroy ? `<span class="pill warn">${icon('trash')}Auto-destruction</span>` : ''}
       </div>
       <div class="link-box"><input id="shareLink" readonly value="${esc(link)}"><button type="button" class="btn primary sm" id="btnCopy">${icon('copy', 'sm')}Copier</button></div>
+      <div id="p2pCode">${codeBox(P.code, 'Valable tant que ce lien direct est actif · vous acceptez chaque appareil')}</div>
       <div class="share-grid">
         <button type="button" class="btn" data-share="native">${icon('share')}Partager</button>
         <button type="button" class="btn" data-share="whatsapp">${icon('whatsapp')}WhatsApp</button>
