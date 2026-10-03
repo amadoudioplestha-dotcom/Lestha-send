@@ -25,7 +25,7 @@ export default {
         <input class="input rc-code" id="rcCode" inputmode="numeric" autocomplete="one-time-code" maxlength="80" placeholder="000 000" aria-label="Code à 6 chiffres" value="${esc(pre)}">
         <input class="input" id="rcName" maxlength="30" placeholder="Votre prénom (facultatif, vu par l'expéditeur)" value="${esc(ls.get('tx_rc_name', ''))}">
         <button class="btn primary block xl" type="submit" id="rcGo">${icon('download')}Recevoir</button>
-        <p class="small faint" id="rcHint">En mode Direct, l'expéditeur doit accepter votre appareil avant que le transfert commence.</p>
+        <p class="small faint" id="rcHint">Fichiers ou réunion : le même code. En mode Direct, l'expéditeur doit accepter votre appareil.</p>
       </form>
     </div></div></section>`;
     const input = $('#rcCode', root);

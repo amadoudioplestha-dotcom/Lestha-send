@@ -22,6 +22,8 @@ const { mountProfiles, createStats } = require('./lib/profiles');
 const { createIce } = require('./lib/turn');
 const { createInsights } = require('./lib/insights');
 const { createCodes } = require('./lib/codes');
+const { mountMeet } = require('./lib/meet');
+const { createSettings } = require('./lib/settings');
 const VERSION = require('./package.json').version;
 
 const env = process.env;
@@ -177,6 +179,13 @@ async function main() {
     }
   });
 
+  /* ---------- Services activables depuis la console ---------- */
+  ctx.settings = createSettings(storage);
+  await ctx.settings.ready;
+  const moduleGuard = (k) => (req, res, next) => (ctx.settings.on(k) || ctx.isAdmin(req) ? next() : res.status(403).json({ error: 'Ce service est désactivé pour le moment.' }));
+  app.use('/api/classrooms', moduleGuard('classroom'));
+  app.use('/api/lives', moduleGuard('live'));
+
   /* ---------- Modes Cloud + P2P ---------- */
   ctx.stats = createStats(storage, db);
   ctx.profiles = mountProfiles(app, { env, storage, ctx, db });
@@ -185,13 +194,16 @@ async function main() {
   const p2p = mountP2P(io, { security, storage, stats: ctx.stats, codes: ctx.codes });
   mountRequests(app, { env, storage, db, mailer, signer, io, ctx, cloud });
   mountNearby(io, { secret, security });
+  ctx.meet = mountMeet(app, io, { env, codes: ctx.codes, ctx });
+  ctx.codes.useMeet(ctx.meet.alive);
+  if (ctx.meet.engine === 'mesh') warnings.push({ level: 'info', code: 'meet-mesh', text: 'Réunions : moteur direct (12 personnes en audio, 6 en vidéo). Ajoutez CF_SFU_APP_ID et CF_SFU_APP_TOKEN (Cloudflare Realtime) pour aller jusqu\'à 50.' });
   mountLive(app, { storage, io, env });
   mountClassroom(app, { env, storage, signer });
   mountAdmin(app, { env, db, storage, mailer, signer, io, security, cloud, p2p, ctx, publicDir: pub });
 
   /* ---------- Routes de l'application (SPA) ---------- */
   app.get(/^\/@[A-Za-z0-9-]{3,30}\/?$/, sendIndex);
-  app.get(['/a-propos', '/securite', '/faq', '/conditions', '/confidentialite', '/t/:id', '/m/:id', '/w/:id', '/d/:id', '/r/:id', '/classe', '/classe/:id', '/dashboard', '/proximite', '/recevoir', '/demande', '/send', '/p2p', '/direct', '/live/:id'], sendIndex);
+  app.get(['/a-propos', '/securite', '/faq', '/conditions', '/confidentialite', '/t/:id', '/m/:id', '/w/:id', '/d/:id', '/r/:id', '/classe', '/classe/:id', '/dashboard', '/proximite', '/recevoir', '/reunion', '/reunion/:id', '/demande', '/send', '/p2p', '/direct', '/live/:id'], sendIndex);
 
   // Toute autre adresse : l'application affiche « page introuvable », avec un vrai code 404
   app.use((req, res, next) => {

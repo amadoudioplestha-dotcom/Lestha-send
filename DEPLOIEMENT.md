@@ -149,3 +149,24 @@ Pour savoir d'où viennent vos visiteurs, ajoutez `?src=` à vos liens publics :
 - Mode Cloud : le code est valable 24 h au plus (le lien, lui, garde sa durée normale) ; le PIN éventuel reste demandé.
 - Protections : 15 essais par connexion toutes les 10 minutes, pause générale après 400 échecs en 10 minutes.
 - Aucune variable à ajouter.
+
+## 12. Version 3.9 : Réunions audio et vidéo
+- Menu **Réunion** : sujet, prénom, format **Audio** ou **Vidéo**, puis « Lancer la réunion ». Bouton **Réunion d'urgence** : réunion audio immédiate + partage WhatsApp.
+- Inviter : lien `/reunion/…`, code à 6 chiffres (à taper dans « Recevoir »), QR code, WhatsApp, SMS, e-mail.
+- Pendant la réunion : micro coupé à l'arrivée, lever la main (ordre affiché), qui parle, caméra (format vidéo), présenter son écran (ordinateur).
+- Organisateur : couper un micro / tous les micros, baisser une main, retirer quelqu'un, verrouiller, terminer pour tous.
+- Rien n'est enregistré. Reconnexion automatique si le réseau coupe.
+
+**Sans rien configurer** : moteur direct (jusqu'à 12 personnes en audio, 6 en vidéo).
+
+**Pour aller jusqu'à 50 personnes (Cloudflare Realtime SFU)** :
+1. Cloudflare → **Realtime** → **SFU** (Serverless SFU) → **Create** une application (nom : `lestha-send-reunions`).
+2. Copiez l'**App ID** et l'**App Secret / API token**.
+3. Render → Environment : `CF_SFU_APP_ID` et `CF_SFU_APP_TOKEN` (facultatif : `MEET_MAX` = 50).
+4. Après le déploiement, faites un essai à 3 téléphones. En cas de souci, `MEET_ENGINE` = `mesh` revient au moteur direct sans rien perdre.
+
+## 13. Version 3.9.1 : services activables depuis la console
+- Console → **Système** → « Services affichés sur le site » : interrupteurs pour À proximité, Réunion, Direct vidéo et Classe BBB.
+- Un service désactivé disparaît du menu, sa page affiche « Service indisponible pour le moment » et ses routes refusent les nouvelles demandes.
+- **Classe BBB est désactivée par défaut** (elle demande un serveur BigBlueButton). Réactivez-la d'un clic quand vous en aurez un.
+- Aucune variable à ajouter ; le réglage est enregistré dans le stockage et survit aux redéploiements.

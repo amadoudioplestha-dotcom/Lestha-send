@@ -101,7 +101,7 @@ function renderOverview(body) {
       <div class="kpi" style="--kc:#8b7bff"><div class="kpi-top">Visiteurs uniques<span class="kpi-icon">${icon('eye')}</span></div><div class="kpi-value" id="k4">0</div><div class="kpi-foot">${num(T.views)} ouverture(s) de liens</div></div>
     </div>
     <div class="kpis">
-      <div class="kpi" style="--kc:#10d49a"><div class="kpi-top">Connexions en direct<span class="kpi-icon">${icon('users')}</span></div><div class="kpi-value" id="k5">0</div><div class="kpi-foot">onglets Lestha Send ouverts</div></div>
+      <div class="kpi" style="--kc:#10d49a"><div class="kpi-top">Connexions en direct<span class="kpi-icon">${icon('users')}</span></div><div class="kpi-value" id="k5">0</div><div class="kpi-foot">onglets ouverts${L.meet ? ` · ${num(L.meet.meetings)} réunion(s), ${num(L.meet.people)} participant(s)` : ''}</div></div>
       <div class="kpi" style="--kc:#8b7bff"><div class="kpi-top">Liens P2P actifs<span class="kpi-icon">${icon('bolt')}</span></div><div class="kpi-value" id="k6">0</div><div class="kpi-foot">${num(L.p2pOnline)} expéditeur(s) en ligne · ${num(L.p2pReceivers)} destinataire(s)</div></div>
       <div class="kpi" style="--kc:#00b4d8"><div class="kpi-top">Envois (24 h)<span class="kpi-icon">${icon('upload')}</span></div><div class="kpi-value" id="k7">0</div><div class="kpi-foot">${bytes(T.volume.d7)} envoyés sur 7 jours</div></div>
       <div class="kpi" style="--kc:#fb7185"><div class="kpi-top">PIN erronés<span class="kpi-icon">${icon('lock')}</span></div><div class="kpi-value" id="k8">0</div><div class="kpi-foot">${num(T.emails)} e-mail(s) de lien envoyé(s)</div></div>
@@ -145,8 +145,8 @@ function miniList(items, right) {
 }
 
 /* ---------------- Retours & usage (anonyme, agrégé) ---------------- */
-const MODE_L = { cloud: 'Cloud (lien)', direct: 'Direct (P2P)', nearby: 'À proximité', live: 'Direct vidéo', classe: 'Classe', review: 'Relecture', request: 'Demande de fichiers' };
-const PAGE_L = { home: 'Accueil', nearby: 'À proximité', classe: 'Classe', live: 'Direct vidéo', request: 'Demandes', review: 'Relecture', receive: 'Lien reçu (Cloud)', 'receive-direct': 'Lien reçu (Direct)', 'receive-code': 'Recevoir (code)', dashboard: 'Mes envois', profile: 'Profils @', infos: 'Pages d\'info' };
+const MODE_L = { meet: 'Réunion', cloud: 'Cloud (lien)', direct: 'Direct (P2P)', nearby: 'À proximité', live: 'Direct vidéo', classe: 'Classe', review: 'Relecture', request: 'Demande de fichiers' };
+const PAGE_L = { home: 'Accueil', nearby: 'À proximité', classe: 'Classe', live: 'Direct vidéo', request: 'Demandes', review: 'Relecture', receive: 'Lien reçu (Cloud)', 'receive-direct': 'Lien reçu (Direct)', 'receive-code': 'Recevoir (code)', meet: 'Réunion', dashboard: 'Mes envois', profile: 'Profils @', infos: 'Pages d\'info' };
 const HEARD_L = { tiktok: 'TikTok', whatsapp: 'WhatsApp', linkedin: 'LinkedIn', facebook: 'Facebook', instagram: 'Instagram', google: 'Google', ami: 'Un proche', ecole: 'École / travail', autre: 'Autre' };
 const USE_L = { etudes: 'Études', enseignement: 'Enseignement', travail: 'Travail', creation: 'Création', perso: 'Personnel', autre: 'Autre' };
 const KIND_L = { avis: ['info', 'Avis'], idee: ['violet', 'Idée'], probleme: ['bad', 'Problème'] };
@@ -451,6 +451,10 @@ function renderSystem(body) {
         <div class="controls">${checks.map(([, lvl, t, d]) => `<div class="control"><div class="row" style="align-items:flex-start"><span class="chk ${lvl}">${icon(ic[lvl], 'sm')}</span><div class="control-text"><b>${t}</b><span>${d}</span></div></div></div>`).join('')}</div>
       </div>
       <div class="stack">
+        <div class="card"><div class="card-title"><h3>${icon('eye')}Services affichés sur le site</h3></div>
+          <p class="small muted" style="margin-bottom:10px">Un service désactivé disparaît du menu et n'accepte plus de nouvelles demandes. Réactivez-le quand vous voulez.</p>
+          <div class="stack" id="modList" style="gap:10px"><p class="small faint"><span class="spinner"></span> Chargement…</p></div>
+        </div>
         <div class="card"><div class="card-title"><h3>${icon('monitor')}Serveur</h3></div>
           <div class="adm-info">
             <div><span>Version</span><b>Lestha Send ${esc(s.version)}</b></div><div><span>Node.js</span><b>${esc(s.node)}</b></div>
@@ -466,6 +470,14 @@ function renderSystem(body) {
       </div>
     </div>
     <div class="stack" style="gap:10px;margin-top:18px">${warningBanners(['bad', 'warn', 'info'])}</div>`;
+  aapi('/settings').then(({ modules }) => {
+    const box = $('#modList'); if (!box) return;
+    box.innerHTML = modules.map(m => `<label class="switch full"><input type="checkbox" data-mod="${esc(m.key)}" ${m.on ? 'checked' : ''}><span class="track"></span><span class="small"><b>${esc(m.label)}</b></span></label>`).join('');
+    box.querySelectorAll('[data-mod]').forEach(cb => cb.onchange = async () => {
+      try { await aapi('/settings', { method: 'PUT', body: { modules: { [cb.dataset.mod]: cb.checked } } }); toast(cb.checked ? 'Service activé' : 'Service masqué du site', 'success'); }
+      catch (e) { cb.checked = !cb.checked; toast(e.message, 'error'); }
+    });
+  }).catch(e => { const box = $('#modList'); if (box) box.innerHTML = `<p class="small" style="color:var(--rose)">${esc(e.message)}</p>`; });
   $('#runTest').onclick = runFullTest;
   $('#mailTest').onclick = async () => {
     const to = await modal({ title: 'E-mail de test', body: '<input class="input" id="mt" type="email" placeholder="adresse@exemple.com">', actions: [{ label: 'Annuler', cls: 'ghost', value: null }, { label: 'Envoyer', cls: 'primary', handler: (bd) => bd.querySelector('#mt').value.trim() || false }] });

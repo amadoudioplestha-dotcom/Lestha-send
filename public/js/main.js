@@ -1,5 +1,5 @@
 /* Lestha Send — point d'entrée */
-import { $, ss, toast, enableRipples, lowMemory, isWebView } from './core.js';
+import { $, ss, toast, enableRipples, lowMemory, isWebView, getConfig, icon } from './core.js';
 import { route, startRouter } from './router.js';
 import { trackPage, openFeedback } from './ux.js';
 window.addEventListener('tx:route', trackPage);
@@ -11,15 +11,20 @@ route((path, params) => (path === '/' && params.get('room') ? [path] : null), ()
 route(/^\/t\/([A-Za-z0-9]{6,32})\/?$/, () => import('./receive.js'), null);
 route(/^\/m\/([A-Za-z0-9]{6,32})\/?$/, () => import('./manage.js'), 'dashboard');
 route(/^\/dashboard\/?$/, () => import('./dashboard.js'), 'dashboard');
+/* Services désactivés depuis la console : masqués du menu, page « indisponible » */
+const offView = { render(root) { root.innerHTML = `<section class="narrow"><div class="card"><div class="state-screen"><div class="state-icon info">${icon('clock')}</div><h2>Service indisponible pour le moment</h2><p class="muted">Ce service n'est pas ouvert actuellement. Les envois de fichiers fonctionnent normalement.</p><a class="btn primary" href="/" data-link>${icon('upload')}Envoyer des fichiers</a></div></div></section>`; } };
+const gate = (key, loader) => async () => { const cfg = await getConfig(); return cfg.modules && cfg.modules[key] === false ? { default: offView } : loader(); };
+getConfig().then(cfg => { const m = cfg.modules || {}; document.querySelectorAll('[data-nav]').forEach(a => { if (m[a.dataset.nav] === false) a.hidden = true; }); }).catch(() => {});
+route(/^\/reunion(?:\/([a-z0-9]{10}))?\/?$/, gate('meet', () => import('./meet.js')), 'meet');
 route(/^\/recevoir\/?$/, () => import('./receive-code.js'), 'receive');
-route(/^\/proximite\/?$/, () => import('./nearby.js'), 'nearby');
-route(/^\/classe(?:\/([A-Za-z0-9]{20}))?\/?$/, () => import('./classroom.js'), 'classroom');
+route(/^\/proximite\/?$/, gate('nearby', () => import('./nearby.js')), 'nearby');
+route(/^\/classe(?:\/([A-Za-z0-9]{20}))?\/?$/, gate('classroom', () => import('./classroom.js')), 'classroom');
 route(/^\/w\/([A-Za-z0-9]{6,32})\/?$/, () => import('./watch.js'), null);
 route(/^\/demande\/?$/, () => import('./request.js').then(m => ({ default: m.createView })), 'send');
 route(/^\/d\/([A-Za-z0-9]{6,32})\/?$/, () => import('./request.js').then(m => ({ default: m.depositView })), null);
 route(/^\/r\/([A-Za-z0-9]{6,32})\/?$/, () => import('./request.js').then(m => ({ default: m.manageView })), 'dashboard');
-route(/^\/direct\/?$/, () => import('./live.js').then(m => ({ default: m.studioView })), 'live');
-route(/^\/live\/([A-Za-z0-9]{6,32})\/?$/, () => import('./live.js').then(m => ({ default: m.roomView })), 'live');
+route(/^\/direct\/?$/, gate('live', () => import('./live.js').then(m => ({ default: m.studioView }))), 'live');
+route(/^\/live\/([A-Za-z0-9]{6,32})\/?$/, gate('live', () => import('./live.js').then(m => ({ default: m.roomView }))), 'live');
 route(/^\/(conditions|confidentialite)\/?$/, () => import('./legal.js'), null);
 route(/^\/@([A-Za-z0-9-]{3,30})\/?$/, () => import('./handle.js'), null);
 route(/^\/(a-propos|securite|faq)\/?$/, () => import('./pages.js'), null);
