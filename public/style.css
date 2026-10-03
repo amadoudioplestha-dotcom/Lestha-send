@@ -969,3 +969,35 @@ body.in-meet { padding-bottom: calc(100px + env(safe-area-inset-bottom, 0px)); }
 @media (max-width: 520px) { .mb { min-width: 54px; padding: 8px 6px; font-size: 10px; } .meet-grid { grid-template-columns: 1fr 1fr; } .mt-av { width: 52px; height: 52px; font-size: 20px; } }
 
 [data-nav][hidden] { display: none !important; }
+
+/* ---------- v3.9.2 : réunion plein écran, réactions, enregistrement ---------- */
+body.in-meet .topbar, body.in-meet .site-footer, body.in-meet .bg-scene { display: none !important; }
+body.in-meet #view { padding-top: max(10px, env(safe-area-inset-top, 0px)); }
+.meet-top { padding: 10px 14px; border-radius: 18px; border: 1px solid var(--border, rgba(148,163,184,.2)); background: rgb(var(--well-2, 148 163 184) / .35); }
+.meet-logo { width: 30px; height: 30px; flex: none; }
+.meet-rec { gap: 8px; }
+.meet-rec i { width: 9px; height: 9px; border-radius: 50%; background: #e11d48; animation: recblink 1.2s infinite; }
+@keyframes recblink { 50% { opacity: .25; } }
+.mb-emo { font-size: 22px; line-height: 22px; height: 22px; font-weight: 400; }
+.mb.rec { background: #e11d48; color: #fff; animation: recpulse 2s infinite; }
+@keyframes recpulse { 50% { box-shadow: 0 0 0 6px rgba(225, 29, 72, .25); } }
+.meet-panel { top: max(16px, env(safe-area-inset-top, 0px)); }
+.meet-react { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(104px + env(safe-area-inset-bottom, 0px)); z-index: 50; width: min(400px, calc(100vw - 24px)); padding: 14px; display: grid; gap: 12px; }
+.mr-tones { display: flex; justify-content: space-between; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid rgba(148,163,184,.18); }
+.mr-tones button { flex: 1; font-size: 24px; line-height: 1; padding: 8px 0; border: 0; border-radius: 12px; background: transparent; cursor: pointer; }
+.mr-tones button.on { background: rgba(0, 180, 216, .18); box-shadow: inset 0 0 0 2px var(--t-cyan, #00b4d8); }
+.mr-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.mr-grid button { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 2px; border: 0; border-radius: 12px; background: rgba(148,163,184,.1); color: inherit; cursor: pointer; transition: transform .12s; }
+.mr-grid button:hover { transform: scale(1.08); }
+.mr-grid b { font-size: 28px; line-height: 1; font-weight: 400; }
+.mr-grid small { font-size: 10.5px; opacity: .8; }
+.mt-float { position: absolute; bottom: 30%; font-size: 46px; line-height: 1; pointer-events: none; animation: mtfloat 2.8s ease-out forwards; z-index: 3; filter: drop-shadow(0 4px 10px rgba(0,0,0,.35)); }
+@keyframes mtfloat { 0% { transform: translateY(20px) scale(.6); opacity: 0; } 15% { transform: translateY(0) scale(1.15); opacity: 1; } 70% { opacity: 1; } 100% { transform: translateY(-90px) scale(1); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .mt-float { animation-duration: 2.8s; animation-name: none; } .mb.rec, .meet-rec i { animation: none; } }
+.meet-grid.dense { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+.meet-grid.dense .mt-tile { aspect-ratio: 1; }
+.meet-grid.xdense { grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; }
+.meet-grid.xdense .mt-av { width: 40px; height: 40px; font-size: 15px; }
+.meet-grid.xdense .mt-name { font-size: 10.5px; padding: 3px 6px; left: 4px; right: 4px; bottom: 4px; }
+.is-video .meet-grid.dense { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+@media (max-width: 520px) { .meet-grid.dense { grid-template-columns: repeat(3, 1fr); } .meet-grid.xdense { grid-template-columns: repeat(4, 1fr); } .meet-top .btn span { display: none; } }

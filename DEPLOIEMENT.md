@@ -170,3 +170,10 @@ Pour savoir d'où viennent vos visiteurs, ajoutez `?src=` à vos liens publics :
 - Un service désactivé disparaît du menu, sa page affiche « Service indisponible pour le moment » et ses routes refusent les nouvelles demandes.
 - **Classe BBB est désactivée par défaut** (elle demande un serveur BigBlueButton). Réactivez-la d'un clic quand vous en aurez un.
 - Aucune variable à ajouter ; le réglage est enregistré dans le stockage et survit aux redéploiements.
+
+## 14. Version 3.9.2 : réunion plein écran, réactions, enregistrement
+- Pendant une réunion, le menu et le pied de page disparaissent (téléphone et ordinateur) : la réunion occupe tout l'écran.
+- **Réagir** : 10 autocollants (main levée, d'accord, oui, non, bravo, merci, j'aime, rire, surpris, question) qui s'affichent sur la vignette ; **choix de la couleur de peau** (du jaune au noir), gardé d'une réunion à l'autre et appliqué aussi à la main levée.
+- **Enregistrer** (organisateur seulement) : réunion audio → fichier audio ; réunion vidéo ou partage d'écran → vidéo 1280×720 avec les vignettes et les noms. Tous les participants voient « Enregistrement » en direct. Le fichier est téléchargé sur l'appareil de l'organisateur (rien n'est gardé sur le serveur). Conseil : enregistrer depuis un ordinateur (Chrome ou Edge).
+- Grille compacte automatique au-delà de 6 puis de 15 participants.
+- **Capacité** : 12 en audio / 6 en vidéo sans configuration ; **50 avec Cloudflare Realtime SFU** (voir section 12).
