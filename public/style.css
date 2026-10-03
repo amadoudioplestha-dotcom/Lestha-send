@@ -897,3 +897,21 @@ ul.checks li > .i { flex: none; margin-top: 3px; color: var(--ok); }
   .nav a > .i { display: none; }
   .topbar { gap: 10px; }
 }
+
+/* ---------- v3.8 : avis, idées, chemin du mode Direct ---------- */
+.link-btn { background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.link-btn:hover { color: var(--text, #fff); }
+.rx-path { min-height: 1.2em; margin-top: 4px; text-align: center; }
+.fb-moods { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.fb-mood { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px; border-radius: 12px; border: 1px solid rgba(148, 163, 184, .2); background: rgba(148, 163, 184, .06); color: inherit; cursor: pointer; transition: transform .15s, border-color .15s, background .15s; }
+.fb-mood span { font-size: 26px; line-height: 1; }
+.fb-mood small { font-size: 11px; opacity: .75; }
+.fb-mood:hover { transform: translateY(-2px); }
+.fb-mood.on { border-color: var(--t-cyan, #00b4d8); background: rgba(0, 180, 216, .2); box-shadow: inset 0 0 0 1px var(--t-cyan, #00b4d8); transform: translateY(-2px) scale(1.04); }
+.fb-idea { display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left; padding: 8px 10px; margin-bottom: 6px; border-radius: 12px; border: 1px solid rgba(148, 163, 184, .18); background: transparent; color: inherit; cursor: pointer; }
+.fb-idea.on { border-color: var(--t-violet, #8b7bff); background: rgba(139, 123, 255, .1); }
+.fb-vote { display: flex; flex-direction: column; align-items: center; min-width: 34px; font-size: 12px; font-weight: 700; }
+.fb-vote b { font-size: 11px; }
+.fb-idea.on .fb-vote { color: var(--t-violet, #8b7bff); }
+.fb-idea-t { display: flex; flex-direction: column; gap: 2px; }
+@media (max-width: 420px) { .fb-mood small { display: none; } }

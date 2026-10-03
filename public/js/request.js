@@ -4,6 +4,7 @@ import { navigate } from './router.js';
 import { Uploader } from './uploader.js';
 import { pick, bindShare, shareGrid } from './send.js';
 import { brandHeader, openHandle } from './profile.js';
+import { track, afterSuccess } from './ux.js';
 
 const HOUR = 3600e3, DAY = 24 * HOUR, GB = 1024 ** 3, MB = 1024 ** 2;
 const owned = {
@@ -98,6 +99,7 @@ function success(root, r, body) {
   root.querySelectorAll('[data-share]').forEach(b => { const old = b.onclick; b.onclick = () => { if (b.dataset.share !== 'mail') return old(); location.href = `mailto:?subject=${encodeURIComponent(body.title || 'Déposez vos fichiers')}&body=${encodeURIComponent('Déposez vos fichiers ici : ' + r.link)}`; }; });
   renderQR($('#qrBox', root), r.link);
   $('#again', root).onclick = (e) => { e.preventDefault(); createView.render(root); };
+  track('use', { m: 'request' });
   confetti(40);
 }
 
@@ -205,6 +207,7 @@ export const depositView = (() => {
       root.innerHTML = `<section class="narrow"><div class="card glow"><div class="state-screen"><div class="success-burst">${icon('check')}</div><h2>Merci, c'est déposé !</h2>
         <p class="muted">${items.length} fichier(s) · ${bytes(total)} transmis à ${esc(info.ownerName || 'l\'organisateur')}.</p>
         <button type="button" class="btn" id="again">${icon('plus')}Déposer d'autres fichiers</button></div></div></section>`;
+      track('sent', { m: 'request', b: total }); afterSuccess('request');
       confetti(50);
       items = [];
       $('#again', root).onclick = () => form();

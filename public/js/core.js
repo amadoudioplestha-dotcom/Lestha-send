@@ -233,6 +233,7 @@ export function toast(msg, type = 'info', { action, onAction, duration: dur } = 
   if (!root) return;
   const el = document.createElement('div');
   el.className = 'toast ' + type;
+  if (type === 'error') { try { window.dispatchEvent(new CustomEvent('tx:err', { detail: String(msg) })); } catch (e) { /* ignore */ } }
   el.setAttribute('role', type === 'error' ? 'alert' : 'status');
   el.innerHTML = `<span class="t-ic">${icon(TOAST_ICONS[type] || 'sparkles')}</span><span class="t-msg">${esc(msg)}</span>${action ? `<button type="button">${esc(action)}</button>` : ''}`;
   if (action) el.querySelector('button').onclick = () => { onAction && onAction(); close(); };

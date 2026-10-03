@@ -19,6 +19,8 @@ const { mountNearby } = require('./lib/nearby');
 const { mountLive } = require('./lib/live');
 const { mountClassroom } = require('./lib/classroom');
 const { mountProfiles, createStats } = require('./lib/profiles');
+const { createIce } = require('./lib/turn');
+const { createInsights } = require('./lib/insights');
 const VERSION = require('./package.json').version;
 
 const env = process.env;
@@ -70,7 +72,8 @@ async function main() {
   if (!origin.enabled) warnings.push({ level: 'bad', code: 'no-origin-secret', text: 'ORIGIN_SECRET absent : le serveur accepte les requêtes qui contournent Cloudflare, et les limites par adresse IP peuvent être contournées.' });
   if (!captcha.enabled) warnings.push({ level: 'info', code: 'no-turnstile', text: 'Turnstile non configuré : pas de vérification anti-robot à la création des envois.' });
   if (!mailer.enabled) warnings.push({ level: 'info', code: 'no-email', text: 'E-mail non configuré : l\'envoi du lien par e-mail et les alertes sont désactivés.' });
-  if (!env.TURN_URL) warnings.push({ level: 'info', code: 'no-turn', text: 'Aucun serveur TURN : certains transferts P2P entre réseaux très filtrés peuvent échouer.' });
+  const ice = createIce(env);
+  if (!ice.provider) warnings.push({ level: 'warn', code: 'no-turn', text: 'Aucun relais TURN : le mode Direct peut échouer entre réseaux mobiles (4G/5G) ou filtrés. Ajoutez CF_TURN_KEY_ID et CF_TURN_API_TOKEN (Cloudflare, 1 000 Go gratuits par mois).' });
 
   // Secret HMAC stable (jetons PIN, URLs d'upload locales) : APP_SECRET ou généré et stocké une fois
   let secret = env.APP_SECRET;
@@ -85,7 +88,7 @@ async function main() {
   const signer = makeSigner(secret);
   const security = createSecurity({ storage, secret });
   await security.load();
-  const ctx = { cloudEnabled, security, warnings, version: VERSION, startedAt: Date.now(), isRender: IS_RENDER, isAdmin: () => false, captcha, originProtected: origin.enabled };
+  const ctx = { cloudEnabled, security, warnings, version: VERSION, startedAt: Date.now(), isRender: IS_RENDER, isAdmin: () => false, captcha, originProtected: origin.enabled, ice };
 
   const app = express();
   // Un seul proxy devant l'application (Render) : on ne croit que l'adresse qu'il ajoute.
@@ -134,31 +137,21 @@ async function main() {
 
   app.get('/health', (req, res) => res.json({
     status: 'OK', version: VERSION, timestamp: new Date().toISOString(), storage: storage.name, cloud: cloudEnabled,
-    email: { enabled: mailer.enabled, provider: mailer.provider }, turn: !!env.TURN_URL, webrtc: true, origin: origin.enabled
+    email: { enabled: mailer.enabled, provider: mailer.provider }, turn: ice.provider, webrtc: true, origin: origin.enabled
   }));
 
-  /* ---------- ICE (STUN/TURN) ---------- */
-  function validateIceServer(url, username, credential) {
-    if (!url || typeof url !== 'string') return null;
-    url = url.trim();
-    const m = url.match(/^(stun|turn|turns):/i);
-    const scheme = m ? m[1].toLowerCase() : (url.includes('stun.') ? 'stun' : 'turn');
-    const rest = m ? url.slice(m[0].length) : url;
-    const hm = rest.match(/^([^:?]+)(?::(\d+))?(\?.*)?$/);
-    if (!hm) return null;
-    const port = parseInt(hm[2] || (scheme === 'stun' ? 19302 : 3478), 10);
-    const obj = { urls: `${scheme}:${hm[1].trim()}:${port}${hm[3] || ''}` };
-    if (scheme !== 'stun' && username && credential) { obj.username = String(username).trim(); obj.credential = String(credential).trim(); }
-    return obj;
-  }
-  app.get('/api/ice-config', (req, res) => {
-    const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:stun.cloudflare.com:3478' }];
-    (env.TURN_URL || '').split(',').filter(Boolean).forEach(u => {
-      const s = validateIceServer(u, env.TURN_USERNAME, env.TURN_CREDENTIAL);
-      if (s) iceServers.push(s);
-    });
-    res.json({ iceServers });
+  /* ---------- ICE (STUN + relais TURN Cloudflare à identifiants éphémères) ---------- */
+  const iceLimit = rateLimiter({ windowMs: 10 * 60e3, max: 120 });
+  app.get('/api/ice-config', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!iceLimit(clientIp(req))) return res.json({ iceServers: [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] }], relay: false });
+    res.json(await ice.getIceServers());
   });
+
+  /* ---------- Retours et usage (anonyme) ---------- */
+  ctx.io = io;
+  ctx.insights = createInsights({ storage, secret, mailer, env, ctx });
+  ctx.insights.mountPublic(app);
 
   /* ---------- E-mail du mode P2P (lien limité à ce domaine : pas de relais de spam) ---------- */
   const p2pMailLimit = rateLimiter({ windowMs: 3600 * 1000, max: 20 });
@@ -216,10 +209,10 @@ async function main() {
     console.log(`🚀 Lestha Send sur le port ${PORT}`);
     console.log(`💾 Stockage : ${storage.name === 's3' ? 'S3 / Cloudflare R2 (' + (env.S3_BUCKET || env.R2_BUCKET) + ')' : 'disque local (' + storage.root + ')'}`);
     console.log(`📧 E-mail : ${mailer.enabled ? mailer.provider : 'non configuré'}`);
-    console.log(`🔄 TURN : ${env.TURN_URL ? 'configuré' : 'STUN uniquement'}`);
+    console.log(`🔄 TURN : ${ice.provider === 'cloudflare' ? 'relais Cloudflare (identifiants éphémères)' : ice.provider ? 'serveur personnalisé' : 'STUN uniquement'}`);
   });
 
-  const shutdown = async () => { try { await db.flushAll(); if (ctx.stats) await ctx.stats.flush(); } catch (e) { /* ignore */ } process.exit(0); };
+  const shutdown = async () => { try { await db.flushAll(); if (ctx.stats) await ctx.stats.flush(); if (ctx.insights) await ctx.insights.flush(); } catch (e) { /* ignore */ } process.exit(0); };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 }

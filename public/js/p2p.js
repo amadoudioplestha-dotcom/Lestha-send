@@ -8,19 +8,26 @@
 import { $, esc, icon, bytes, speed, duration, timeLeft, fileKind, ls, toast, modal, renderQR, keepAwake, notify, getSocket, confetti, isMobile, lowMemory, confirmDialog } from './core.js';
 import { navigate } from './router.js';
 import { validateDirectFiles } from './direct-limits.mjs';
+import { track, afterSuccess } from './ux.js';
 
 const HOUR = 3600e3;
 const WINDOW = lowMemory ? 8 * 1024 * 1024 : isMobile ? 24 * 1024 * 1024 : 64 * 1024 * 1024;
 const BUF_HIGH = 8 * 1024 * 1024, BUF_LOW = 2 * 1024 * 1024;
 const READ_SIZE = isMobile ? 1024 * 1024 : 4 * 1024 * 1024;
 
-let iceServers = null;
+/* Serveurs ICE : STUN + relais TURN à identifiants éphémères (renouvelés avant expiration) */
+let ice = null, iceAt = 0;
 async function getIce() {
-  if (iceServers) return iceServers;
-  try { iceServers = (await (await fetch('/api/ice-config', { cache: 'no-store' })).json()).iceServers; }
-  catch (e) { iceServers = [{ urls: 'stun:stun.l.google.com:19302' }]; }
-  return iceServers;
+  if (ice && Date.now() - iceAt < (ice.ttl || 1200) * 1000) return ice;
+  try {
+    const j = await (await fetch('/api/ice-config', { cache: 'no-store' })).json();
+    if (j && Array.isArray(j.iceServers) && j.iceServers.length) { ice = j; iceAt = Date.now(); }
+  } catch (e) { /* réseau : on garde la dernière configuration */ }
+  return ice || { iceServers: [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] }], relay: false };
 }
+/** relayOnly : après deux échecs de suite, on passe d'office par le relais (réseaux mobiles CGNAT, Wi-Fi filtrés) */
+const rtcConfig = (cfg, relayOnly) => ({ iceServers: cfg.iceServers, iceCandidatePoolSize: 2, bundlePolicy: 'max-bundle', iceTransportPolicy: relayOnly && cfg.relay ? 'relay' : 'all' });
+getIce();
 const emitAck = (socket, ev, data) => new Promise((res) => { socket.timeout(10000).emit(ev, data, (err, r) => res(err ? null : r)); });
 
 /* ======================================================================
@@ -49,6 +56,7 @@ export async function startSend(items, { ttl, pin, destroy }) {
   const hist = ls.get('transferx_history', []);
   hist.unshift({ roomId: P.roomId, expiresAt: P.expiresAt, fileName: items.length === 1 ? items[0].file.name : (items[0].path ? items[0].path.split('/')[0] : items.length + ' fichiers'), fileSize: P.total, fileCount: items.length, pin: P.pin || null, createdAt: Date.now(), downloadCount: 0, destroyOnDownload: P.destroy });
   ls.set('transferx_history', hist.slice(0, 100));
+  track('sent', { m: 'direct', b: P.total });
   keepAwake(true);
 }
 
@@ -103,7 +111,7 @@ function bindSenderSocket(socket) {
     if (P.active) { const ok = await reclaim(socket); if (!ok) { toast('Le lien direct a expiré', 'error'); stopSend(false); } }
   });
   socket.on('disconnect', () => { P.online = false; renderSenderLive(); });
-  socket.on('receiver-joined', ({ receiverId }) => { if (P.active && receiverId) createPeer(socket, receiverId); });
+  socket.on('receiver-joined', ({ receiverId, relay }) => { if (P.active && receiverId) createPeer(socket, receiverId, relay === true); });
   socket.on('answer-received', async ({ answer, receiverId }) => {
     const peer = P.peers.get(receiverId); if (!peer) return;
     try {
@@ -131,10 +139,10 @@ function bindSenderSocket(socket) {
   socket.on('transfer-destroyed', () => { toast('Lien auto-détruit après le téléchargement 🔥', 'info'); stopSend(false); });
 }
 
-async function createPeer(socket, receiverId) {
+async function createPeer(socket, receiverId, relayOnly = false) {
   const old = P.peers.get(receiverId);
   if (old) { old.gen = (old.gen || 0) + 1; try { old.pc.close(); } catch (e) { /* ignore */ } }
-  const pc = new RTCPeerConnection({ iceServers: await getIce() });
+  const pc = new RTCPeerConnection(rtcConfig(await getIce(), relayOnly));
   const dc = pc.createDataChannel('file', { ordered: true });
   dc.binaryType = 'arraybuffer';
   dc.bufferedAmountLowThreshold = BUF_LOW;
@@ -156,7 +164,7 @@ async function createPeer(socket, receiverId) {
     let m; try { m = JSON.parse(e.data); } catch (err) { return; }
     if (m.msgType === 'resume') streamFrom(peer, m.fileIndex || 0, m.offset || 0);
     else if (m.msgType === 'ack') { peer.acked = m.pos; wake(peer); }
-    else if (m.msgType === 'complete') { peer.done = true; peer.status = 'terminé'; renderSenderLive(); }
+    else if (m.msgType === 'complete') { peer.done = true; peer.status = 'terminé'; renderSenderLive(); afterSuccess('direct'); }
     else if (m.msgType === 'error') { peer.status = 'erreur'; toast('Destinataire : ' + m.message, 'warn'); renderSenderLive(); }
   };
   const offer = await pc.createOffer();
@@ -308,7 +316,7 @@ export const receiveView = {
     if (!/^TX-[A-Z0-9]{6,8}$/.test(room)) { root.innerHTML = stateScreen('bad', 'x', 'Lien invalide', 'Vérifiez le lien reçu.'); return; }
     if (R.roomId !== room) resetReceiver(room);
     renderReceiver();
-    if (!R.started) { R.started = true; connectReceiver(); }
+    if (!R.started) { R.started = true; connectReceiver(); try { if (!sessionStorage.getItem('tx_openev_' + room)) { sessionStorage.setItem('tx_openev_' + room, '1'); track('open', { m: 'direct' }); } } catch (e) { /* ignore */ } }
   },
   destroy() { R.root = null; }
 };
@@ -316,7 +324,7 @@ export const receiveView = {
 const R = { root: null };
 function resetReceiver(room) {
   if (R.pc) try { R.pc.close(); } catch (e) { /* ignore */ }
-  Object.assign(R, { roomId: room, started: false, state: 'connecting', meta: null, info: null, written: [], cur: -1, curPos: 0, buf: [], bufBytes: 0, total: 0, pos: 0, samples: [], speed: 0, error: '', pc: null, dc: null, pending: [], worker: null, mem: null, done: false, fileUrls: [] });
+  Object.assign(R, { roomId: room, started: false, state: 'connecting', meta: null, info: null, written: [], cur: -1, curPos: 0, buf: [], bufBytes: 0, total: 0, pos: 0, samples: [], speed: 0, error: '', pc: null, dc: null, pending: [], worker: null, mem: null, done: false, fileUrls: [], path: '', fails: 0, restarts: 0, relayOnly: false, t0: 0, b0: 0, lastMove: 0, lastPos: 0 });
 }
 
 function stateScreen(kind, ic, title, text, extra = '') {
@@ -354,6 +362,7 @@ function renderReceiver() {
           <div class="ring-center"><div class="ring-pct"><span id="rxPct">0</span><small>%</small></div><div class="ring-sub" id="rxBytes">${total ? '0 o / ' + bytes(total) : 'Préparation…'}</div></div>
         </div>
         <div class="metrics"><div class="metric"><b id="rxSpeed">—</b><span>Vitesse</span></div><div class="metric"><b id="rxEta">—</b><span>Restant</span></div><div class="metric"><b id="rxFiles">${files.length || '—'}</b><span>Fichiers</span></div></div>
+        <div class="small muted rx-path" id="rxPath">${pathLabel()}</div>
         <div id="rxBanner">${waiting ? `<div class="banner warn">${icon('clock')}<span>L'expéditeur a quitté Lestha Send un instant. <b>Le téléchargement reprendra automatiquement</b> dès son retour — gardez cette page ouverte.</span></div>` : ''}</div>
         <button type="button" class="btn ghost" id="rxStop">${icon('x')}Arrêter</button>
       </div>
@@ -393,6 +402,14 @@ async function connectReceiver() {
   const socket = await getSocket();
   if (!R.bound) {
     R.bound = true;
+    /* Wi-Fi ↔ 4G, nouvelle adresse IP : on vérifie que les octets arrivent encore, sinon on renégocie aussitôt */
+    const onNet = () => {
+      if (!R.started || R.done || R.state === 'error') return;
+      const p0 = R.pos;
+      setTimeout(() => { if (!R.done && R.pos === p0 && R.restartNow) R.restartNow(); }, 2000);
+    };
+    window.addEventListener('online', onNet);
+    try { navigator.connection && navigator.connection.addEventListener('change', onNet); } catch (e) { /* ignore */ }
     socket.on('connect', () => { if (R.roomId && R.started && !R.done) joinRoom(R.pin || null); });
     socket.on('offer-received', async ({ offer }) => {
       if (!R.roomId || R.done) return;
@@ -436,18 +453,49 @@ async function joinRoom(pin) {
 }
 
 async function newReceiverPc(socket) {
-  const pc = new RTCPeerConnection({ iceServers: await getIce() });
+  const cfg = await getIce();
+  const pc = new RTCPeerConnection(rtcConfig(cfg, R.relayOnly));
   R.pc = pc;
   let discTimer = null;
+  /* Renégociation rapide : la reprise repart du dernier octet écrit, rien n'est renvoyé deux fois */
+  const restart = () => {
+    if (pc !== R.pc || R.done || R.state === 'error') return;
+    clearTimeout(discTimer); clearTimeout(connTimer);
+    R.restarts++; R.fails++;
+    if (R.fails >= 2 && cfg.relay) R.relayOnly = true;
+    socket.emit('request-restart', { roomId: R.roomId, relay: R.relayOnly });
+  };
+  R.restartNow = restart;
+  // Pas connecté au bout de 12 s (20 s par le relais) : nouvelle tentative
+  const connTimer = setTimeout(() => { if (pc === R.pc && pc.connectionState !== 'connected') restart(); }, R.relayOnly ? 20000 : 12000);
   pc.onicecandidate = (e) => { if (e.candidate) socket.emit('ice-candidate', { roomId: R.roomId, candidate: e.candidate }); };
   pc.onconnectionstatechange = () => {
     if (pc !== R.pc) return;
-    if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+    const st = pc.connectionState;
+    if (st === 'connected') { clearTimeout(connTimer); clearTimeout(discTimer); R.fails = 0; setTimeout(() => detectPath(pc), 300); }
+    else if (st === 'disconnected' || st === 'failed') {
       clearTimeout(discTimer);
-      discTimer = setTimeout(() => { if (pc === R.pc && !R.done && pc.connectionState !== 'connected') socket.emit('request-restart', { roomId: R.roomId }); }, pc.connectionState === 'failed' ? 500 : 5000);
+      discTimer = setTimeout(() => { if (pc === R.pc && pc.connectionState !== 'connected') restart(); }, st === 'failed' ? 300 : 2500);
     }
   };
   pc.ondatachannel = (e) => setupRxChannel(e.channel);
+}
+
+/** Chemin réellement utilisé : même réseau, direct entre appareils, ou relais */
+async function detectPath(pc) {
+  try {
+    const st = await pc.getStats(); const by = new Map(); let pair = null;
+    st.forEach(r => by.set(r.id, r));
+    st.forEach(r => { if (r.type === 'transport' && r.selectedCandidatePairId) pair = by.get(r.selectedCandidatePairId); });
+    if (!pair) st.forEach(r => { if (!pair && r.type === 'candidate-pair' && r.state === 'succeeded' && (r.selected || r.nominated)) pair = r; });
+    if (!pair) return;
+    const l = by.get(pair.localCandidateId) || {}, rm = by.get(pair.remoteCandidateId) || {};
+    R.path = l.candidateType === 'relay' || rm.candidateType === 'relay' ? 'relay' : l.candidateType === 'host' && rm.candidateType === 'host' ? 'lan' : 'direct';
+    const el = R.root && $('#rxPath', R.root); if (el) el.innerHTML = pathLabel();
+  } catch (e) { /* ignore */ }
+}
+function pathLabel() {
+  return { lan: '⚡ Même réseau : vitesse maximale', direct: '⚡ Connexion directe entre les deux appareils', relay: '🛡️ Via relais sécurisé (réseau filtré) · toujours chiffré de bout en bout' }[R.path] || '';
 }
 
 /* ---- Écriture disque ---- */
@@ -530,7 +578,8 @@ function setupRxChannel(dc) {
         R.samples = [];
         lastAck = R.pos;
         if (fi === -1) return finishReceive().catch(e => failReceive(dc, 'Finalisation impossible : ' + e.message));
-        R.state = 'receiving';
+        R.state = 'receiving'; R.lastMove = Date.now(); R.lastPos = R.pos;
+        if (!R.t0) { R.t0 = Date.now(); R.b0 = R.pos; }
         renderReceiver();
         dc.send(JSON.stringify({ msgType: 'resume', fileIndex: fi, offset: R.written[fi] }));
       } else if (m.msgType === 'file-start') {
@@ -565,10 +614,17 @@ function setupRxChannel(dc) {
     if (R.bufBytes >= 2 * 1024 * 1024) flushBuf();
   };
   dc.onclose = () => { flushBuf(); };
-  if (!R.ticker) R.ticker = setInterval(() => { if (R.state === 'receiving') updateRxProgress(); }, 700);
+  if (!R.ticker) R.ticker = setInterval(() => {
+    if (R.state !== 'receiving') return;
+    updateRxProgress();
+    // Canal muet (changement de réseau, IP qui change…) : on renégocie sans attendre le navigateur
+    if (R.pos !== R.lastPos) { R.lastPos = R.pos; R.lastMove = Date.now(); }
+    else if (Date.now() - R.lastMove > 10000 && R.restartNow) { R.lastMove = Date.now(); R.restartNow(); }
+  }, 700);
 }
 
 function failReceive(dc, message) {
+  if (R.state !== 'error') track('p2p', { ok: 0, r: R.restarts });
   R.state = 'error';
   R.error = message;
   clearInterval(R.ticker); R.ticker = null;
@@ -600,6 +656,9 @@ async function finishReceive() {
   try { R.dc.send(JSON.stringify({ msgType: 'complete' })); } catch (e) { /* ignore */ }
   const socket = await getSocket();
   socket.emit('download-complete', { roomId: R.roomId });
+  track('got', { m: 'direct' });
+  if (R.t0) track('p2p', { ok: 1, relay: R.path === 'relay', b: R.total - R.b0, ms: Date.now() - R.t0, r: R.restarts });
+  afterSuccess('direct');
   keepAwake(false);
   R.state = 'done';
   document.title = 'Lestha Send — Reçu';

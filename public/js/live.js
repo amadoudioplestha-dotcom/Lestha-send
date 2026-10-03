@@ -6,6 +6,7 @@
 import { $, esc, icon, ls, api, toast, getSocket, copyText, shareTo, renderQR, confirmDialog, visitorId, getConfig, owned, modal } from './core.js';
 import { Uploader } from './uploader.js';
 import { navigate } from './router.js';
+import { track } from './ux.js';
 
 const mine = {
   all: () => ls.get('tx_lives', []),
@@ -68,6 +69,7 @@ export const studioView = (() => {
       const st = $('#lStart', root).value ? new Date($('#lStart', root).value).getTime() : null;
       const btn = $('#lGo', root); btn.disabled = true;
       try {
+        track('use', { m: 'live' });
         const r = await api('/api/lives', { method: 'POST', body: { kind, url: $('#lUrl', root)?.value.trim(), title, hostName, description: $('#lDesc', root).value.trim(), startsAt: st, chat: $('#lChat', root).checked, waitingRoom: !!$('#lWait', root)?.checked } });
         mine.add({ id: r.id, key: r.hostKey, modKey: r.modKey, role: 'host', title, kind, provider: r.live.provider, createdAt: Date.now() });
         toast('Salle de direct créée 🎬', 'success');

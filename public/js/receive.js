@@ -1,6 +1,7 @@
 /* Lestha Send — page de téléchargement (mode Cloud) */
 import { $, $$, esc, icon, bytes, fileKind, relTime, ls, ss, api, visitorId, toast, modal, copyText, isMobile } from './core.js';
 import { brandHeader } from './profile.js';
+import { track } from './ux.js';
 
 let root = null, id = null, data = null, timer = null, poll = null;
 
@@ -29,6 +30,7 @@ async function load() {
   clearTimeout(poll);
   try {
     data = await api(`/api/public/t/${id}?${q()}`);
+    if (!ss.get('tx_openev_' + id)) { ss.set('tx_openev_' + id, 1); track('open', { m: 'cloud' }); }
   } catch (e) {
     if (!root) return;
     if (e.network) { root.innerHTML = state('warn', 'wifi-off', 'Hors connexion', 'Impossible de joindre le serveur. Nouvelle tentative…'); poll = setTimeout(load, 4000); return; }
@@ -169,6 +171,7 @@ function tickCountdown() {
 }
 
 function markGot(fid) {
+  if (!ss.get('tx_gotev_' + id)) { ss.set('tx_gotev_' + id, 1); track('got', { m: 'cloud' }); }
   const got = ls.get('tx_got_' + id, {}); got[fid] = Date.now(); ls.set('tx_got_' + id, got);
   const a = root && root.querySelector(`.dl-btn[data-dl="${fid}"]`);
   if (a) { a.classList.add('ok'); a.innerHTML = icon('check', 'sm') + '<span>Encore</span>'; }

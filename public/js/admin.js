@@ -52,7 +52,7 @@ function renderLogin(err = '') {
 }
 
 /* ---------------- Coque ---------------- */
-const TABS = [['overview', 'chart', 'Vue d\'ensemble'], ['transfers', 'folder', 'Transferts'], ['activity', 'bolt', 'Activité'], ['security', 'shield', 'Sécurité'], ['system', 'settings', 'Système']];
+const TABS = [['overview', 'chart', 'Vue d\'ensemble'], ['insights', 'message', 'Retours & usage'], ['transfers', 'folder', 'Transferts'], ['activity', 'bolt', 'Activité'], ['security', 'shield', 'Sécurité'], ['system', 'settings', 'Système']];
 function start() {
   // Le jeton porte sa propre date d'expiration : on la reprend pour l'accès administrateur des pages publiques
   try { const exp = JSON.parse(atob(A.token.split('.')[0].replace(/-/g, '+').replace(/_/g, '/'))).exp; if (exp > Date.now()) adminPass.set(A.token, exp - Date.now() - 60e3); } catch (e) { /* ignore */ }
@@ -81,7 +81,7 @@ async function loadOverview(fresh) {
 
 function renderTab() {
   const body = $('#admBody'); if (!body || !A.ov) return;
-  ({ overview: renderOverview, transfers: renderTransfers, activity: renderActivity, security: renderSecurity, system: renderSystem })[A.tab](body);
+  ({ overview: renderOverview, insights: renderInsights, transfers: renderTransfers, activity: renderActivity, security: renderSecurity, system: renderSystem })[A.tab](body);
 }
 
 /* ---------------- Vue d'ensemble ---------------- */
@@ -142,6 +142,128 @@ function hbars(map) {
 function miniList(items, right) {
   if (!items || !items.length) return `<p class="small faint">Rien à afficher.</p>`;
   return `<div class="stack" style="gap:6px">${items.map(x => { const k = fileKind(x.title); return `<button type="button" class="dl-row adm-mini" data-open="${esc(x.id)}"><div class="ficon" style="--c:${k.c};width:36px;height:36px">${icon(x.fileCount > 1 ? 'folder' : k.icon, 'sm')}</div><div class="fmeta" style="text-align:left"><div class="fname">${esc(x.title)}</div><div class="fsub">${esc(x.id)} · ${relTime(x.createdAt)}</div></div><span class="small muted" style="white-space:nowrap">${right(x)}</span></button>`; }).join('')}</div>`;
+}
+
+/* ---------------- Retours & usage (anonyme, agrégé) ---------------- */
+const MODE_L = { cloud: 'Cloud (lien)', direct: 'Direct (P2P)', nearby: 'À proximité', live: 'Direct vidéo', classe: 'Classe', review: 'Relecture', request: 'Demande de fichiers' };
+const PAGE_L = { home: 'Accueil', nearby: 'À proximité', classe: 'Classe', live: 'Direct vidéo', request: 'Demandes', review: 'Relecture', receive: 'Lien reçu (Cloud)', 'receive-direct': 'Lien reçu (Direct)', dashboard: 'Mes envois', profile: 'Profils @', infos: 'Pages d\'info' };
+const HEARD_L = { tiktok: 'TikTok', whatsapp: 'WhatsApp', linkedin: 'LinkedIn', facebook: 'Facebook', instagram: 'Instagram', google: 'Google', ami: 'Un proche', ecole: 'École / travail', autre: 'Autre' };
+const USE_L = { etudes: 'Études', enseignement: 'Enseignement', travail: 'Travail', creation: 'Création', perso: 'Personnel', autre: 'Autre' };
+const KIND_L = { avis: ['info', 'Avis'], idee: ['violet', 'Idée'], probleme: ['bad', 'Problème'] };
+const FB_ST = { new: ['warn', 'Nouveau'], lu: ['', 'Lu'], traite: ['ok', 'Traité'] };
+const IDEA_ST = { open: ['', 'Ouverte au vote'], planned: ['info', 'Prévue'], done: ['ok', 'Disponible'], hidden: ['bad', 'Masquée'] };
+const flag = (cc) => /^[A-Z]{2}$/.test(cc) ? String.fromCodePoint(...[...cc].map(c => 127397 + c.charCodeAt(0))) + ' ' + cc : '🌐 inconnu';
+const relabel = (map, L) => Object.fromEntries(Object.entries(map || {}).map(([k, v]) => [L[k] || k, v]));
+const pc = (a, b) => (b ? Math.round(a / b * 100) + ' %' : '—');
+A.ins = { days: 30, fbFilter: 'new' };
+
+async function renderInsights(body) {
+  body.innerHTML = `<div class="card"><p class="muted"><span class="spinner"></span> Chargement des retours…</p></div>`;
+  let R, F, I;
+  try {
+    [R, F, I] = await Promise.all([aapi('/insights?days=' + A.ins.days), aapi('/feedback' + (A.ins.fbFilter ? '?status=' + A.ins.fbFilter : '')), aapi('/ideas')]);
+  } catch (e) { body.innerHTML = `<div class="banner bad">${icon('x')}<span>${esc(e.message)}</span></div>`; return; }
+  if (A.tab !== 'insights') return;
+  const T = R.totals, L = R.loyalty, F2 = T.funnel, X = T.p2p;
+  const moodStars = R.moodAvg ? R.moodAvg.toFixed(1) + ' / 5' : '—';
+  const funnel = [['Fichiers choisis', F2.pick], ['Envois terminés', F2.sent], ['Liens ouverts', F2.open], ['Téléchargés', F2.got]];
+  const fmax = Math.max(1, ...funnel.map(f => f[1]));
+  body.innerHTML = `
+    <div class="row wrap" style="gap:8px;margin-bottom:14px;align-items:center">
+      <div class="chips" id="insDays">${[7, 30, 90].map(d => `<button type="button" class="chip ${A.ins.days === d ? 'active' : ''}" data-d="${d}">${d} jours</button>`).join('')}</div>
+      <span class="small faint" style="flex:1">Mesure anonyme : ni adresse IP, ni nom de fichier, ni contenu. « Ne pas me suivre » respecté.</span>
+      <button type="button" class="btn sm" id="insWeekly">${icon('mail', 'sm')}Recevoir le bilan maintenant</button>
+    </div>
+    ${R.ice && !R.ice.provider ? `<div class="banner warn" style="margin-bottom:12px">${icon('bell')}<span>Aucun relais TURN : le mode Direct échoue sur certains réseaux mobiles. Ajoutez CF_TURN_KEY_ID et CF_TURN_API_TOKEN dans Render.</span></div>` : ''}
+    ${R.ice && R.ice.lastError ? `<div class="banner bad" style="margin-bottom:12px">${icon('x')}<span>Relais TURN : ${esc(R.ice.lastError)}</span></div>` : ''}
+    <div class="kpis">
+      <div class="kpi" style="--kc:#00b4d8"><div class="kpi-top">Visiteurs<span class="kpi-icon">${icon('users')}</span></div><div class="kpi-value">${num(L.active)}</div><div class="kpi-foot">${num(T.visits)} visites · ${num(L.fresh)} nouveaux</div></div>
+      <div class="kpi" style="--kc:#06d6a0"><div class="kpi-top">Fidélité<span class="kpi-icon">${icon('refresh')}</span></div><div class="kpi-value">${pc(L.back + L.freshReturned, L.active)}</div><div class="kpi-foot">${num(L.back)} revenus · ${num(L.loyal)} fidèles (3 jours ou +)</div></div>
+      <div class="kpi" style="--kc:#8b7bff"><div class="kpi-top">Expéditeurs<span class="kpi-icon">${icon('upload')}</span></div><div class="kpi-value">${num(L.senders)}</div><div class="kpi-foot">${num(L.repeat)} ont envoyé 2 fois ou +</div></div>
+      <div class="kpi" style="--kc:#fbbf24"><div class="kpi-top">Satisfaction<span class="kpi-icon">${icon('message')}</span></div><div class="kpi-value">${moodStars}</div><div class="kpi-foot">${num(T.fb.n)} avis · ${num(R.feedbackNew)} message(s) à lire</div></div>
+    </div>
+    <div class="card" style="margin-bottom:18px">
+      <div class="card-title"><h3>${icon('chart')}Visiteurs et envois</h3><div class="legend"><span><i style="background:rgba(0,180,216,.5)"></i>Visiteurs</span><span><i style="background:linear-gradient(#00b4d8,#06d6a0)"></i>Envois</span></div></div>
+      <div id="insChart"></div>
+    </div>
+    <div class="grid-2 adm-grid" style="margin-bottom:18px">
+      <div class="card"><div class="card-title"><h3>${icon('arrow-right')}Parcours</h3><span class="small faint">où les gens s'arrêtent</span></div>
+        <div class="per-file">${funnel.map(([l, v], i) => `<div class="pf-row"><span class="small" style="font-weight:600">${l}</span><span class="small muted">${num(v)}${i ? ' · ' + pc(v, funnel[i - 1][1]) : ''}</span><div class="pf-bar"><i style="width:${v / fmax * 100}%"></i></div></div>`).join('')}</div></div>
+      <div class="card"><div class="card-title"><h3>${icon('bolt')}Usage par mode</h3><span class="small faint">envois et sessions</span></div>${hbars(relabel(T.modes, MODE_L))}</div>
+    </div>
+    <div class="grid-2 adm-grid" style="margin-bottom:18px">
+      <div class="card"><div class="card-title"><h3>${icon('share')}Provenance</h3><span class="small faint">astuce : liens ?src=tiktok</span></div>${hbars(T.src)}</div>
+      <div class="card"><div class="card-title"><h3>${icon('radar')}Pays</h3></div>${hbars(Object.fromEntries(Object.entries(T.cc).map(([k, v]) => [flag(k), v])))}</div>
+    </div>
+    <div class="grid-2 adm-grid" style="margin-bottom:18px">
+      <div class="card"><div class="card-title"><h3>${icon('bolt')}Qualité du mode Direct</h3></div>
+        <div class="controls">
+          <div class="control"><div class="control-text"><b>${num(X.ok)} réussis · ${num(X.fail)} échoués</b><span>Taux de réussite : ${R.p2pSuccess == null ? '—' : Math.round(R.p2pSuccess * 100) + ' %'} · ${num(X.restarts)} reconnexion(s) automatique(s)</span></div></div>
+          <div class="control"><div class="control-text"><b>Vitesse moyenne ${R.p2pAvgSpeed ? bytes(R.p2pAvgSpeed) + '/s' : '—'}</b><span>Meilleure : ${X.best ? bytes(X.best) + '/s' : '—'} · ${bytes(X.bytes)} transférés en Direct</span></div></div>
+          <div class="control"><div class="control-text"><b>${R.relayShare == null ? '—' : Math.round(R.relayShare * 100) + ' %'} via le relais</b><span>${num(X.direct)} connexion(s) directe(s) · ${num(X.relay)} par relais TURN</span></div></div>
+        </div></div>
+      <div class="card"><div class="card-title"><h3>${icon('flag')}Problèmes rencontrés</h3><span class="small faint">messages d'erreur vus à l'écran</span></div>
+        ${R.errors.length ? `<div class="stack" style="gap:6px">${R.errors.map(([k, v]) => `<div class="row" style="justify-content:space-between;gap:10px"><span class="small">${esc(k)}</span><span class="pill bad" style="flex:none">${num(v)}</span></div>`).join('')}</div>` : '<p class="small faint">Aucun problème signalé 🎉</p>'}</div>
+    </div>
+    <div class="grid-2 adm-grid" style="margin-bottom:18px">
+      <div class="card"><div class="card-title"><h3>${icon('users')}Comment ils vous ont connu</h3><span class="small faint">questionnaire</span></div>${hbars(relabel(T.heard, HEARD_L))}</div>
+      <div class="card"><div class="card-title"><h3>${icon('sparkles')}Pour quoi faire</h3><span class="small faint">questionnaire</span></div>${hbars(relabel(T.use, USE_L))}</div>
+    </div>
+    <div class="grid-2 adm-grid" style="margin-bottom:18px">
+      <div class="card"><div class="card-title"><h3>${icon('eye')}Pages visitées</h3></div>${hbars(relabel(T.pages, PAGE_L))}</div>
+      <div class="card"><div class="card-title"><h3>${icon('phone')}Appareils</h3></div>${hbars(T.dev)}</div>
+    </div>
+    <div class="card" style="margin-bottom:18px">
+      <div class="card-title"><h3>${icon('message')}Messages des utilisateurs</h3>
+        <div class="chips" id="fbFilter">${[['new', 'Nouveaux'], ['lu', 'Lus'], ['traite', 'Traités'], ['', 'Tous']].map(([k, l]) => `<button type="button" class="chip ${A.ins.fbFilter === k ? 'active' : ''}" data-f="${k}">${l}</button>`).join('')}</div></div>
+      ${F.items.length ? `<div class="stack" style="gap:10px">${F.items.map(f => { const [kc, kl] = KIND_L[f.kind] || KIND_L.avis; const [sc, sl] = FB_ST[f.status] || FB_ST.new; return `
+        <div class="dl-row" style="align-items:flex-start;flex-direction:column;gap:6px" data-fb="${esc(f.id)}">
+          <div class="row wrap" style="gap:6px;width:100%"><span class="pill ${kc}">${kl}</span>${f.mood ? `<span class="pill">${'★'.repeat(f.mood)}${'☆'.repeat(5 - f.mood)}</span>` : ''}<span class="pill ${sc}">${sl}</span>
+            <span class="small faint" style="margin-left:auto">${relTime(f.at)} · ${flag(f.cc)} · ${esc(f.dev || '')}${f.m ? ' · ' + esc(MODE_L[f.m] || f.m) : ''}</span></div>
+          ${f.text ? `<p style="margin:0;white-space:pre-wrap">${esc(f.text)}</p>` : '<p class="small faint" style="margin:0">(sans texte)</p>'}
+          <div class="row wrap" style="gap:6px;width:100%">
+            ${f.heard ? `<span class="small muted">Connu via ${esc(HEARD_L[f.heard] || f.heard)}</span>` : ''}${f.use ? `<span class="small muted">· ${esc(USE_L[f.use] || f.use)}</span>` : ''}
+            <span style="flex:1"></span>
+            ${f.email ? `<a class="btn sm" href="mailto:${esc(f.email)}?subject=${encodeURIComponent('Votre avis sur Lestha Send')}">${icon('mail', 'sm')}Répondre</a>` : ''}
+            ${f.kind === 'idee' ? `<button type="button" class="btn sm" data-promote>${icon('plus', 'sm')}Mettre au vote</button>` : ''}
+            ${f.status !== 'traite' ? `<button type="button" class="btn sm" data-st="traite">${icon('check', 'sm')}Traité</button>` : ''}
+            ${f.status === 'new' ? `<button type="button" class="btn sm ghost" data-st="lu">Marquer lu</button>` : ''}
+            <button type="button" class="btn sm ghost" data-del title="Supprimer">${icon('trash', 'sm')}</button>
+          </div></div>`; }).join('')}</div>` : '<p class="small faint">Aucun message dans cette catégorie.</p>'}
+    </div>
+    <div class="card">
+      <div class="card-title"><h3>${icon('sparkles')}Idées soumises au vote</h3><button type="button" class="btn sm primary" id="ideaAdd">${icon('plus', 'sm')}Nouvelle idée</button></div>
+      <p class="small muted" style="margin-top:0">Les visiteurs votent depuis « Votre avis ». Vous décidez ensuite quoi construire, sans rien promettre.</p>
+      ${I.items.length ? `<div class="stack" style="gap:8px">${I.items.sort((a, b) => b.votes - a.votes).map(i => { const [c, l] = IDEA_ST[i.status] || IDEA_ST.open; return `
+        <div class="dl-row" data-idea="${esc(i.id)}"><span class="pill violet" style="flex:none;min-width:52px;justify-content:center">▲ ${num(i.votes)}</span>
+          <div class="fmeta" style="text-align:left"><div class="fname">${esc(i.title)}</div>${i.desc ? `<div class="fsub">${esc(i.desc)}</div>` : ''}</div>
+          <select class="input" data-ist style="width:auto;flex:none">${Object.entries(IDEA_ST).map(([k, [, lb]]) => `<option value="${k}" ${k === i.status ? 'selected' : ''}>${lb}</option>`).join('')}</select>
+          <button type="button" class="btn sm ghost" data-idel title="Supprimer">${icon('trash', 'sm')}</button></div>`; }).join('')}</div>` : '<p class="small faint">Aucune idée pour l\'instant. Ajoutez 3 ou 4 pistes pour lancer les votes.</p>'}
+    </div>`;
+  const buckets = R.series.map(d => { const dt = new Date(d.day + 'T12:00:00Z'); return { label: dt.toLocaleDateString('fr-FR', { day: '2-digit' }), long: dt.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }), views: d.visitors, downloads: d.sent }; });
+  barChart($('#insChart'), buckets, ['Visiteurs', 'Envois']);
+  $('#insDays').onclick = (e) => { const b = e.target.closest('[data-d]'); if (!b) return; A.ins.days = +b.dataset.d; renderInsights(body); };
+  $('#fbFilter').onclick = (e) => { const b = e.target.closest('[data-f]'); if (!b) return; A.ins.fbFilter = b.dataset.f; renderInsights(body); };
+  $('#insWeekly').onclick = async (e) => { const b = e.currentTarget; b.disabled = true; try { const r = await aapi('/weekly', { method: 'POST', body: {} }); toast('Bilan envoyé à ' + r.to, 'success'); } catch (err) { toast(err.message, 'error'); } b.disabled = false; };
+  body.querySelectorAll('[data-fb]').forEach(row => {
+    const id = row.dataset.fb;
+    row.querySelectorAll('[data-st]').forEach(b => b.onclick = async () => { try { await aapi('/feedback/' + id, { method: 'PATCH', body: { status: b.dataset.st } }); renderInsights(body); } catch (err) { toast(err.message, 'error'); } });
+    const del = row.querySelector('[data-del]'); if (del) del.onclick = async () => { if (!(await confirmDialog('Supprimer ce message ?', 'Il sera définitivement effacé.', 'Supprimer', true))) return; await aapi('/feedback/' + id, { method: 'DELETE' }); renderInsights(body); };
+    const pr = row.querySelector('[data-promote]'); if (pr) pr.onclick = () => ideaForm(body, (F.items.find(x => x.id === id) || {}).text || '', id);
+  });
+  $('#ideaAdd').onclick = () => ideaForm(body, '');
+  body.querySelectorAll('[data-idea]').forEach(row => {
+    const id = row.dataset.idea;
+    row.querySelector('[data-ist]').onchange = async (e) => { try { await aapi('/ideas/' + id, { method: 'PATCH', body: { status: e.target.value } }); toast('Statut mis à jour', 'success'); } catch (err) { toast(err.message, 'error'); } };
+    row.querySelector('[data-idel]').onclick = async () => { if (!(await confirmDialog('Supprimer cette idée ?', 'Les votes seront perdus.', 'Supprimer', true))) return; await aapi('/ideas/' + id, { method: 'DELETE' }); renderInsights(body); };
+  });
+}
+async function ideaForm(body, text, fromFeedback) {
+  const r = await modal({ title: 'Idée à soumettre au vote', body: `<div class="stack"><input class="input" id="iT" maxlength="90" placeholder="Titre court (ex. : Envoi programmé)" value="${esc(String(text).slice(0, 90))}"><textarea class="input" id="iD" rows="3" maxlength="400" placeholder="Description en une phrase (facultatif)"></textarea></div>`,
+    actions: [{ label: 'Annuler', cls: 'ghost', value: null }, { label: 'Publier', cls: 'primary', handler: (bd) => ({ title: bd.querySelector('#iT').value.trim(), desc: bd.querySelector('#iD').value.trim() }) }] });
+  if (!r || !r.title) return;
+  try { await aapi('/ideas', { method: 'POST', body: r }); if (fromFeedback) await aapi('/feedback/' + fromFeedback, { method: 'PATCH', body: { status: 'traite' } }); toast('Idée publiée : les visiteurs peuvent voter', 'success'); renderInsights(body); }
+  catch (e) { toast(e.message, 'error'); }
 }
 
 /* ---------------- Transferts ---------------- */
@@ -319,7 +441,8 @@ function renderSystem(body) {
     [!!s.publicUrl, s.publicUrl ? 'ok' : 'warn', 'Adresse publique', s.publicUrl ? esc(s.publicUrl) : 'PUBLIC_URL non renseignée'],
     [s.appSecret, s.appSecret ? 'ok' : 'info', 'Secret de signature', s.appSecret ? 'APP_SECRET défini' : 'Généré automatiquement et conservé dans le stockage'],
     [!!s.email, s.email ? 'ok' : 'info', 'E-mail', s.email ? 'Fournisseur : ' + esc(s.email) : 'Non configuré (SendGrid ou SMTP)'],
-    [s.turn, s.turn ? 'ok' : 'info', 'Serveur TURN (P2P)', s.turn ? 'Configuré' : 'STUN uniquement : suffisant dans la plupart des cas']
+    [!!s.turn, s.turn ? 'ok' : 'warn', 'Relais TURN (mode Direct)', s.turn === 'cloudflare' ? 'Cloudflare : identifiants éphémères renouvelés automatiquement' : s.turn ? 'Serveur personnalisé (TURN_URL)' : 'Absent : ajoutez CF_TURN_KEY_ID et CF_TURN_API_TOKEN pour fiabiliser le Direct sur 4G/5G'],
+    [!!s.adminEmail, s.adminEmail ? 'ok' : 'info', 'Bilan hebdomadaire', s.adminEmail ? 'Envoyé chaque lundi à ADMIN_EMAIL' : 'Renseignez ADMIN_EMAIL pour le recevoir']
   ];
   const ic = { ok: 'check', warn: 'bell', bad: 'x', info: 'sparkles' };
   body.innerHTML = `
@@ -408,6 +531,9 @@ async function connectLive() {
   sock.on('connect', watch);
   sock.on('disconnect', () => { badge.classList.add('off'); badge.lastChild.textContent = 'Reconnexion…'; });
   if (sock.connected) watch();
+  sock.on('admin-feedback', ({ kind, mood }) => {
+    toast(kind === 'idee' ? 'Nouvelle idée proposée 💡' : kind === 'probleme' ? 'Nouveau problème signalé' : `Nouvel avis${mood ? ' (' + '★'.repeat(mood) + ')' : ''}`, kind === 'probleme' ? 'warn' : 'info', { action: 'Voir', onAction: () => { A.tab = 'insights'; ss.set('tx_admin_tab', 'insights'); $$('#admTabs .chip').forEach(x => x.classList.toggle('active', x.dataset.tab === 'insights')); renderTab(); } });
+  });
   sock.on('admin-event', ({ id, title, event }) => {
     if (!A.ov) return;
     A.ov.recent.unshift(Object.assign({ id, title }, event));

@@ -4,6 +4,7 @@
  * exports EDL (DaVinci Resolve) / CSV / PDF, lecture des fichiers .TS (MPEG-TS) */
 import { $, esc, icon, bytes, fileKind, ls, ss, api, visitorId, toast, relTime } from './core.js';
 import { navigate } from './router.js';
+import { track } from './ux.js';
 import { FPS_LIST, tc, short, contentRect, drawShapes, exportEDL, exportCSV, printReport } from './review-tools.js';
 
 let root = null, id = null, data = null, cur = null, reportTimer = null, wmTimer = null, pollTimer = null, lastReport = 0;
@@ -410,7 +411,7 @@ function bindComments() {
     if (shapes.length) body.draw = shapes;
     try {
       const r = await api(`/api/public/t/${id}/comments?${q()}`, { method: 'POST', body });
-      data.comments = r.comments; $('#cText').value = '';
+      data.comments = r.comments; $('#cText').value = ''; track('use', { m: 'review' });
       shapes = []; if (drawMode) toggleDraw(false); clearRange(); redraw(); renderList();
       toast('Remarque ajoutée à ' + tc(r.comment.time, fps), 'success');
     } catch (err) { toast(err.message, 'error'); }

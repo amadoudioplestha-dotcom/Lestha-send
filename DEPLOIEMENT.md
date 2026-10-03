@@ -109,3 +109,36 @@ Ces fonctions ne demandent aucun réglage : elles marchent dès le déploiement.
   - Une boîte reçoit au plus 100 dépôts par jour (variable `HANDLE_DEPOSITS_PER_DAY`).
 - **E-mails.** Tous les e-mails (code, lien, alerte, dépôt, signalement) utilisent un modèle clair aux couleurs du logo.
 - **Icônes.** L'icône de l'application installée reprend le nouveau logo (avion en papier). Les téléphones peuvent garder l'ancienne icône quelques jours.
+
+## 10. Version 3.8 : vitesse du mode Direct et retours des utilisateurs
+
+### A. Relais TURN Cloudflare (le plus important)
+Sans relais, le mode Direct échoue souvent entre deux réseaux mobiles (4G/5G, CGNAT) ou sur un Wi-Fi d'université filtré.
+1. Tableau de bord Cloudflare → **Realtime** (ou *Calls*) → **TURN Server** → **Create** (nom : `lestha-send`).
+2. Copiez le **Turn Token ID** et l'**API Token** affichés (le jeton n'est montré qu'une fois).
+3. Render → votre service → **Environment** → ajoutez :
+   - `CF_TURN_KEY_ID` = le Turn Token ID
+   - `CF_TURN_API_TOKEN` = l'API Token
+   - (facultatif) `CF_TURN_TTL` = `21600` (durée de validité des identifiants, 6 h par défaut)
+4. Enregistrez : Render redéploie. Le journal affiche `🔄 TURN : relais Cloudflare (identifiants éphémères)`.
+
+Coût : les 1 000 premiers Go relayés par mois sont gratuits, puis 0,05 $ par Go. Le relais ne sert que
+lorsque la connexion directe est impossible ; la console indique la part de transferts qui passent par lui.
+
+### B. Bilan de la semaine par e-mail
+Ajoutez `ADMIN_EMAIL` = votre adresse (l'e-mail SendGrid ou SMTP doit déjà fonctionner).
+Le bilan part chaque lundi vers 8 h (heure de Dakar). Bouton « Recevoir le bilan maintenant » dans la console.
+
+### C. Liens de provenance
+Pour savoir d'où viennent vos visiteurs, ajoutez `?src=` à vos liens publics :
+`https://votre-site/?src=tiktok`, `?src=linkedin`, `?src=whatsapp`, `?src=isep`…
+
+### D. Ce qui change
+- Mode Direct : nouvelle tentative au bout de 12 s, puis passage automatique par le relais ;
+  reprise immédiate quand le réseau change (Wi-Fi ↔ 4G, nouvelle adresse IP) ou quand le flux se bloque 10 s ;
+  le destinataire voit le chemin utilisé (même réseau, direct, ou relais).
+- Console → onglet **Retours & usage** : visiteurs, fidélité, parcours, usage par mode, provenance, pays,
+  qualité du Direct (réussite, vitesse, part du relais), problèmes affichés, questionnaire, messages, idées à voter.
+- Site : bouton « Votre avis » et « Proposer une idée » en pied de page ; petite invitation après un envoi
+  réussi (au plus une fois tous les 20 jours, jamais au premier envoi).
+- Confidentialité : compteurs anonymes et agrégés uniquement ; « Ne pas me suivre » respecté ; page Confidentialité mise à jour.

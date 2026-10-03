@@ -1,5 +1,6 @@
 /* Lestha Send — salles de classe hébergées par BigBlueButton */
 import { $, esc, icon, api, toast, copyText } from './core.js';
+import { track } from './ux.js';
 
 let root = null, id = null, hostToken = null, attendanceTimer = null;
 
@@ -69,6 +70,7 @@ function renderCreate() {
           record: form.querySelector('[name="record"]').checked
         }
       });
+      track('use', { m: 'classe' });
       $('#classCreated', root).classList.remove('hidden');
       $('#classCreated', root).innerHTML = `<div class="tip">${icon('check')}<span>La salle est créée. Partagez le lien participant; gardez le lien enseignant privé.</span></div>
         <label class="field"><span>Lien participant</span><span class="input-group"><input class="input mono" readonly value="${esc(result.participantLink)}"><button class="btn" type="button" data-copy="${esc(result.participantLink)}">Copier</button></span></label>

@@ -38,6 +38,7 @@ export async function render() {
   window.scrollTo(0, 0);
   await view.render(root, { match, params, hash: location.hash.slice(1) });
   root.focus({ preventScroll: true });
+  try { window.dispatchEvent(new CustomEvent('tx:route', { detail: { nav: r.nav, path } })); } catch (e) { /* ignore */ }
 }
 
 export function startRouter() {

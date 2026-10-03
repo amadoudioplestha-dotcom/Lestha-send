@@ -3,6 +3,7 @@ import { $, $$, esc, icon, bytes, speed, duration, timeLeft, fileKind, ls, ss, o
 import { Uploader } from './uploader.js';
 import { navigate } from './router.js';
 import * as p2p from './p2p.js';
+import { track, afterSuccess } from './ux.js';
 import { MAX_DIRECT_BYTES, validateDirectFiles } from './direct-limits.mjs';
 import { openProfile, openHandle } from './profile.js';
 
@@ -336,6 +337,7 @@ async function filesFromDataTransfer(dt) {
 
 function addItems(list) {
   if (!list.length) return;
+  if (!S.items.length) track('pick');
   const seen = new Set(S.items.map(it => (it.path || it.file.name) + '|' + it.file.size));
   let dup = 0;
   for (const it of list) {
@@ -587,6 +589,7 @@ async function finalize() {
   else if (res.emailNote === 'capped') toast('Le lien a été envoyé au nombre maximal de destinataires. Partagez-le directement aux autres.', 'warn');
   else if (res.emailNote === 'dailyCap') toast('Le service a atteint sa limite d\'e-mails du jour : partagez le lien directement.', 'warn');
   ctx.phase = 'done';
+  track('sent', { m: 'cloud', b: ctx.total || 0 }); afterSuccess('cloud');
   keepAwake(false);
   document.title = 'Lestha Send — Lien prêt';
   notify('Envoi terminé ✅', ctx.title + ' est prêt à être téléchargé');

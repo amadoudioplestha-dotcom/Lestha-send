@@ -1,6 +1,8 @@
 /* Lestha Send — point d'entrée */
 import { $, ss, toast, enableRipples, lowMemory, isWebView } from './core.js';
 import { route, startRouter } from './router.js';
+import { trackPage, openFeedback } from './ux.js';
+window.addEventListener('tx:route', trackPage);
 
 // Appareils modestes : effets allégés (évite les rechargements forcés par manque de mémoire)
 if (lowMemory || /Android [4-8]\b/.test(navigator.userAgent)) document.documentElement.classList.add('lite');
@@ -25,6 +27,7 @@ route(/^.*$/, () => import('./pages.js'), null);
 
 enableRipples();
 startRouter();
+document.addEventListener('click', (e) => { const b = e.target.closest('[data-feedback]'); if (!b) return; e.preventDefault(); openFeedback({ kind: b.dataset.feedback || 'avis' }); });
 
 /* Sélecteur de fichiers interrompu par le système (Android, mémoire faible) */
 try {

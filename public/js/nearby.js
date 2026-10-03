@@ -4,6 +4,7 @@
 import { $, $$, esc, icon, bytes, speed, fileKind, ls, toast, modal, confirmDialog, copyText, keepAwake, notify, getSocket, isMobile, lowMemory, renderQR } from './core.js';
 import { pick } from './send.js';
 import { validateDirectFiles } from './direct-limits.mjs';
+import { track, afterSuccess } from './ux.js';
 
 const WINDOW = lowMemory ? 8 << 20 : isMobile ? 24 << 20 : 64 << 20;
 const BUF_HIGH = 8 << 20, BUF_LOW = 2 << 20;
@@ -528,6 +529,7 @@ async function finishReceive(t) {
 /* ---------------- suivi ---------------- */
 function done(t) {
   t.status = 'done'; t.pos = t.total;
+  if (t.dir === 'out') { track('sent', { m: 'nearby', b: t.total }); afterSuccess('nearby'); } else track('got', { m: 'nearby' });
   setTimeout(() => { try { t.pc && t.pc.close(); } catch (e) { /* ignore */ } }, 1500);
   if (![...N.transfers.values()].some(x => x.status === 'active')) keepAwake(false);
   toast(t.dir === 'in' ? `Reçu de ${t.peerName} ✅` : `Envoyé à ${t.peerName} ✅`, 'success');
