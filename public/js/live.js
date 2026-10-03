@@ -38,8 +38,9 @@ export const studioView = (() => {
       <div class="hero-mini"><span class="eyebrow"><span class="pulse-dot"></span>Direct</span><h1 style="font-size:clamp(26px,5vw,38px)">Diffusez en direct, partagez un lien</h1>
         <p class="muted">Événements, cours, cérémonies : une page de direct à votre nom, avec discussion en direct et QR code à projeter.</p></div>
       <div class="card glow stack">
-        <div class="chips" id="kinds">${[['embed', 'Lien YouTube, Facebook…'], ['camera', 'Classe virtuelle (caméra / écran)'], ['hls', 'Flux pro .m3u8']].map(([k, l]) => `<button type="button" class="chip ${kind === k ? 'active' : ''}" data-k="${k}">${l}</button>`).join('')}</div>
+        <div class="chips" id="kinds">${[['embed', 'Lien YouTube, Facebook…'], ['hls', 'Flux pro .m3u8']].map(([k, l]) => `<button type="button" class="chip ${kind === k ? 'active' : ''}" data-k="${k}">${l}</button>`).join('')}</div>
         <p class="small muted" id="kindHelp"></p>
+        <div class="tip">${icon('call')}<span>Pour un cours ou une réunion où chacun peut parler, lever la main, discuter et répondre à des sondages, utilisez <a href="/reunion" data-link><b>Réunion</b></a> (mode Cours).</span></div>
         <label class="field ${kind === 'camera' ? 'hidden' : ''}" id="urlField"><span id="urlLabel">Lien</span><input class="input" id="lUrl" placeholder="https://" inputmode="url"></label>
         <div class="grid-2" style="gap:12px">
           <label class="field"><span>Titre *</span><input class="input" id="lTitle" maxlength="120" placeholder="Ex. Cérémonie de remise des diplômes"></label>
@@ -57,7 +58,6 @@ export const studioView = (() => {
     </section>`;
     const help = {
       embed: 'Collez le lien d\'une vidéo ou d\'un direct YouTube, Facebook, Vimeo ou Twitch, ou d\'une publication Instagram / TikTok. La vidéo reste chez la plateforme : aucun coût de stockage.',
-      camera: 'Classe virtuelle façon Zoom / Meet : vous diffusez caméra, écran ou micro ; les participants lèvent la main, prennent la parole, répondent aux sondages. Présence exportable et enregistrement du cours. Jusqu\'à 25 participants.',
       hls: 'Pour OBS ou une régie : collez l\'adresse https de votre flux HLS (se termine par .m3u8).'
     };
     $('#kindHelp', root).textContent = help[kind];
@@ -103,7 +103,7 @@ export const roomView = (() => {
       if (m) { mine.add({ id, key: m[1], role: 'mod', title: 'Co-animation', kind: 'camera', createdAt: Date.now() }); history.replaceState({}, '', '/live/' + id); }
       me = mine.get(id); role = me ? (me.role || 'host') : 'learner';
       root.innerHTML = `<section class="narrow"><div class="skeleton" style="height:420px;border-radius:20px"></div></section>`;
-      try { L = await api('/api/public/live/' + id); } catch (e) { root.innerHTML = `<section class="narrow"><div class="card"><div class="state-screen"><div class="state-icon warn">${icon('video')}</div><h2>Direct introuvable</h2><p class="muted">Ce direct n'existe plus.</p><a class="btn" href="/direct" data-link>${icon('video')}Créer un direct</a></div></div></section>`; return; }
+      try { L = await api('/api/public/live/' + id); if (L && L.kind === 'camera') { root.innerHTML = `<section class="narrow"><div class="card"><div class="state-screen"><div class="state-icon info">${icon('call')}</div><h2>Cette classe a été remplacée</h2><p class="muted">Les classes virtuelles se font désormais dans « Réunion », en mode Cours : discussion, sondages, liste de présence et enregistrement MP3.</p><a class="btn primary" href="/reunion" data-link>${icon('call')}Créer un cours</a></div></div></section>`; return; } } catch (e) { root.innerHTML = `<section class="narrow"><div class="card"><div class="state-screen"><div class="state-icon warn">${icon('video')}</div><h2>Direct introuvable</h2><p class="muted">Ce direct n'existe plus.</p><a class="btn" href="/direct" data-link>${icon('video')}Créer un direct</a></div></div></section>`; return; }
       if (isClass() && !me && !ls.get('tx_comment_name', '')) return prejoin();
       draw(); connect();
     },

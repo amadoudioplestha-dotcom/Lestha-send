@@ -20,6 +20,9 @@ const linkOf = (id) => location.origin + '/reunion/' + id;
 const REACTS = [['hand', '✋', 1, 'Main levée'], ['ok', '👍', 1, 'D\'accord'], ['yes', '✅', 0, 'Oui'], ['no', '👎', 1, 'Non'], ['clap', '👏', 1, 'Bravo'], ['thanks', '🙏', 1, 'Merci'], ['love', '❤️', 0, 'J\'aime'], ['laugh', '😂', 0, 'Rire'], ['wow', '😮', 0, 'Surpris'], ['q', '❓', 0, 'Question']];
 const TONES = ['', '\u{1F3FB}', '\u{1F3FC}', '\u{1F3FD}', '\u{1F3FE}', '\u{1F3FF}'];
 const emo = (k, t) => { const r = REACTS.find(x => x[0] === k); return r ? r[1] + (r[2] ? TONES[t] || '' : '') : ''; };
+const isStaff = () => !!(S.self && (S.self.host || S.self.cohost));
+const isCourse = () => !!(S.meeting && S.meeting.mode === 'course');
+const canTalk = () => !isCourse() || isStaff() || !!(S.self && S.self.floor);
 const myTone = () => Math.max(0, Math.min(5, +ls.get('tx_meet_tone', 0) || 0));
 
 let iceCfg = null;
@@ -157,31 +160,42 @@ function renderCreate() {
   <section class="narrow"><div class="card glow">
     <div class="center stack" style="gap:6px">
       <span class="eyebrow"><span class="pulse-dot"></span>Nouveau</span>
-      <h2>Réunion audio ou vidéo</h2>
+      <h2>Réunion ou cours en ligne</h2>
       <p class="muted">Sans inscription. Partagez un lien ou un code à 6 chiffres, chacun rejoint en un appui.</p>
     </div>
     <form id="mtForm" class="stack" style="margin-top:16px" autocomplete="off">
       <label class="field"><span>Sujet de la réunion</span><input class="input" id="mtTitle" maxlength="80" placeholder="Ex. : Point de l'équipe pédagogique"></label>
       <label class="field"><span>Votre prénom</span><input class="input" id="mtName" maxlength="30" value="${esc(name)}" placeholder="Votre prénom" required></label>
+      <div class="field"><span>Usage</span>
+        <div class="seg mt-kind" id="mtMode" role="radiogroup" aria-label="Usage">
+          <button type="button" class="active" data-mode="meeting" role="radio" aria-checked="true">${icon('users')}<span><b>Réunion</b><small>Chacun prend la parole librement</small></span></button>
+          <button type="button" data-mode="course" role="radio" aria-checked="false">${icon('doc')}<span><b>Cours</b><small>L'enseignant au centre, il donne la parole</small></span></button>
+        </div></div>
       <div class="field"><span>Format</span>
         <div class="seg mt-kind" role="radiogroup" aria-label="Format de la réunion">
           <button type="button" class="active" data-kind="audio" role="radio" aria-checked="true">${icon('mic')}<span><b>Audio</b><small>Léger, idéal en 4G</small></span></button>
           <button type="button" data-kind="video" role="radio" aria-checked="false">${icon('video')}<span><b>Vidéo</b><small>Caméra et présentations</small></span></button>
         </div></div>
-      <button class="btn primary xl block" type="submit" id="mtGo">${icon('call')}Lancer la réunion</button>
+      <div class="stack" style="gap:8px">
+        <label class="switch full"><input type="checkbox" id="mtChat" checked><span class="track"></span><span class="small"><b>Discussion écrite</b> · questions sans couper la parole</span></label>
+        <label class="switch full"><input type="checkbox" id="mtWait"><span class="track"></span><span class="small"><b>Salle d'attente</b> · vous faites entrer chaque personne</span></label>
+      </div>
+      <button class="btn primary xl block" type="submit" id="mtGo">${icon('call')}<span id="mtGoL">Lancer la réunion</span></button>
       <button class="btn danger block" type="button" id="mtUrgent">${icon('bell')}Réunion d'urgence</button>
       <p class="small faint center">Invité à une réunion ? Ouvrez le lien reçu, ou tapez le code dans <a href="/recevoir" data-link>Recevoir</a>.</p>
     </form>
   </div></section>`;
-  let kind = 'audio';
-  $$('.mt-kind button', root).forEach(b => b.onclick = () => { kind = b.dataset.kind; $$('.mt-kind button', root).forEach(x => { x.classList.toggle('active', x === b); x.setAttribute('aria-checked', x === b); }); });
+  let kind = 'audio', mode = 'meeting';
+  const pick = (sel, attr, fn) => $$(sel, root).forEach(b => b.onclick = () => { fn(b.dataset[attr]); $$(sel, root).forEach(x => { x.classList.toggle('active', x === b); x.setAttribute('aria-checked', x === b); }); });
+  pick('[data-kind]', 'kind', v => { kind = v; });
+  pick('[data-mode]', 'mode', v => { mode = v; $('#mtGoL', root).textContent = v === 'course' ? 'Commencer le cours' : 'Lancer la réunion'; });
   const go = async (emergency) => {
     const nm = $('#mtName', root).value.trim();
     if (!nm) { toast('Indiquez votre prénom', 'warn'); $('#mtName', root).focus(); return; }
     ls.set('tx_meet_name', nm);
     const btn = emergency ? $('#mtUrgent', root) : $('#mtGo', root); btn.disabled = true;
     const socket = await getSocket();
-    const r = await emitAck(socket, 'meet-create', { title: $('#mtTitle', root).value.trim(), kind: emergency ? 'audio' : kind, emergency });
+    const r = await emitAck(socket, 'meet-create', { title: $('#mtTitle', root).value.trim(), kind: emergency ? 'audio' : kind, mode: emergency ? 'meeting' : mode, chat: $('#mtChat', root).checked, waiting: $('#mtWait', root).checked, emergency });
     btn.disabled = false;
     if (!r || r.error) return toast((r && r.error) || 'Impossible de créer la réunion.', 'error');
     ls.set('tx_meet_host_' + r.id, r.hostKey);
@@ -210,14 +224,15 @@ async function renderLobby(id) {
     <div class="state-icon info">${icon(m.kind === 'video' ? 'video' : 'call')}</div>
     <h2>${esc(m.title)}</h2>
     <div class="summary-line" style="justify-content:center">
-      <span class="pill ${m.kind === 'video' ? 'violet' : 'info'}">${icon(m.kind === 'video' ? 'video' : 'mic')}${m.kind === 'video' ? 'Vidéo' : 'Audio'}</span>
+      ${m.mode === 'course' ? `<span class="pill violet">${icon('doc')}Cours</span>` : ''}
+      <span class="pill ${m.kind === 'video' ? 'violet' : 'info'}">${icon(m.kind === 'video' ? 'video' : 'mic')}${m.kind === 'video' ? 'Vidéo' : 'Audio'}</span>${m.waiting ? `<span class="pill">${icon('clock')}Salle d'attente</span>` : ''}
       <span class="pill">${icon('users')}${peek.count} présent${peek.count > 1 ? 's' : ''}</span>
       ${m.emergency ? `<span class="pill bad">${icon('bell')}Urgent</span>` : ''}${m.recording ? `<span class="pill bad">${icon('rec')}Enregistrée</span>` : ''}${m.locked ? `<span class="pill warn">${icon('lock')}Verrouillée</span>` : ''}
     </div>
     <form id="lbForm" class="stack" style="width:100%;max-width:360px;margin-top:8px" autocomplete="off">
       <input class="input" id="lbName" maxlength="30" placeholder="Votre prénom" value="${esc(ls.get('tx_meet_name', '') || ls.get('tx_rc_name', ''))}" aria-label="Votre prénom" required>
       <button class="btn primary xl block" type="submit">${icon('call')}${host ? 'Reprendre la réunion' : 'Rejoindre'}</button>
-      <p class="small faint">Votre micro sera coupé à l'arrivée. Vous l'activez quand vous voulez parler.</p>
+      <p class="small faint">${m.mode === 'course' ? 'Votre micro reste coupé pendant le cours. Levez la main : l\'enseignant vous donnera la parole.' : 'Votre micro sera coupé à l\'arrivée. Vous l\'activez quand vous voulez parler.'}</p>
     </form>
   </div></div></section>`;
   const inp = $('#lbName', root); if (!inp.value) setTimeout(() => inp.focus(), 60);
@@ -246,7 +261,21 @@ async function connect() {
   const r = await emitAck(socket, 'meet-join', { id: S.id, name: S.name, hostKey: hostKeyOf(S.id), tone: myTone() });
   if (!root) return;
   if (!r || r.error) { stopLocal(); return renderEnd((r && r.error) || 'Impossible de rejoindre la réunion.', true); }
-  Object.assign(S, { self: r.self, token: r.token, meeting: r.meeting });
+  if (r.waiting) { S.waitingRoom = true; S.meeting = r.meeting; return renderWaiting(); }
+  return afterJoin(r);
+}
+
+function renderWaiting() {
+  if (!root) return;
+  root.innerHTML = `<section class="narrow"><div class="card glow"><div class="state-screen"><div class="state-icon info"><span class="spinner"></span></div><h2>Salle d'attente</h2><p class="muted">${esc(S.meeting.title)} · l'organisateur va vous faire entrer dans un instant.</p><button type="button" class="btn ghost" id="wtQuit">${icon('x')}Quitter</button></div></div></section>`;
+  $('#wtQuit').onclick = () => { S.socket.emit('meet-leave'); S.waitingRoom = false; stopLocal(); S.ended = true; renderEnd('Vous avez quitté la salle d\'attente.'); };
+}
+
+async function afterJoin(r) {
+  const socket = S.socket;
+  if (!r || r.error) { stopLocal(); return renderEnd((r && r.error) || 'Impossible de rejoindre la réunion.', true); }
+  S.waitingRoom = false;
+  Object.assign(S, { self: r.self, token: r.token, meeting: r.meeting, messages: r.messages || [], poll: r.poll || null, wait: r.wait || [], unread: 0, tab: S.tab || 'people' });
   S.people.clear();
   r.people.forEach(p => S.people.set(p.pid, Object.assign({ streams: {} }, p)));
   const h = {
@@ -278,7 +307,7 @@ function bindSocket(socket) {
   });
   socket.on('meet-state', (p) => {
     if (!mine()) return;
-    if (S.self && p.pid === S.self.pid) { S.self = Object.assign(S.self, p); if (!p.hand && S.hand) { S.hand = false; drawBar(); } drawPeople(); return; }
+    if (S.self && p.pid === S.self.pid) { S.self = Object.assign(S.self, p); if (!p.hand && S.hand) S.hand = false; drawBar(); drawPeople(); return; }
     const cur = S.people.get(p.pid); if (!cur) return;
     const raised = !cur.hand && p.hand;
     Object.assign(cur, p);
@@ -287,9 +316,11 @@ function bindSocket(socket) {
     drawPeople();
   });
   socket.on('meet-signal', ({ from, data }) => { if (mine() && S.engine instanceof Mesh) S.engine.onSignal(from, data).catch(e => console.warn('signal', e)); });
-  socket.on('meet-force', ({ action, by }) => {
+  socket.on('meet-force', (f = {}) => {
+    const { action, by } = f;
     if (!mine()) return;
-    if (action === 'mute' && !S.muted) { setMuted(true); toast(by + ' a coupé votre micro', 'info'); }
+    if (action === 'mute') { if (!S.muted) { S.muted = true; if (S.mic) S.mic.enabled = false; sendState({ muted: true }); drawBar(); drawPeople(); } if (S.self && f.unfloor) S.self.floor = false; if (by) toast(f.unfloor ? by + ' a repris la parole' : by + ' a coupé votre micro', 'info'); }
+    if (action === 'floor') { if (S.self) S.self.floor = true; S.hand = false; drawBar(); toast('🎤 ' + by + ' vous donne la parole : ouvrez votre micro', 'success', { duration: 8000, action: 'Ouvrir le micro', onAction: () => setMuted(false) }); }
     if (action === 'remove') { leave(false); renderEnd('L\'organisateur vous a retiré de la réunion.'); }
   });
   socket.on('meet-info', (m) => {
@@ -299,9 +330,33 @@ function bindSocket(socket) {
     if (m.recording && !wasRec && !(S.self && S.self.host)) toast('🔴 L\'organisateur enregistre la réunion', 'warn', { duration: 6000 });
   });
   socket.on('meet-react', ({ pid, r, t }) => { if (mine()) showReact(pid, r, t); });
+  socket.on('meet-admitted', (r) => { if (S.waitingRoom && !S.ended) { toast('Vous êtes entré dans la réunion', 'success'); afterJoin(r); } });
+  socket.on('meet-denied', ({ reason }) => { if (S.waitingRoom && !S.ended) { S.waitingRoom = false; stopLocal(); S.ended = true; renderEnd(reason, true); } });
+  socket.on('meet-chat', (msg) => {
+    if (!mine() || !S.messages) return;
+    S.messages.push(msg); if (S.messages.length > 300) S.messages.shift();
+    const open = S.panel && S.tab === 'chat';
+    if (!open && (!S.self || msg.pid !== S.self.pid)) { S.unread = (S.unread || 0) + 1; toast('💬 ' + msg.name + ' : ' + msg.text.slice(0, 80), 'info', { duration: 3500, action: 'Répondre', onAction: () => openPanel('chat') }); }
+    if (open) drawPanel(); drawBar();
+  });
+  socket.on('meet-poll', (p) => {
+    if (!mine()) return;
+    const isNew = p && (!S.poll || S.poll.id !== p.id);
+    S.poll = p;
+    if (isNew && !isStaff()) toast('📊 Sondage : ' + p.q, 'info', { duration: 8000, action: 'Répondre', onAction: () => openPanel('poll') });
+    if (S.panel && S.tab === 'poll') drawPanel(); drawBar();
+  });
+  socket.on('meet-wait', (list) => {
+    if (!mine()) return;
+    const more = (list || []).length > (S.wait || []).length;
+    S.wait = list || [];
+    if (more && isStaff()) { const w = S.wait[S.wait.length - 1]; toast('🚪 ' + w.name + ' attend pour entrer', 'info', { duration: 8000, action: 'Faire entrer', onAction: () => S.socket.emit('meet-host', { action: 'admit', sid: w.sid }) }); }
+    if (S.panel) drawPanel(); drawBar();
+  });
   socket.on('meet-ended', ({ reason }) => { if (!mine()) return; leave(false); renderEnd(reason === 'expired' ? 'La réunion est terminée.' : reason); });
   // Coupure réseau : on rejoint automatiquement avec les mêmes réglages
   socket.on('connect', () => {
+    if (S.waitingRoom && !S.ended) { connect(); return; }
     if (!mine() || !S.engine) return;
     S.engine.close(); S.engine = null;
     S.people.forEach(p => p.audioEl && p.audioEl.remove());
@@ -332,6 +387,7 @@ function onLink(pid, state) { const p = S.people.get(pid); if (p) { p.link = sta
 function sendState(s) { S.socket && S.socket.emit('meet-state', s); }
 function setMuted(m, silent) {
   if (!S.mic && !m) { toast('Autorisez le micro dans le navigateur pour prendre la parole', 'warn'); return; }
+  if (!m && !canTalk()) { toast('Levez la main : l\'enseignant vous donnera la parole.', 'info'); if (!S.hand) toggleHand(); return; }
   S.muted = m; if (S.mic) S.mic.enabled = !m;
   if (!silent) sendState({ muted: m });
   if (!m && S.mic && !S.selfLevel) S.selfLevel = meter(S.mic);
@@ -388,9 +444,10 @@ function renderRoom() {
   const m = S.meeting;
   document.title = m.title + ' · Réunion';
   root.innerHTML = `
-  <section class="meet ${m.kind === 'video' ? 'is-video' : 'is-audio'}">
+  <section class="meet ${m.kind === 'video' ? 'is-video' : 'is-audio'} ${m.mode === 'course' ? 'is-course' : ''}">
     <header class="meet-top" id="mtTop"></header>
-    <div class="meet-stage hidden" id="mtStage"><video id="mtStageV" autoplay playsinline muted></video><span class="meet-stage-l" id="mtStageL"></span></div>
+    <div class="meet-stage hidden" id="mtStage"><video id="mtStageV" autoplay playsinline muted></video><span class="meet-stage-l" id="mtStageL"></span><button type="button" class="meet-fs" data-fs="mtStage" aria-label="Plein écran">${icon('fullscreen', 'sm')}</button></div>
+    <div class="meet-spot ${m.mode === 'course' ? '' : 'hidden'}" id="mtSpot"></div>
     <div class="meet-grid" id="mtGrid"></div>
     <div id="mtAudios" hidden></div>
   </section>`;
@@ -399,6 +456,7 @@ function renderRoom() {
   const bar = document.createElement('footer'); bar.className = 'meet-bar'; bar.id = 'mtBar'; bar.setAttribute('aria-label', 'Commandes de la réunion');
   const panel = document.createElement('aside'); panel.className = 'meet-panel card hidden'; panel.id = 'mtPanel';
   document.body.append(panel, bar); document.body.classList.add('in-meet');
+  root.querySelectorAll('[data-fs]').forEach(b => b.onclick = () => { const el = document.getElementById(b.dataset.fs); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); else if (el && el.requestFullscreen) el.requestFullscreen().catch(() => {}); });
   drawTop(); drawBar(); drawPeople();
 }
 
@@ -407,7 +465,7 @@ function drawTop() {
   const m = S.meeting, n = S.people.size + 1;
   el.innerHTML = `
     <svg class="meet-logo" aria-hidden="true"><use href="#i-logo"/></svg>
-    <div class="meet-title"><b>${esc(m.title)}</b><span class="small muted"><span id="mtClock">${fmtClock(Date.now() - m.startedAt)}</span> · ${n} participant${n > 1 ? 's' : ''}${m.locked ? ' · 🔒 verrouillée' : ''}</span></div>
+    <div class="meet-title"><b>${m.mode === 'course' ? '🎓 ' : ''}${esc(m.title)}</b><span class="small muted"><span id="mtClock">${fmtClock(Date.now() - m.startedAt)}</span> · ${n} participant${n > 1 ? 's' : ''}${m.locked ? ' · 🔒 verrouillée' : ''}</span></div>
     ${m.recording ? `<span class="pill bad meet-rec"><i></i>Enregistrement</span>` : ''}
     ${S.needTap ? `<button type="button" class="btn sm primary" id="mtTap">${icon('play', 'sm')}Activer le son</button>` : ''}
     <button type="button" class="btn sm" id="mtInvite">${icon('share', 'sm')}Inviter</button>`;
@@ -421,13 +479,15 @@ function drawBar() {
   const canShare = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) && !isMobile;
   const hands = [...S.people.values()].filter(p => p.hand).length;
   el.innerHTML = `
-    <button type="button" class="mb ${S.muted ? 'off' : 'on'}" id="bMic" aria-pressed="${!S.muted}">${icon(S.muted ? 'mic-off' : 'mic')}<span>${S.muted ? 'Micro coupé' : 'Micro ouvert'}</span></button>
+    <button type="button" class="mb ${S.muted ? 'off' : 'on'} ${!canTalk() ? 'locked' : ''}" id="bMic" aria-pressed="${!S.muted}">${icon(S.muted ? 'mic-off' : 'mic')}<span>${!canTalk() ? 'Micro verrouillé' : S.muted ? 'Micro coupé' : 'Micro ouvert'}</span></button>
     ${video ? `<button type="button" class="mb ${S.camOn ? 'on' : 'off'}" id="bCam" aria-pressed="${S.camOn}">${icon('video')}<span>${S.camOn ? 'Caméra' : 'Caméra coupée'}</span></button>` : ''}
     ${canShare ? `<button type="button" class="mb ${S.sharing ? 'on' : ''}" id="bScr" aria-pressed="${S.sharing}">${icon('screen')}<span>${S.sharing ? 'Arrêter' : 'Présenter'}</span></button>` : ''}
     <button type="button" class="mb ${S.hand ? 'hand' : ''}" id="bHand" aria-pressed="${S.hand}"><b class="mb-emo">${emo('hand', myTone())}</b><span>${S.hand ? 'Baisser' : 'Lever la main'}</span></button>
     <button type="button" class="mb" id="bReact" aria-haspopup="true">${'<b class="mb-emo">' + emo('ok', myTone()) + '</b>'}<span>Réagir</span></button>
     ${S.self && S.self.host ? `<button type="button" class="mb ${R.on ? 'rec' : ''}" id="bRec" aria-pressed="${R.on}">${icon('rec')}<span>${R.on ? 'Arrêter ' + fmtClock(Date.now() - R.t0) : 'Enregistrer'}</span></button>` : ''}
-    <button type="button" class="mb" id="bPpl" aria-pressed="${S.panel}">${icon('users')}<span>Participants</span>${hands ? `<em class="mb-badge">${hands}</em>` : ''}</button>
+    <button type="button" class="mb" id="bPpl" aria-pressed="${S.panel && S.tab === 'people'}">${icon('users')}<span>Participants</span>${hands + (isStaff() ? (S.wait || []).length : 0) ? `<em class="mb-badge">${hands + (isStaff() ? (S.wait || []).length : 0)}</em>` : ''}</button>
+    ${S.meeting.chat || isStaff() ? `<button type="button" class="mb" id="bChat" aria-pressed="${S.panel && S.tab === 'chat'}">${icon('message')}<span>Discussion</span>${S.unread ? `<em class="mb-badge">${S.unread}</em>` : ''}</button>` : ''}
+    <button type="button" class="mb" id="bPoll" aria-pressed="${S.panel && S.tab === 'poll'}">${icon('chart')}<span>Sondage</span>${S.poll && S.poll.open && !isStaff() && !(S.voted && S.poll.id in S.voted) ? '<em class="mb-badge">1</em>' : ''}</button>
     <button type="button" class="mb leave" id="bLeave">${icon('call-end')}<span>Quitter</span></button>`;
   $('#bMic').onclick = () => setMuted(!S.muted);
   if ($('#bCam')) $('#bCam').onclick = toggleCam;
@@ -435,7 +495,9 @@ function drawBar() {
   $('#bHand').onclick = toggleHand;
   $('#bReact').onclick = toggleReactions;
   if ($('#bRec')) $('#bRec').onclick = () => (R.on ? recStop() : recStart());
-  $('#bPpl').onclick = () => { S.panel = !S.panel; drawPeople(); drawBar(); };
+  $('#bPpl').onclick = () => openPanel('people', true);
+  if ($('#bChat')) $('#bChat').onclick = () => openPanel('chat', true);
+  $('#bPoll').onclick = () => openPanel('poll', true);
   $('#bLeave').onclick = async () => {
     if (S.self && S.self.host) {
       const r = await modal({ title: 'Quitter la réunion', body: '<p class="muted">Vous êtes l\'organisateur. Les autres peuvent continuer sans vous, ou vous pouvez terminer la réunion pour tout le monde.</p>', actions: [{ label: 'Annuler', cls: 'ghost', value: null }, { label: 'Quitter', value: 'leave' }, { label: 'Terminer pour tous', cls: 'danger', value: 'end' }] });
@@ -457,20 +519,25 @@ function drawPeople() {
   const me = Object.assign({}, S.self, { name: S.name, muted: S.muted, cam: S.camOn });
   const list = [...S.people.values()];
   const keep = new Set([me.pid, ...list.map(p => p.pid)]);
-  grid.querySelectorAll('.mt-tile').forEach(t => { if (!keep.has(t.dataset.pid)) t.remove(); });
+  document.querySelectorAll('#mtGrid .mt-tile, #mtSpot .mt-tile').forEach(t => { if (!keep.has(t.dataset.pid)) t.remove(); });
+  const spot = $('#mtSpot');
+  const teacher = isCourse() ? [me, ...list].find(p => p.host) : null;
+  if (spot) spot.classList.toggle('hidden', !teacher);
   [me, ...list].forEach((p, i) => {
     const self = i === 0;
-    let t = grid.querySelector(`.mt-tile[data-pid="${p.pid}"]`);
+    const box = teacher && p.pid === teacher.pid && spot ? spot : grid;
+    let t = document.querySelector(`#mtGrid .mt-tile[data-pid="${p.pid}"], #mtSpot .mt-tile[data-pid="${p.pid}"]`);
+    if (t && t.parentElement !== box) { if (box === grid && self) grid.prepend(t); else box.appendChild(t); }
     if (!t) {
       t = document.createElement('div'); t.className = 'mt-tile'; t.dataset.pid = p.pid; t.style.setProperty('--h', hue(p.pid));
       t.innerHTML = '<video class="mt-v" autoplay playsinline muted></video><div class="mt-av"></div><div class="mt-name"></div><div class="mt-hand"></div><div class="mt-warn"></div>';
-      if (self) grid.prepend(t); else grid.appendChild(t);
+      if (box === spot) spot.appendChild(t); else if (self) grid.prepend(t); else grid.appendChild(t);
     }
     const video = S.meeting.kind === 'video' && p.cam;
     t.classList.toggle('self', self);
     t.classList.toggle('has-video', !!video);
     t.querySelector('.mt-av').textContent = initials(p.name);
-    t.querySelector('.mt-name').innerHTML = (p.muted ? `<span class="mt-mute">${icon('mic-off', 'sm')}</span>` : '') + esc(p.name) + (self ? ' (vous)' : '') + (p.host ? ' · organisateur' : '');
+    t.querySelector('.mt-name').innerHTML = (p.muted ? `<span class="mt-mute">${icon('mic-off', 'sm')}</span>` : '') + esc(p.name) + (self ? ' (vous)' : '') + (p.host ? (isCourse() ? ' · enseignant' : ' · organisateur') : p.cohost ? ' · co-animateur' : '') + (isCourse() && p.floor && !p.host ? ' · 🎤 a la parole' : '');
     const n = order.indexOf(p.pid) + 1, hd = t.querySelector('.mt-hand');
     hd.textContent = n ? emo('hand', self ? myTone() : p.tone || 0) + ' ' + n : ''; hd.hidden = !n;
     const w = t.querySelector('.mt-warn'); const bad = !self && p.link && /failed|disconnected/.test(p.link);
@@ -480,6 +547,7 @@ function drawPeople() {
     const cur = v.srcObject && v.srcObject.getVideoTracks()[0];
     if (want && cur !== want) v.srcObject = self ? new MediaStream([S.cam]) : p.streams.c;
     else if (!want && v.srcObject) v.srcObject = null;
+    if (v.srcObject && v.paused) v.play().catch(() => {});   // une vidéo déplacée dans la page se met en pause
   });
   grid.dataset.n = String(Math.min(list.length + 1, 9));
   grid.classList.toggle('dense', list.length + 1 > 6);
@@ -495,54 +563,142 @@ function drawPeople() {
     const wantTrack = want instanceof MediaStream ? want.getVideoTracks()[0] : want;
     if (wantTrack && cur !== wantTrack) v.srcObject = want instanceof MediaStream ? want : new MediaStream([want]);
     else if (!wantTrack) v.srcObject = null;
+    if (v.srcObject && v.paused) v.play().catch(() => {});
     $('#mtStageL').textContent = sharer ? sharer.name + ' présente' : S.sharing ? 'Vous présentez votre écran' : '';
   }
   drawPanel(); drawTop(); drawBarBadge();
 }
 function drawBarBadge() {
   const b = $('#bPpl'); if (!b) return;
-  const hands = [...S.people.values()].filter(p => p.hand).length;
+  const hands = [...S.people.values()].filter(p => p.hand).length + (isStaff() ? (S.wait || []).length : 0);
   let em = b.querySelector('.mb-badge');
   if (hands && !em) { em = document.createElement('em'); em.className = 'mb-badge'; b.appendChild(em); }
   if (em) { if (hands) em.textContent = hands; else em.remove(); }
 }
 
+function openPanel(tab, toggle) {
+  if (toggle && S.panel && S.tab === tab) S.panel = false; else { S.panel = true; S.tab = tab; }
+  if (S.tab === 'chat' && S.panel) S.unread = 0;
+  drawPanel(); drawBar();
+  if (S.panel && tab === 'chat') setTimeout(() => { const i = $('#chIn'); if (i) i.focus(); }, 50);
+}
+const fmtHour = (ts) => new Date(ts).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
 function drawPanel() {
   const el = $('#mtPanel'); if (!el) return;
   el.classList.toggle('hidden', !S.panel);
   if (!S.panel) return;
-  const host = S.self && S.self.host;
+  const tabs = [['people', 'users', 'Participants'], ...(S.meeting.chat || isStaff() ? [['chat', 'message', 'Discussion']] : []), ['poll', 'chart', 'Sondage']];
+  if (!tabs.some(t => t[0] === S.tab)) S.tab = 'people';
+  el.innerHTML = `
+    <div class="card-title"><div class="chips mp-tabs" role="tablist">${tabs.map(([k, ic, l]) => `<button type="button" class="chip ${S.tab === k ? 'active' : ''}" data-tab="${k}" role="tab" aria-selected="${S.tab === k}">${icon(ic, 'sm')}${l}</button>`).join('')}</div>
+      <button type="button" class="icon-btn" id="pClose" aria-label="Fermer">${icon('x')}</button></div>
+    <div id="mpBody"></div>`;
+  el.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => openPanel(b.dataset.tab));
+  $('#pClose').onclick = () => { S.panel = false; drawPanel(); drawBar(); };
+  const body = $('#mpBody');
+  if (S.tab === 'chat') return drawChat(body);
+  if (S.tab === 'poll') return drawPoll(body);
+  drawPeoplePane(body);
+}
+
+function drawPeoplePane(body) {
+  const staffMe = isStaff(), hostMe = !!(S.self && S.self.host), course = isCourse();
   const order = handOrder();
   const all = [Object.assign({}, S.self, { name: S.name, muted: S.muted, me: true })].concat([...S.people.values()]);
   all.sort((a, b) => { const ia = order.indexOf(a.pid), ib = order.indexOf(b.pid); return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib); });
-  el.innerHTML = `
-    <div class="card-title"><h3>${icon('users')}Participants (${all.length})</h3><span class="row" style="gap:6px"><button type="button" class="btn sm" id="pInvite">${icon('share', 'sm')}Inviter</button><button type="button" class="icon-btn" id="pClose" aria-label="Fermer">${icon('x')}</button></span></div>
-    ${host ? `<div class="row wrap" style="gap:6px;margin-bottom:10px">
+  const wait = staffMe ? (S.wait || []) : [];
+  body.innerHTML = `
+    <div class="row" style="justify-content:space-between;margin-bottom:8px"><b>${all.length} participant${all.length > 1 ? 's' : ''}</b><button type="button" class="btn sm" id="pInvite">${icon('share', 'sm')}Inviter</button></div>
+    ${wait.length ? `<div class="mp-wait"><div class="row" style="justify-content:space-between"><b>🚪 Salle d'attente (${wait.length})</b><button type="button" class="btn sm primary" data-admit="*">Tout admettre</button></div>
+      ${wait.map(w => `<div class="mt-row"><span class="mt-rn">${esc(w.name)}</span><button type="button" class="btn sm" data-admit="${esc(w.sid)}">Admettre</button><button type="button" class="btn sm ghost" data-deny="${esc(w.sid)}" title="Refuser">${icon('x', 'sm')}</button></div>`).join('')}</div>` : ''}
+    ${staffMe ? `<div class="row wrap" style="gap:6px;margin:8px 0 10px">
       <button type="button" class="btn sm" data-host="muteAll">${icon('mic-off', 'sm')}Couper tous les micros</button>
       <button type="button" class="btn sm" data-host="${S.meeting.locked ? 'unlock' : 'lock'}">${icon(S.meeting.locked ? 'unlock' : 'lock', 'sm')}${S.meeting.locked ? 'Déverrouiller' : 'Verrouiller'}</button>
-      <button type="button" class="btn sm danger" data-host="end">${icon('call-end', 'sm')}Terminer pour tous</button></div>` : ''}
-    <div class="stack" style="gap:6px">${all.map(p => {
+      <button type="button" class="btn sm" data-host="waiting" data-v="${S.meeting.waiting ? '' : '1'}">${icon('clock', 'sm')}${S.meeting.waiting ? 'Sans salle d\'attente' : 'Salle d\'attente'}</button>
+      <button type="button" class="btn sm" data-host="chat" data-v="${S.meeting.chat ? '' : '1'}">${icon('message', 'sm')}${S.meeting.chat ? 'Fermer la discussion' : 'Ouvrir la discussion'}</button>
+      <button type="button" class="btn sm" id="pAtt">${icon('clipboard', 'sm')}Liste de présence</button>
+      ${hostMe ? `<button type="button" class="btn sm danger" data-host="end">${icon('call-end', 'sm')}Terminer pour tous</button>` : ''}</div>` : ''}
+    <div class="stack" style="gap:4px">${all.map(p => {
       const n = order.indexOf(p.pid) + 1;
+      const role = p.host ? (course ? 'enseignant' : 'organisateur') : p.cohost ? 'co-animateur' : course && p.floor ? '🎤 a la parole' : '';
+      const acts = staffMe && !p.me ? [
+        course && !p.host && !p.cohost ? (p.floor ? `<button type="button" class="btn sm" data-act="unfloor">Reprendre la parole</button>` : `<button type="button" class="btn sm ${p.hand ? 'primary' : ''}" data-act="floor">Donner la parole</button>`) : '',
+        !p.muted ? `<button type="button" class="btn sm ghost" data-act="mute" title="Couper son micro">${icon('mic-off', 'sm')}</button>` : '',
+        p.hand ? `<button type="button" class="btn sm ghost" data-act="lower" title="Baisser sa main">${icon('hand', 'sm')}</button>` : '',
+        hostMe && !p.host ? `<button type="button" class="btn sm ghost" data-act="${p.cohost ? 'uncohost' : 'cohost'}" title="${p.cohost ? 'Retirer co-animateur' : 'Nommer co-animateur'}">${icon('shield', 'sm')}</button>` : '',
+        !p.host ? `<button type="button" class="btn sm ghost" data-act="remove" title="Retirer de la réunion">${icon('x', 'sm')}</button>` : ''
+      ].join('') : '';
       return `<div class="mt-row" data-pid="${esc(p.pid)}"><span class="mt-dot" style="--h:${hue(p.pid)}">${esc(initials(p.name))}</span>
-        <span class="mt-rn">${esc(p.name)}${p.me ? ' (vous)' : ''}${p.host ? ' <small class="muted">organisateur</small>' : ''}</span>
-        ${n ? `<span class="pill warn" style="flex:none">✋ ${n}</span>` : ''}
+        <span class="mt-rn">${esc(p.name)}${p.me ? ' (vous)' : ''}${role ? ` <small class="muted">${role}</small>` : ''}</span>
+        ${n ? `<span class="pill warn" style="flex:none">${emo('hand', p.me ? myTone() : p.tone || 0)} ${n}</span>` : ''}
         <span class="mt-ic">${icon(p.muted ? 'mic-off' : 'mic', 'sm')}</span>
-        ${host && !p.me ? `<span class="mt-act">${!p.muted ? `<button type="button" class="btn sm ghost" data-act="mute" title="Couper son micro">${icon('mic-off', 'sm')}</button>` : ''}${p.hand ? `<button type="button" class="btn sm ghost" data-act="lower" title="Baisser sa main">${icon('hand', 'sm')}</button>` : ''}${!p.host ? `<button type="button" class="btn sm ghost" data-act="remove" title="Retirer de la réunion">${icon('x', 'sm')}</button>` : ''}</span>` : ''}
+        ${acts ? `<span class="mt-act">${acts}</span>` : ''}
       </div>`; }).join('')}</div>
-    <p class="small faint" style="margin-top:10px">${S.meeting.engine === 'sfu' ? 'Jusqu\'à ' + S.meeting.max + ' participants.' : 'Jusqu\'à ' + S.meeting.max + ' participants en ' + (S.meeting.kind === 'video' ? 'vidéo' : 'audio') + '.'} Rien n'est enregistré.</p>`;
-  $('#pClose').onclick = () => { S.panel = false; drawPanel(); drawBar(); };
+    <p class="small faint" style="margin-top:10px">Jusqu'à ${S.meeting.max} participants. ${S.meeting.recording ? '🔴 Enregistrement en cours.' : 'Rien n\'est enregistré sur nos serveurs.'}</p>`;
   $('#pInvite').onclick = () => invite(false);
-  el.querySelectorAll('[data-host]').forEach(b => b.onclick = async () => {
+  const att = $('#pAtt'); if (att) att.onclick = exportAttendance;
+  body.querySelectorAll('[data-admit]').forEach(b => b.onclick = () => S.socket.emit('meet-host', { action: 'admit', sid: b.dataset.admit }));
+  body.querySelectorAll('[data-deny]').forEach(b => b.onclick = () => S.socket.emit('meet-host', { action: 'deny', sid: b.dataset.deny }));
+  body.querySelectorAll('[data-host]').forEach(b => b.onclick = async () => {
     const a = b.dataset.host;
     if (a === 'end' && !(await confirmDialog('Terminer la réunion ?', 'Tout le monde sera déconnecté.', 'Terminer', true))) return;
-    S.socket.emit('meet-host', { action: a });
+    S.socket.emit('meet-host', { action: a, value: !!b.dataset.v });
     if (a === 'muteAll') toast('Micros coupés', 'success');
   });
-  el.querySelectorAll('[data-act]').forEach(b => b.onclick = async () => {
+  body.querySelectorAll('[data-act]').forEach(b => b.onclick = async () => {
     const pid = b.closest('[data-pid]').dataset.pid, a = b.dataset.act;
     if (a === 'remove') { const p = S.people.get(pid); if (!(await confirmDialog('Retirer ' + (p ? p.name : 'ce participant') + ' ?', 'Il sera déconnecté de la réunion.', 'Retirer', true))) return; }
     S.socket.emit('meet-host', { action: a, pid });
   });
+}
+
+function drawChat(body) {
+  const can = S.meeting.chat || isStaff();
+  const msgs = S.messages || [];
+  body.innerHTML = `
+    <div class="mp-chat" id="chList" aria-live="polite">${msgs.length ? msgs.map(m => `<div class="mp-msg ${S.self && m.pid === S.self.pid ? 'me' : ''}"><div class="mp-meta"><b>${esc(m.name)}</b>${m.staff ? ' <small class="muted">' + (isCourse() ? 'enseignant' : 'animateur') + '</small>' : ''} <small class="faint">${fmtHour(m.at)}</small></div><div class="mp-txt">${esc(m.text)}</div></div>`).join('') : '<p class="small faint center" style="margin:30px 0">Pas encore de message. Posez votre question ici.</p>'}</div>
+    ${can ? `<form id="chForm" class="mp-send" autocomplete="off"><input class="input" id="chIn" maxlength="500" placeholder="Écrire un message…" aria-label="Message"><button type="submit" class="btn primary" aria-label="Envoyer">${icon('arrow-right')}</button></form>` : '<p class="small faint">L\'organisateur a fermé la discussion.</p>'}`;
+  const list = $('#chList'); list.scrollTop = list.scrollHeight;
+  const f = $('#chForm'); if (f) f.onsubmit = (e) => { e.preventDefault(); const i = $('#chIn'); const t = i.value.trim(); if (!t) return; S.socket.emit('meet-chat', { text: t }); i.value = ''; i.focus(); };
+}
+
+function drawPoll(body) {
+  const p = S.poll, staffMe = isStaff(), voted = (S.voted || {})[p && p.id];
+  const results = p ? p.opts.map((o, i) => { const n = p.counts[i], pc = p.total ? Math.round(n / p.total * 100) : 0; return `<div class="mp-res ${voted === i ? 'mine' : ''}"><div class="row" style="justify-content:space-between"><span>${esc(o)}</span><b>${pc} % <small class="faint">(${n})</small></b></div><div class="pf-bar"><i style="width:${pc}%"></i></div></div>`; }).join('') : '';
+  body.innerHTML = `
+    ${p ? `<div class="stack" style="gap:8px"><b style="font-size:15px">${esc(p.q)}</b><span class="small faint">${p.total} réponse${p.total > 1 ? 's' : ''} · ${p.open ? 'en cours' : 'terminé'}</span>
+      ${p.open && !staffMe ? `<div class="stack" style="gap:6px">${p.opts.map((o, i) => `<button type="button" class="btn block ${voted === i ? 'primary' : ''}" data-vote="${i}">${esc(o)}</button>`).join('')}</div>${voted != null ? '<p class="small faint">Vous pouvez changer votre réponse tant que le sondage est ouvert.</p>' : ''}` : ''}
+      ${staffMe || voted != null || !p.open ? results : ''}
+      ${staffMe && p.open ? `<button type="button" class="btn sm" id="pollClose">${icon('check', 'sm')}Clore et montrer les résultats</button>` : ''}</div>` : `<p class="small faint">${staffMe ? 'Aucun sondage pour l\'instant.' : 'Aucun sondage en cours. L\'animateur peut en lancer un à tout moment.'}</p>`}
+    ${staffMe ? `<form id="pollForm" class="stack mp-pollform" style="gap:8px;margin-top:14px" autocomplete="off">
+      <b>${p ? 'Nouveau sondage' : 'Lancer un sondage'}</b>
+      <input class="input" id="pQ" maxlength="200" placeholder="Question (ex. : Avez-vous compris ?)" required>
+      <textarea class="input" id="pO" rows="4" placeholder="Une réponse par ligne (2 à 6)">Oui\nNon\nPas sûr</textarea>
+      <button type="submit" class="btn primary">${icon('chart', 'sm')}Lancer</button></form>` : ''}`;
+  body.querySelectorAll('[data-vote]').forEach(b => b.onclick = () => { S.voted = Object.assign(S.voted || {}, { [p.id]: +b.dataset.vote }); S.socket.emit('meet-vote', { id: p.id, i: +b.dataset.vote }); drawPanel(); drawBar(); });
+  const c = $('#pollClose'); if (c) c.onclick = () => S.socket.emit('meet-poll-close');
+  const f = $('#pollForm'); if (f) f.onsubmit = (e) => {
+    e.preventDefault();
+    const q = $('#pQ').value.trim(), opts = $('#pO').value.split('\n').map(x => x.trim()).filter(Boolean).slice(0, 6);
+    if (!q || opts.length < 2) return toast('Une question et au moins deux réponses', 'warn');
+    S.socket.emit('meet-poll', { q, opts }); toast('Sondage lancé', 'success');
+  };
+}
+
+/* Liste de présence : fichier CSV qui s'ouvre directement dans Excel */
+async function exportAttendance() {
+  const r = await emitAck(S.socket, 'meet-host', { action: 'attendance' });
+  if (!r || !r.rows) return toast('Liste de présence indisponible.', 'error');
+  const d = (ts) => new Date(ts).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const q = (v) => '"' + String(v).replace(/"/g, '""') + '"';
+  const lines = [['Nom', 'Rôle', 'Arrivée', 'Départ', 'Durée (min)', 'Connexions', 'Encore présent'].map(q).join(';')];
+  r.rows.forEach(x => lines.push([x.name, x.host ? (isCourse() ? 'Enseignant' : 'Organisateur') : 'Participant', d(x.first), x.present ? '' : d(x.last), Math.max(1, Math.round(x.ms / 60000)), x.visits, x.present ? 'oui' : 'non'].map(q).join(';')));
+  const head = [q('Réunion : ' + r.title), q('Début : ' + d(r.startedAt)), q('Export : ' + d(Date.now()))].join(';');
+  const blob = new Blob(['﻿' + head + '\r\n\r\n' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const name = 'Presence-' + String(r.title).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) + '-' + new Date().toISOString().slice(0, 10) + '.csv';
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.style.display = 'none'; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+  toast('Liste de présence téléchargée : ' + r.rows.length + ' personne(s)', 'success');
 }
 
 async function invite(urgent) {
@@ -602,29 +758,63 @@ function pickMime(video) {
 }
 function recAdd(key, trackObj) {
   if (!R.on || !trackObj || R.srcs.has(key)) return;
-  try { const s = R.ac.createMediaStreamSource(new MediaStream([trackObj])); s.connect(R.dest); R.srcs.set(key, s); } catch (e) { /* ignore */ }
+  try { const s = R.ac.createMediaStreamSource(new MediaStream([trackObj])); s.connect(R.mix); R.srcs.set(key, s); } catch (e) { /* ignore */ }
+}
+/** Choix du format avant d'enregistrer : MP3 (cours, podcasts) ou vidéo */
+async function recOptions() {
+  const canVideo = !!(window.MediaRecorder && HTMLCanvasElement.prototype.captureStream) && (S.meeting.kind === 'video' || S.sharing || [...S.people.values()].some(p => p.screen));
+  const last = ls.get('tx_rec_fmt', 'mp3-128');
+  const opt = (v, t, d) => `<label class="rec-opt"><input type="radio" name="recf" value="${v}" ${last === v ? 'checked' : ''}><span><b>${t}</b><small>${d}</small></span></label>`;
+  const r = await modal({
+    title: 'Enregistrer la réunion',
+    body: `<p class="muted small">Tous les participants verront qu'un enregistrement est en cours. Le fichier est créé sur votre appareil, rien n'est gardé sur nos serveurs.</p>
+      <div class="stack" style="gap:8px;margin-top:10px">
+        ${opt('mp3-128', 'Audio MP3 · 128 kbit/s', 'Recommandé pour un cours : lisible partout, environ 1 Mo par minute')}
+        ${opt('mp3-64', 'Audio MP3 · 64 kbit/s', 'Voix seule, fichier deux fois plus léger (WhatsApp)')}
+        ${opt('mp3-192', 'Audio MP3 · 192 kbit/s', 'Meilleure qualité, fichier plus lourd')}
+        ${canVideo ? opt('video', 'Vidéo (WebM)', 'Vignettes, noms et présentation à l’écran ; plus lourd') : ''}
+      </div>`,
+    actions: [{ label: 'Annuler', cls: 'ghost', value: null }, { label: 'Démarrer', cls: 'danger', icon: 'rec', handler: (bd) => (bd.querySelector('input[name=recf]:checked') || {}).value || 'mp3-128' }]
+  });
+  if (r) ls.set('tx_rec_fmt', r);
+  return r;
 }
 async function recStart() {
-  if (!window.MediaRecorder) return toast('Ce navigateur ne permet pas d\'enregistrer. Utilisez Chrome ou Edge sur ordinateur.', 'warn');
-  if (!(await confirmDialog('Enregistrer la réunion ?', 'Tous les participants verront qu\'un enregistrement est en cours. Le fichier sera enregistré sur votre appareil, pas sur nos serveurs.', 'Démarrer l\'enregistrement'))) return;
+  const fmt = await recOptions(); if (!fmt) return;
   const ac = audioCtx(); if (!ac) return toast('Enregistrement impossible sur cet appareil.', 'error');
-  Object.assign(R, { ac, dest: ac.createMediaStreamDestination(), srcs: new Map(), on: true, chunks: [], t0: Date.now() });
+  const mix = ac.createGain();
+  // Limiteur : plusieurs voix en même temps ne saturent pas l'enregistrement
+  const comp = ac.createDynamicsCompressor(); comp.threshold.value = -12; comp.knee.value = 6; comp.ratio.value = 10; comp.attack.value = 0.003; comp.release.value = 0.2;
+  mix.connect(comp);
+  Object.assign(R, { ac, mix, dest: ac.createMediaStreamDestination(), srcs: new Map(), on: true, chunks: [], t0: Date.now(), fmt, video: fmt === 'video', mp3: fmt.startsWith('mp3') });
+  comp.connect(R.dest);
   recAdd('self', S.mic);
   S.people.forEach(p => p.streams.a && recAdd(p.pid, p.streams.a.getAudioTracks()[0]));
-  let video = S.meeting.kind === 'video' || S.sharing || [...S.people.values()].some(p => p.screen);
-  let stream = R.dest.stream;
-  if (video && HTMLCanvasElement.prototype.captureStream) {
-    R.cv = document.createElement('canvas'); R.cv.width = 1280; R.cv.height = 720; R.cx = R.cv.getContext('2d');
-    R.draw = setInterval(recDraw, 1000 / 15);
-    stream = new MediaStream([...R.cv.captureStream(15).getVideoTracks(), ...R.dest.stream.getAudioTracks()]);
-  } else video = false;
-  const mime = pickMime(video);
-  try { R.mr = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 64000, videoBitsPerSecond: 900000 } : undefined); }
-  catch (e) { R.on = false; clearInterval(R.draw); return toast('Enregistrement impossible sur cet appareil.', 'error'); }
-  R.mime = R.mr.mimeType || mime; R.video = video;
-  R.mr.ondataavailable = (e) => { if (e.data && e.data.size) R.chunks.push(e.data); };
-  R.mr.onstop = recDone;
-  R.mr.start(2000);
+  if (R.mp3) {
+    // MP3 encodé pendant la réunion (pas d'attente à la fin, mémoire réduite)
+    try { R.worker = new Worker('/js/mp3-worker.js'); } catch (e) { R.on = false; return toast('Enregistrement MP3 impossible sur cet appareil.', 'error'); }
+    R.worker.postMessage({ cmd: 'init', sampleRate: ac.sampleRate, kbps: +fmt.split('-')[1] || 128 });
+    R.worker.onmessage = (e) => { if (e.data && e.data.blob) recDone(e.data.blob); };
+    R.node = ac.createScriptProcessor(4096, 1, 1);
+    R.node.onaudioprocess = (e) => { if (R.on) R.worker.postMessage({ cmd: 'pcm', d: new Float32Array(e.inputBuffer.getChannelData(0)) }); };
+    R.mute = ac.createGain(); R.mute.gain.value = 0;
+    comp.connect(R.node); R.node.connect(R.mute); R.mute.connect(ac.destination);
+  } else {
+    if (!window.MediaRecorder) { R.on = false; return toast('Ce navigateur ne permet pas d\'enregistrer en vidéo. Choisissez MP3.', 'warn'); }
+    let stream = R.dest.stream;
+    if (R.video) {
+      R.cv = document.createElement('canvas'); R.cv.width = 1280; R.cv.height = 720; R.cx = R.cv.getContext('2d');
+      R.draw = setInterval(recDraw, 1000 / 15);
+      stream = new MediaStream([...R.cv.captureStream(15).getVideoTracks(), ...R.dest.stream.getAudioTracks()]);
+    }
+    const mime = pickMime(R.video);
+    try { R.mr = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 128000, videoBitsPerSecond: 900000 } : undefined); }
+    catch (e) { R.on = false; clearInterval(R.draw); return toast('Enregistrement impossible sur cet appareil.', 'error'); }
+    R.mime = R.mr.mimeType || mime;
+    R.mr.ondataavailable = (e) => { if (e.data && e.data.size) R.chunks.push(e.data); };
+    R.mr.onstop = () => recDone(new Blob(R.chunks, { type: R.mime || (R.video ? 'video/webm' : 'audio/webm') }));
+    R.mr.start(2000);
+  }
   S.socket.emit('meet-host', { action: 'rec' });
   R.tick = setInterval(() => { const b = $('#bRec span'); if (b && R.on) b.textContent = 'Arrêter ' + fmtClock(Date.now() - R.t0); }, 1000);
   drawBar();
@@ -632,26 +822,28 @@ async function recStart() {
 function recStop() {
   if (!R.on) return;
   R.on = false; clearInterval(R.draw); clearInterval(R.tick);
-  try { R.mr.stop(); } catch (e) { recDone(); }
+  if (R.mp3) { try { R.node.disconnect(); R.mute.disconnect(); } catch (e) { /* ignore */ } R.worker.postMessage({ cmd: 'end' }); }
+  else { try { R.mr.stop(); } catch (e) { /* ignore */ } }
   R.srcs.forEach(s => { try { s.disconnect(); } catch (e) { /* ignore */ } });
   if (S.socket) S.socket.emit('meet-host', { action: 'unrec' });
   drawBar();
 }
-function recDone() {
-  const type = R.mime || (R.video ? 'video/webm' : 'audio/webm');
-  const blob = new Blob(R.chunks, { type }); R.chunks = [];
-  if (!blob.size) return toast('L\'enregistrement est vide.', 'warn');
-  const ext = /mp4/.test(type) ? (R.video ? 'mp4' : 'm4a') : /ogg/.test(type) ? 'ogg' : 'webm';
-  const title = String((S.meeting && S.meeting.title) || 'Lestha').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'Lestha';
+function recDone(blob) {
+  R.chunks = [];
+  if (R.worker) { R.worker.terminate(); R.worker = null; }
+  if (!blob || !blob.size) return toast('L\'enregistrement est vide.', 'warn');
+  const type = blob.type || '';
+  const ext = /mpeg/.test(type) ? 'mp3' : /mp4/.test(type) ? (R.video ? 'mp4' : 'm4a') : /ogg/.test(type) ? 'ogg' : 'webm';
+  const title = String((S.meeting && S.meeting.title) || 'Lestha').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'Lestha';
   if (R.url) URL.revokeObjectURL(R.url);
   Object.assign(R, { url: URL.createObjectURL(blob), name: 'Reunion-' + title + '-' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.' + ext, size: blob.size });
   saveRec();
-  const ra = $('#recAgain'); if (!ra && S.ended && root) renderEnd('Merci d\'avoir participé.');
+  if (S.ended && root && !$('#recAgain')) renderEnd('Merci d\'avoir participé.');
 }
 function saveRec() {
   if (!R.url) return;
   const a = document.createElement('a'); a.href = R.url; a.download = R.name; a.rel = 'noopener'; a.style.display = 'none'; document.body.appendChild(a); a.click(); setTimeout(() => a.remove(), 1500);
-  toast('Enregistrement prêt : ' + bytes(R.size), 'success', { action: 'Télécharger encore', onAction: saveRec, duration: 12000 });
+  toast('Enregistrement prêt : ' + R.name.split('.').pop().toUpperCase() + ' · ' + bytes(R.size), 'success', { action: 'Télécharger encore', onAction: saveRec, duration: 12000 });
 }
 function drawCover(c, v, x, y, w, h, contain) {
   const vw = v.videoWidth, vh = v.videoHeight; if (!vw) return;

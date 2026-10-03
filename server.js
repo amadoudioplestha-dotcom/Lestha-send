@@ -197,7 +197,7 @@ async function main() {
   ctx.meet = mountMeet(app, io, { env, codes: ctx.codes, ctx });
   ctx.codes.useMeet(ctx.meet.alive);
   if (ctx.meet.engine === 'mesh') warnings.push({ level: 'info', code: 'meet-mesh', text: 'Réunions : moteur direct (12 personnes en audio, 6 en vidéo). Ajoutez CF_SFU_APP_ID et CF_SFU_APP_TOKEN (Cloudflare Realtime) pour aller jusqu\'à 50.' });
-  mountLive(app, { storage, io, env });
+  mountLive(app, { storage, io, env, ctx });
   mountClassroom(app, { env, storage, signer });
   mountAdmin(app, { env, db, storage, mailer, signer, io, security, cloud, p2p, ctx, publicDir: pub });
 

@@ -177,3 +177,14 @@ Pour savoir d'où viennent vos visiteurs, ajoutez `?src=` à vos liens publics :
 - **Enregistrer** (organisateur seulement) : réunion audio → fichier audio ; réunion vidéo ou partage d'écran → vidéo 1280×720 avec les vignettes et les noms. Tous les participants voient « Enregistrement » en direct. Le fichier est téléchargé sur l'appareil de l'organisateur (rien n'est gardé sur le serveur). Conseil : enregistrer depuis un ordinateur (Chrome ou Edge).
 - Grille compacte automatique au-delà de 6 puis de 15 participants.
 - **Capacité** : 12 en audio / 6 en vidéo sans configuration ; **50 avec Cloudflare Realtime SFU** (voir section 12).
+
+## 15. Version 3.9.3 : enregistrement MP3 et Direct simplifié
+- **Enregistrer** propose maintenant le format : **MP3 128 kbit/s** (recommandé pour les cours, ~1 Mo/min), MP3 64 kbit/s (voix, WhatsApp), MP3 192 kbit/s, ou Vidéo (WebM) quand il y a des caméras ou un partage d'écran. Le MP3 est encodé pendant la réunion (encodeur LAME, licence LGPL : `public/vendor/LAME-LICENSE.txt`). Un limiteur évite la saturation quand plusieurs personnes parlent.
+- **Direct** : la « Classe virtuelle » (doublon de Réunion) est masquée par défaut ; un encadré renvoie vers **Réunion**. Les anciennes classes virtuelles restent accessibles par leur lien. Pour la réafficher : Console → Système → « Classe virtuelle dans Direct ».
+
+## 16. Version 3.10 : Réunion devient aussi la classe en ligne
+- À la création : **Usage** Réunion ou **Cours**, **Format** Audio ou Vidéo, options **Discussion écrite** et **Salle d'attente**.
+- **Mode Cours** : l'enseignant au centre de l'écran (sa vidéo en grand en format vidéo, bouton plein écran) ; les micros des apprenants sont verrouillés, ils lèvent la main et l'enseignant **donne la parole** puis la reprend.
+- **Discussion écrite**, **sondages** (2 à 6 réponses, résultats en direct), **salle d'attente** (admettre / refuser / tout admettre), **co-animateur**, **liste de présence** (Excel : arrivée, départ, durée, connexions).
+- Enregistrement MP3 / vidéo, réactions et couleur de peau : inchangés.
+- **Direct** : le sous-menu « Classe virtuelle » est supprimé (restent le lien YouTube / Facebook et le flux pro). Les anciens liens de classe virtuelle affichent « Cette classe a été remplacée » avec un bouton vers Réunion.
