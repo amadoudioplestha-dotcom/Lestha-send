@@ -10,6 +10,12 @@ let root = null;
 const S = { id: null };                                        // réunion en cours
 if (location.hostname === 'localhost') window.__meet = S;      // essais locaux uniquement
 const hostKeyOf = (id) => ls.get('tx_meet_host_' + id, null);
+/* Liens durables : « jusqu'au 10 oct. à 14:30 » */
+const until = (ts) => new Date(ts).toLocaleString('fr-FR', { day: 'numeric', month: 'short' }) + ' à ' + new Date(ts).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+/* Mes réunions (sur cet appareil) : pour revenir au même lien */
+const myMeetings = () => { const a = ls.get('tx_meet_mine', []); return (Array.isArray(a) ? a : []).filter(x => x && x.id && x.exp > Date.now()); };
+const saveMine = (list) => ls.set('tx_meet_mine', list.slice(0, 12));
+const forgetMine = (id) => saveMine(myMeetings().filter(x => x.id !== id));
 const fmtClock = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); };
 const initials = (n) => (String(n || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2) || '?').toUpperCase();
 const hue = (pid) => { let h = 0; for (const c of String(pid)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
@@ -176,6 +182,13 @@ function renderCreate() {
           <button type="button" class="active" data-kind="audio" role="radio" aria-checked="true">${icon('mic')}<span><b>Audio</b><small>Léger, idéal en 4G</small></span></button>
           <button type="button" data-kind="video" role="radio" aria-checked="false">${icon('video')}<span><b>Vidéo</b><small>Caméra et présentations</small></span></button>
         </div></div>
+      <label class="field"><span>Validité du lien</span>
+        <select class="input" id="mtLife" aria-label="Validité du lien">
+          <option value="1d" selected>24 heures · le même lien resservira</option>
+          <option value="7d">7 jours · réunion ou cours de la semaine</option>
+          <option value="30d">30 jours · lien permanent du mois</option>
+          <option value="end">Seulement pour cette réunion</option>
+        </select></label>
       <div class="stack" style="gap:8px">
         <label class="switch full"><input type="checkbox" id="mtChat" checked><span class="track"></span><span class="small"><b>Discussion écrite</b> · questions sans couper la parole</span></label>
         <label class="switch full"><input type="checkbox" id="mtWait"><span class="track"></span><span class="small"><b>Salle d'attente</b> · vous faites entrer chaque personne</span></label>
@@ -184,7 +197,9 @@ function renderCreate() {
       <button class="btn danger block" type="button" id="mtUrgent">${icon('bell')}Réunion d'urgence</button>
       <p class="small faint center">Invité à une réunion ? Ouvrez le lien reçu, ou tapez le code dans <a href="/recevoir" data-link>Recevoir</a>.</p>
     </form>
-  </div></section>`;
+  </div>
+  <div id="mtMine"></div></section>`;
+  drawMine();
   let kind = 'audio', mode = 'meeting';
   const pick = (sel, attr, fn) => $$(sel, root).forEach(b => b.onclick = () => { fn(b.dataset[attr]); $$(sel, root).forEach(x => { x.classList.toggle('active', x === b); x.setAttribute('aria-checked', x === b); }); });
   pick('[data-kind]', 'kind', v => { kind = v; });
@@ -195,10 +210,12 @@ function renderCreate() {
     ls.set('tx_meet_name', nm);
     const btn = emergency ? $('#mtUrgent', root) : $('#mtGo', root); btn.disabled = true;
     const socket = await getSocket();
-    const r = await emitAck(socket, 'meet-create', { title: $('#mtTitle', root).value.trim(), kind: emergency ? 'audio' : kind, mode: emergency ? 'meeting' : mode, chat: $('#mtChat', root).checked, waiting: $('#mtWait', root).checked, emergency });
+    const title = $('#mtTitle', root).value.trim();
+    const r = await emitAck(socket, 'meet-create', { title, kind: emergency ? 'audio' : kind, mode: emergency ? 'meeting' : mode, chat: $('#mtChat', root).checked, waiting: $('#mtWait', root).checked, emergency, life: $('#mtLife', root).value });
     btn.disabled = false;
     if (!r || r.error) return toast((r && r.error) || 'Impossible de créer la réunion.', 'error');
     ls.set('tx_meet_host_' + r.id, r.hostKey);
+    if (r.expiresAt) saveMine([{ id: r.id, title: title || (emergency ? 'Réunion urgente' : mode === 'course' ? 'Cours' : 'Réunion'), code: r.code, exp: r.expiresAt, kind: r.kind, mode: r.mode }].concat(myMeetings()));
     track('use', { m: 'meet' });
     S.autoJoin = true; S.urgent = !!emergency;
     navigate('/reunion/' + r.id);
@@ -207,12 +224,29 @@ function renderCreate() {
   $('#mtUrgent', root).onclick = () => go(true);
 }
 
+/** « Mes réunions » : les liens encore valables créés sur cet appareil */
+function drawMine() {
+  const el = $('#mtMine'); if (!el) return;
+  const list = myMeetings();
+  if (!list.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="card" style="margin-top:14px"><div class="card-title"><h3 style="margin:0">Mes réunions</h3><span class="small faint">liens encore valables</span></div>
+    <div class="stack" style="gap:6px">${list.map(x => `<div class="mt-row mt-mine" data-id="${esc(x.id)}">
+      <span class="mt-dot" style="--h:${hue(x.id)}">${x.mode === 'course' ? '🎓' : esc(initials(x.title))}</span>
+      <span class="mt-rn"><b>${esc(x.title)}</b><small class="muted">${x.kind === 'video' ? 'Vidéo' : 'Audio'}${x.code ? ' · code ' + esc(x.code.slice(0, 3) + ' ' + x.code.slice(3)) : ''} · jusqu'au ${until(x.exp)}</small></span>
+      <span class="mt-act"><a class="btn sm primary" href="/reunion/${esc(x.id)}" data-link>${icon('call', 'sm')}Ouvrir</a>
+      <button type="button" class="btn sm ghost" data-copy title="Copier le lien">${icon('copy', 'sm')}</button>
+      <button type="button" class="btn sm ghost" data-forget title="Retirer de la liste">${icon('x', 'sm')}</button></span></div>`).join('')}</div></div>`;
+  el.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => { if (await copyText(linkOf(b.closest('[data-id]').dataset.id))) toast('Lien copié', 'success'); });
+  el.querySelectorAll('[data-forget]').forEach(b => b.onclick = () => { forgetMine(b.closest('[data-id]').dataset.id); drawMine(); });
+}
+
 async function renderLobby(id) {
   root.innerHTML = `<section class="narrow"><div class="card"><p class="muted"><span class="spinner"></span> Connexion à la réunion…</p></div></section>`;
   const socket = await getSocket();
   const peek = await emitAck(socket, 'meet-peek', { id });
   if (!root) return;
   if (peek.error) {
+    forgetMine(id);
     root.innerHTML = `<section class="narrow"><div class="card"><div class="state-screen"><div class="state-icon bad">${icon('x')}</div><h2>Réunion introuvable</h2><p class="muted">${esc(peek.error)}</p><a class="btn primary" href="/reunion" data-link>${icon('call')}Créer une réunion</a></div></div></section>`;
     return;
   }
@@ -229,6 +263,7 @@ async function renderLobby(id) {
       <span class="pill">${icon('users')}${peek.count} présent${peek.count > 1 ? 's' : ''}</span>
       ${m.emergency ? `<span class="pill bad">${icon('bell')}Urgent</span>` : ''}${m.recording ? `<span class="pill bad">${icon('rec')}Enregistrée</span>` : ''}${m.locked ? `<span class="pill warn">${icon('lock')}Verrouillée</span>` : ''}
     </div>
+    ${m.expiresAt ? `<p class="small faint" style="margin:0">${icon('clock', 'sm')} Lien valable jusqu'au ${until(m.expiresAt)}</p>` : ''}
     <form id="lbForm" class="stack" style="width:100%;max-width:360px;margin-top:8px" autocomplete="off">
       <input class="input" id="lbName" maxlength="30" placeholder="Votre prénom" value="${esc(ls.get('tx_meet_name', '') || ls.get('tx_rc_name', ''))}" aria-label="Votre prénom" required>
       <button class="btn primary xl block" type="submit">${icon('call')}${host ? 'Reprendre la réunion' : 'Rejoindre'}</button>
@@ -250,7 +285,7 @@ async function join(id, name) {
   catch (e) { toast('Micro non autorisé : vous pourrez écouter, mais pas parler. Autorisez le micro dans le navigateur pour prendre la parole.', 'warn', { duration: 9000 }); }
   if (!root) { if (mic) mic.stop(); return; }
   if (mic) mic.enabled = false;
-  Object.assign(S, { id, name, mic, micOk: !!mic, placeholder: mic ? null : silentTrack(), cam: null, screen: null, people: new Map(), muted: true, hand: false, camOn: false, sharing: false, panel: false, ended: false });
+  Object.assign(S, { id, name, mic, micOk: !!mic, placeholder: mic ? null : silentTrack(), cam: null, screen: null, people: new Map(), muted: true, hand: false, camOn: false, sharing: false, panel: false, ended: false, gone: false });
   await connect();
 }
 
@@ -326,7 +361,7 @@ function bindSocket(socket) {
   socket.on('meet-info', (m) => {
     if (!mine()) return;
     const wasRec = S.meeting.recording;
-    S.meeting = Object.assign(S.meeting, m); drawTop();
+    S.meeting = Object.assign(S.meeting, m); drawTop(); drawBar(); if (S.panel) drawPanel();
     if (m.recording && !wasRec && !(S.self && S.self.host)) toast('🔴 L\'organisateur enregistre la réunion', 'warn', { duration: 6000 });
   });
   socket.on('meet-react', ({ pid, r, t }) => { if (mine()) showReact(pid, r, t); });
@@ -353,7 +388,7 @@ function bindSocket(socket) {
     if (more && isStaff()) { const w = S.wait[S.wait.length - 1]; toast('🚪 ' + w.name + ' attend pour entrer', 'info', { duration: 8000, action: 'Faire entrer', onAction: () => S.socket.emit('meet-host', { action: 'admit', sid: w.sid }) }); }
     if (S.panel) drawPanel(); drawBar();
   });
-  socket.on('meet-ended', ({ reason }) => { if (!mine()) return; leave(false); renderEnd(reason === 'expired' ? 'La réunion est terminée.' : reason); });
+  socket.on('meet-ended', ({ reason, keep, expiresAt }) => { if (!mine()) return; leave(false); if (!keep) S.gone = true; renderEnd((reason === 'expired' ? 'La réunion est terminée.' : reason) + (keep ? ' Le même lien resservira jusqu\'au ' + until(expiresAt) + '.' : '')); });
   // Coupure réseau : on rejoint automatiquement avec les mêmes réglages
   socket.on('connect', () => {
     if (S.waitingRoom && !S.ended) { connect(); return; }
@@ -378,7 +413,9 @@ function onTrack(pid, kind, trackObj, receiver) {
     p.audioEl.srcObject = p.streams.a; p.audioEl.play().catch(() => { S.needTap = true; drawTop(); });
     // Niveau de voix lu directement sur la réception WebRTC (fiable, sans traitement audio)
     recAdd(pid, trackObj);
-    p.level = receiver && receiver.getSynchronizationSources ? () => { const s = receiver.getSynchronizationSources()[0]; return s && Date.now() - s.timestamp < 1000 ? (s.audioLevel || 0) : 0; } : meter(trackObj);
+    const sync = receiver && receiver.getSynchronizationSources ? () => { const s = receiver.getSynchronizationSources()[0]; return s && Date.now() - s.timestamp < 1000 ? (s.audioLevel || 0) : 0; } : () => 0;
+    const rms = meter(trackObj) || (() => 0);
+    p.level = () => Math.max(sync(), rms() * 0.8);
   }
   drawPeople();
 }
@@ -435,9 +472,11 @@ function renderEnd(msg, bad) {
   const id = S.id;
   root.innerHTML = `<section class="narrow"><div class="card"><div class="state-screen"><div class="state-icon ${bad ? 'bad' : 'info'}">${icon(bad ? 'x' : 'call')}</div><h2>${bad ? 'Impossible de rejoindre' : 'Vous avez quitté la réunion'}</h2><p class="muted">${esc(msg || '')}</p>
     ${R.url ? `<button type="button" class="btn primary block" id="recAgain" style="margin-bottom:8px">${icon('download')}Télécharger l'enregistrement (${bytes(R.size)})</button>` : ''}
-    <div class="row wrap" style="justify-content:center">${id && !bad ? `<a class="btn" href="/reunion/${esc(id)}" data-link>${icon('refresh')}Rejoindre à nouveau</a>` : ''}<a class="btn primary" href="/reunion" data-link>${icon('call')}Nouvelle réunion</a></div></div></div></section>`;
+    <div class="row wrap" style="justify-content:center">${id && !bad && !S.gone ? `<button type="button" class="btn" id="mtAgain">${icon('refresh')}Rejoindre à nouveau</button>` : ''}<a class="btn primary" href="/reunion" data-link>${icon('call')}Nouvelle réunion</a></div></div></div></section>`;
   document.title = 'Réunion · Lestha Send';
   const ra = $('#recAgain'); if (ra) ra.onclick = saveRec;
+  // Même adresse : on force le réaffichage (un simple lien serait ignoré)
+  const again = $('#mtAgain'); if (again) again.onclick = () => navigate('/reunion/' + id, { replace: true });
 }
 
 function renderRoom() {
@@ -456,6 +495,8 @@ function renderRoom() {
   const bar = document.createElement('footer'); bar.className = 'meet-bar'; bar.id = 'mtBar'; bar.setAttribute('aria-label', 'Commandes de la réunion');
   const panel = document.createElement('aside'); panel.className = 'meet-panel card hidden'; panel.id = 'mtPanel';
   document.body.append(panel, bar); document.body.classList.add('in-meet');
+  const onPin = (e) => { const b = e.target.closest('.mt-pin'); if (!b) return; const pid = b.closest('.mt-tile').dataset.pid; S.pin = S.pin === pid ? null : pid; toast(S.pin ? 'Participant épinglé en grand (pour vous seulement)' : 'Participant détaché', 'info', { duration: 2000 }); drawPeople(); };
+  $('#mtGrid').addEventListener('click', onPin); $('#mtSpot').addEventListener('click', onPin);
   root.querySelectorAll('[data-fs]').forEach(b => b.onclick = () => { const el = document.getElementById(b.dataset.fs); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); else if (el && el.requestFullscreen) el.requestFullscreen().catch(() => {}); });
   drawTop(); drawBar(); drawPeople();
 }
@@ -500,11 +541,12 @@ function drawBar() {
   $('#bPoll').onclick = () => openPanel('poll', true);
   $('#bLeave').onclick = async () => {
     if (S.self && S.self.host) {
-      const r = await modal({ title: 'Quitter la réunion', body: '<p class="muted">Vous êtes l\'organisateur. Les autres peuvent continuer sans vous, ou vous pouvez terminer la réunion pour tout le monde.</p>', actions: [{ label: 'Annuler', cls: 'ghost', value: null }, { label: 'Quitter', value: 'leave' }, { label: 'Terminer pour tous', cls: 'danger', value: 'end' }] });
+      const keep = S.meeting.expiresAt ? `<p class="small" style="margin-top:8px">${icon('clock', 'sm')} Dans les deux cas, <b>le lien et le code restent valables jusqu'au ${until(S.meeting.expiresAt)}</b> : vous pourrez relancer la réunion avec le même lien.</p>` : '<p class="small faint" style="margin-top:8px">Ce lien sert seulement pour cette réunion.</p>';
+      const r = await modal({ title: 'Quitter la réunion', body: '<p class="muted">Vous êtes l\'organisateur. Les autres peuvent continuer sans vous, ou vous pouvez terminer la réunion pour tout le monde.</p>' + keep, actions: [{ label: 'Annuler', cls: 'ghost', value: null }, { label: 'Quitter', value: 'leave' }, { label: 'Terminer pour tous', cls: 'danger', value: 'end' }] });
       if (!r) return;
       if (r === 'end') S.socket.emit('meet-host', { action: 'end' });
     }
-    leave(true); renderEnd('Merci d\'avoir participé.');
+    leave(true); renderEnd('Merci d\'avoir participé.' + (S.meeting.expiresAt ? ' Le lien reste valable jusqu\'au ' + until(S.meeting.expiresAt) + '.' : ''));
   };
 }
 
@@ -521,7 +563,8 @@ function drawPeople() {
   const keep = new Set([me.pid, ...list.map(p => p.pid)]);
   document.querySelectorAll('#mtGrid .mt-tile, #mtSpot .mt-tile').forEach(t => { if (!keep.has(t.dataset.pid)) t.remove(); });
   const spot = $('#mtSpot');
-  const teacher = isCourse() ? [me, ...list].find(p => p.host) : null;
+  if (S.pin && S.pin !== me.pid && !S.people.has(S.pin)) S.pin = null;
+  const teacher = S.pin ? [me, ...list].find(p => p.pid === S.pin) : isCourse() ? [me, ...list].find(p => p.host) : null;
   if (spot) spot.classList.toggle('hidden', !teacher);
   [me, ...list].forEach((p, i) => {
     const self = i === 0;
@@ -530,11 +573,13 @@ function drawPeople() {
     if (t && t.parentElement !== box) { if (box === grid && self) grid.prepend(t); else box.appendChild(t); }
     if (!t) {
       t = document.createElement('div'); t.className = 'mt-tile'; t.dataset.pid = p.pid; t.style.setProperty('--h', hue(p.pid));
-      t.innerHTML = '<video class="mt-v" autoplay playsinline muted></video><div class="mt-av"></div><div class="mt-name"></div><div class="mt-hand"></div><div class="mt-warn"></div>';
+      t.innerHTML = '<video class="mt-v" autoplay playsinline muted></video><div class="mt-av"></div><div class="mt-name"></div><div class="mt-hand"></div><div class="mt-warn"></div><span class="mt-eq" aria-hidden="true"><i></i><i></i><i></i></span><button type="button" class="mt-pin" aria-label="Épingler">📌</button>';
       if (box === spot) spot.appendChild(t); else if (self) grid.prepend(t); else grid.appendChild(t);
     }
     const video = S.meeting.kind === 'video' && p.cam;
     t.classList.toggle('self', self);
+    t.classList.toggle('pinned', S.pin === p.pid);
+    const pb = t.querySelector('.mt-pin'); if (pb) { pb.title = S.pin === p.pid ? 'Détacher' : 'Épingler en grand'; pb.setAttribute('aria-label', pb.title); pb.setAttribute('aria-pressed', S.pin === p.pid); }
     t.classList.toggle('has-video', !!video);
     t.querySelector('.mt-av').textContent = initials(p.name);
     t.querySelector('.mt-name').innerHTML = (p.muted ? `<span class="mt-mute">${icon('mic-off', 'sm')}</span>` : '') + esc(p.name) + (self ? ' (vous)' : '') + (p.host ? (isCourse() ? ' · enseignant' : ' · organisateur') : p.cohost ? ' · co-animateur' : '') + (isCourse() && p.floor && !p.host ? ' · 🎤 a la parole' : '');
@@ -618,7 +663,9 @@ function drawPeoplePane(body) {
       <button type="button" class="btn sm" data-host="waiting" data-v="${S.meeting.waiting ? '' : '1'}">${icon('clock', 'sm')}${S.meeting.waiting ? 'Sans salle d\'attente' : 'Salle d\'attente'}</button>
       <button type="button" class="btn sm" data-host="chat" data-v="${S.meeting.chat ? '' : '1'}">${icon('message', 'sm')}${S.meeting.chat ? 'Fermer la discussion' : 'Ouvrir la discussion'}</button>
       <button type="button" class="btn sm" id="pAtt">${icon('clipboard', 'sm')}Liste de présence</button>
-      ${hostMe ? `<button type="button" class="btn sm danger" data-host="end">${icon('call-end', 'sm')}Terminer pour tous</button>` : ''}</div>` : ''}
+      ${hostMe ? `<button type="button" class="btn sm danger" data-host="end">${icon('call-end', 'sm')}Terminer pour tous</button>` : ''}
+      ${hostMe && S.meeting.expiresAt ? `<button type="button" class="btn sm ghost" data-host="delete">${icon('trash', 'sm')}Supprimer le lien</button>` : ''}</div>
+      ${S.meeting.expiresAt ? `<p class="small faint" style="margin:-4px 0 10px">${icon('clock', 'sm')} Lien et code valables jusqu'au ${until(S.meeting.expiresAt)}</p>` : ''}` : ''}
     <div class="stack" style="gap:4px">${all.map(p => {
       const n = order.indexOf(p.pid) + 1;
       const role = p.host ? (course ? 'enseignant' : 'organisateur') : p.cohost ? 'co-animateur' : course && p.floor ? '🎤 a la parole' : '';
@@ -642,7 +689,9 @@ function drawPeoplePane(body) {
   body.querySelectorAll('[data-deny]').forEach(b => b.onclick = () => S.socket.emit('meet-host', { action: 'deny', sid: b.dataset.deny }));
   body.querySelectorAll('[data-host]').forEach(b => b.onclick = async () => {
     const a = b.dataset.host;
-    if (a === 'end' && !(await confirmDialog('Terminer la réunion ?', 'Tout le monde sera déconnecté.', 'Terminer', true))) return;
+    if (a === 'end' && !(await confirmDialog('Terminer la réunion ?', 'Tout le monde sera déconnecté.' + (S.meeting.expiresAt ? ' Le lien et le code resteront valables jusqu\'au ' + until(S.meeting.expiresAt) + ' : vous pourrez relancer la réunion avec le même lien.' : ''), 'Terminer', true))) return;
+    if (a === 'delete' && !(await confirmDialog('Supprimer le lien ?', 'La réunion s\'arrête pour tout le monde et le lien ne marchera plus. Cette action est définitive.', 'Supprimer', true))) return;
+    if (a === 'delete') forgetMine(S.id);
     S.socket.emit('meet-host', { action: a, value: !!b.dataset.v });
     if (a === 'muteAll') toast('Micros coupés', 'success');
   });
@@ -704,13 +753,14 @@ async function exportAttendance() {
 async function invite(urgent) {
   const link = linkOf(S.id), code = S.meeting.code;
   const pretty = code ? code.slice(0, 3) + ' ' + code.slice(3) : '';
-  const text = (urgent || S.meeting.emergency ? '🚨 Réunion urgente : ' : '📞 ') + S.meeting.title + '\nRejoignez maintenant : ' + link + (code ? '\nou tapez le code ' + pretty + ' dans « Recevoir » sur Lestha Send' : '');
+  const text = (urgent || S.meeting.emergency ? '🚨 Réunion urgente : ' : '📞 ') + S.meeting.title + '\nRejoignez maintenant : ' + link + (code ? '\nou tapez le code ' + pretty + ' dans « Recevoir » sur Lestha Send' : '') + (S.meeting.expiresAt ? '\n(lien valable jusqu\'au ' + until(S.meeting.expiresAt) + ')' : '');
   if (urgent) { shareTo('whatsapp', { link, text: text.replace('\nRejoignez maintenant : ' + link, '\nRejoignez maintenant') }); return; }
   await modal({
     title: 'Inviter à la réunion', wide: false,
     body: `<div class="stack">
       <div class="link-box"><input readonly value="${esc(link)}" aria-label="Lien de la réunion"><button type="button" class="btn primary sm" id="ivCopy">${icon('copy', 'sm')}Copier</button></div>
       ${code ? `<div class="rx-codebox"><span class="small muted">ou le code, à taper dans <b>Recevoir</b></span><b class="rx-code-v">${pretty}</b></div>` : ''}
+      ${S.meeting.expiresAt ? `<p class="small faint center" style="margin:0">${icon('clock', 'sm')} Lien et code valables jusqu'au ${until(S.meeting.expiresAt)}, même après la réunion</p>` : ''}
       <div class="share-grid"><button type="button" class="btn" data-sh="whatsapp">${icon('whatsapp')}WhatsApp</button><button type="button" class="btn" data-sh="native">${icon('share')}Partager</button><button type="button" class="btn" data-sh="sms">${icon('message')}SMS</button><button type="button" class="btn" data-sh="mail">${icon('mail')}E-mail</button></div>
       <div class="qr-card" style="box-shadow:none"><div class="qr" id="ivQr"></div><div class="small muted">Scannez pour rejoindre</div></div></div>`,
     actions: [{ label: 'Fermer', cls: 'ghost' }],

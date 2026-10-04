@@ -15,8 +15,17 @@ test('réunions : client Cloudflare Realtime (URL, secret, erreurs) et code à 6
   await assert.rejects(bad.tracks('s', {}), /refusé/);
   const codes = createCodes({ storage: { getBuffer: async () => null, putBuffer: async () => {} } });
   let alive = true; codes.useMeet(() => alive);
-  const c = codes.forMeet('abcdefghjk');
+  const c = await codes.forMeet('abcdefghjk');
   assert.deepEqual(await codes.resolve(c, () => false), { kind: 'meet', id: 'abcdefghjk' });
   alive = false;
   assert.equal(await codes.resolve(c, () => false), null, 'réunion terminée : code libéré');
+  // Lien durable : le code survit à un redémarrage (lu dans le stockage)
+  const store = new Map();
+  const st = { getBuffer: async k => store.get(k) || null, putBuffer: async (k, b) => { store.set(k, b); }, deleteKey: async k => { store.delete(k); } };
+  const c2 = await createCodes({ storage: st }).forMeet('mnpqrstuvw', Date.now() + 3600e3);
+  const fresh = createCodes({ storage: st }); fresh.useMeet(async id => id === 'mnpqrstuvw');
+  assert.deepEqual(await fresh.resolve(c2, () => false), { kind: 'meet', id: 'mnpqrstuvw' });
+  fresh.restoreMeet(c2, 'mnpqrstuvw'); fresh.dropMeet('mnpqrstuvw', true);
+  await new Promise(r => setTimeout(r, 10));
+  assert.equal(store.size, 0, 'lien supprimé : code effacé du stockage');
 });

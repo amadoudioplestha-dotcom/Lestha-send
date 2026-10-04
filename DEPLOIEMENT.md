@@ -188,3 +188,21 @@ Pour savoir d'où viennent vos visiteurs, ajoutez `?src=` à vos liens publics :
 - **Discussion écrite**, **sondages** (2 à 6 réponses, résultats en direct), **salle d'attente** (admettre / refuser / tout admettre), **co-animateur**, **liste de présence** (Excel : arrivée, départ, durée, connexions).
 - Enregistrement MP3 / vidéo, réactions et couleur de peau : inchangés.
 - **Direct** : le sous-menu « Classe virtuelle » est supprimé (restent le lien YouTube / Facebook et le flux pro). Les anciens liens de classe virtuelle affichent « Cette classe a été remplacée » avec un bouton vers Réunion.
+
+## 17. Version 3.10.1 : boutons qui s'inversent, voix visible, épingler
+
+- **Verrouiller ↔ Déverrouiller**, **Fermer ↔ Ouvrir la discussion**, **Salle d'attente ↔ Sans salle d'attente** : le panneau Participants se met à jour aussitôt après chaque appui.
+- **Qui parle ?** La vignette de chaque participant qui parle s'illumine, son avatar pulse et trois petites barres animées apparaissent, exactement comme pour l'organisateur.
+- **Épingler** : survolez une vignette (ou touchez-la sur téléphone) et appuyez sur 📌 pour l'afficher en grand. Seul votre écran change. Appuyez de nouveau sur 📌 pour la détacher.
+- Rien à configurer : aucune nouvelle variable d'environnement.
+
+## 18. Version 3.10.2 : lien de réunion durable
+
+- À la création, **Validité du lien** : 24 heures (par défaut), 7 jours, 30 jours, ou « Seulement pour cette réunion » (ancien fonctionnement).
+- Pendant toute cette durée, **le même lien et le même code à 6 chiffres** resservent : après « Quitter », après « Terminer pour tous », quand tout le monde est parti, et même après un redémarrage du serveur Render.
+- L'organisateur garde ses droits sur le même appareil (bouton « Reprendre la réunion »).
+- **Mes réunions** (page Réunion) : la liste des liens encore valables créés sur cet appareil, avec Ouvrir, Copier et Retirer.
+- **Supprimer le lien** (panneau Participants, organisateur) : arrête la réunion et rend le lien inutilisable tout de suite.
+- Correction : « Rejoindre à nouveau » ne faisait rien (même adresse) ; il rouvre maintenant la réunion.
+- Stockage : une petite fiche par réunion dans `meets/` (sujet, réglages, empreinte de la clé organisateur, code, date d'expiration). Ni voix, ni discussion, ni liste de participants. Les fiches expirées sont effacées automatiquement (vérification toutes les heures).
+- Rien à configurer : aucune nouvelle variable d'environnement.

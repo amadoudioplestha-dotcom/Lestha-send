@@ -194,7 +194,7 @@ async function main() {
   const p2p = mountP2P(io, { security, storage, stats: ctx.stats, codes: ctx.codes });
   mountRequests(app, { env, storage, db, mailer, signer, io, ctx, cloud });
   mountNearby(io, { secret, security });
-  ctx.meet = mountMeet(app, io, { env, codes: ctx.codes, ctx });
+  ctx.meet = mountMeet(app, io, { env, codes: ctx.codes, ctx, storage });
   ctx.codes.useMeet(ctx.meet.alive);
   if (ctx.meet.engine === 'mesh') warnings.push({ level: 'info', code: 'meet-mesh', text: 'Réunions : moteur direct (12 personnes en audio, 6 en vidéo). Ajoutez CF_SFU_APP_ID et CF_SFU_APP_TOKEN (Cloudflare Realtime) pour aller jusqu\'à 50.' });
   mountLive(app, { storage, io, env, ctx });
