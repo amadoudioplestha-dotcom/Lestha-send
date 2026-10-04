@@ -110,3 +110,23 @@ test('relais TURN Cloudflare : identifiants éphémères, cache, port 53 retiré
   const custom = createIce({ TURN_URL: 'turn:relay.exemple.sn:3478', TURN_USERNAME: 'a', TURN_CREDENTIAL: 'b' });
   assert.equal((await custom.getIceServers()).relay, true);
 });
+
+test('compteurs serveur des réunions : sommes, maximum et rapport', async () => {
+  const store = new Map();
+  const storage = { getBuffer: async k => store.get(k) || null, putBuffer: async (k, b) => { store.set(k, b); }, deleteKey: async k => { store.delete(k); } };
+  const ins = createInsights({ storage, secret: 'x'.repeat(32), mailer: { esc: s => s }, env: {}, ctx: { meet: { stats: () => ({ meetings: 1, people: 3, engine: 'mesh' }) } } });
+  await ins.count({ meet_created: 1, meet_course: 1, max_meet_people: 3 });
+  await ins.count({ meet_created: 1, max_meet_people: 2, q_n: 1, q_lat: 120 });
+  await ins.count({ 'bad key!': 5, meet_joins: 'abc' });
+  const r = await ins.report(7);
+  assert.equal(r.totals.srv.meet_created, 2);
+  assert.equal(r.totals.srv.meet_course, 1);
+  assert.equal(r.totals.srv.max_meet_people, 3, 'le record garde le maximum');
+  assert.equal(r.totals.srv['bad key!'], undefined);
+  assert.equal(r.totals.srv.meet_joins, undefined);
+  assert.equal(r.series[r.series.length - 1].meets, 2);
+  assert.deepEqual(r.meetNow, { meetings: 1, people: 3, engine: 'mesh' });
+  const w = await ins.weeklyHtml();
+  assert.match(JSON.stringify(w.paragraphs), /Réunions : <strong>2<\/strong> créées \(dont 1 cours\)/);
+  await ins.flush();
+});

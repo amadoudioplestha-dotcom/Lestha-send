@@ -206,3 +206,22 @@ Pour savoir d'où viennent vos visiteurs, ajoutez `?src=` à vos liens publics :
 - Correction : « Rejoindre à nouveau » ne faisait rien (même adresse) ; il rouvre maintenant la réunion.
 - Stockage : une petite fiche par réunion dans `meets/` (sujet, réglages, empreinte de la clé organisateur, code, date d'expiration). Ni voix, ni discussion, ni liste de participants. Les fiches expirées sont effacées automatiquement (vérification toutes les heures).
 - Rien à configurer : aucune nouvelle variable d'environnement.
+
+## 19. Version 3.10.3 : présentation à faible délai, statistiques des réunions
+
+**Présentation d'écran plus réactive**
+- La voix passe toujours en premier (priorité haute).
+- L'écran partagé est envoyé à 15 images/s (au lieu de 10), en 1080p au maximum, et son débit est **plafonné et partagé entre les participants** : en mode direct, l'organisateur envoie une copie à chacun ; sans plafond, la connexion se saturait et le retard grandissait. Au-delà de 6 participants, la présentation passe en 720p pour rester fluide.
+- Pendant une présentation, les caméras baissent leur débit pour laisser la place à l'écran.
+- Côté spectateurs, chaque image de la présentation est affichée dès son arrivée.
+- Le délai mesuré s'affiche sur la présentation (⚡ 120 ms, vert / orange / rouge).
+- Mesure en laboratoire (même machine, 3 élèves) : 126 ms au lieu de 189 ms. Sur un vrai réseau 4G chargé, le gain est bien plus grand.
+- Pour un cours à plus de 6 élèves, le plus efficace reste le serveur de réunion Cloudflare Realtime (`CF_SFU_APP_ID` et `CF_SFU_APP_TOKEN`) : l'enseignant n'envoie alors son écran qu'une seule fois.
+
+**Console admin → Retours & usage → « Réunions, cours et direct vidéo »**
+- Réunions créées (réunions, cours, urgentes, audio, vidéo), participations, séances, record de personnes ensemble.
+- Temps de réunion et temps cumulé des participants, présentations, enregistrements.
+- Délai moyen des présentations mesuré chez les spectateurs, images/s, part au-delà de 0,7 s.
+- Validité choisie pour les liens ; Direct vidéo créés (YouTube/Facebook ou flux pro) et spectateurs.
+- Graphique par jour, et réunions en cours en ce moment. Les mêmes chiffres figurent dans le bilan hebdomadaire par e-mail.
+- Compté par le serveur : aucun nom, aucun sujet, aucune adresse IP.

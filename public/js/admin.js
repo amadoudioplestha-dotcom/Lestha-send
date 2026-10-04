@@ -157,6 +157,32 @@ const relabel = (map, L) => Object.fromEntries(Object.entries(map || {}).map(([k
 const pc = (a, b) => (b ? Math.round(a / b * 100) + ' %' : '—');
 A.ins = { days: 30, fbFilter: 'new' };
 
+/* Réunions, cours et direct vidéo : compteurs du serveur (anonymes) */
+function meetCard(R) {
+  const S = R.totals.srv || {}, now = R.meetNow;
+  const h = (sec) => { const m = Math.round((sec || 0) / 60); return m < 60 ? m + ' min' : (m / 60).toFixed(m < 600 ? 1 : 0).replace('.', ',') + ' h'; };
+  const lat = S.q_n ? Math.round(S.q_lat / S.q_n) : null;
+  const latC = lat == null ? '' : lat < 300 ? 'ok' : lat < 700 ? 'warn' : 'bad';
+  const life = { '24 heures': S.meet_life_1d || 0, '7 jours': S.meet_life_7d || 0, '30 jours': S.meet_life_30d || 0, 'Une seule fois': S.meet_life_end || 0 };
+  return `<div class="card" style="margin-bottom:18px">
+    <div class="card-title"><h3>${icon('call')}Réunions, cours et direct vidéo</h3><span class="small faint">${now ? `en ce moment : <b>${num(now.meetings)}</b> réunion(s), <b>${num(now.people)}</b> personne(s) · moteur ${now.engine === 'sfu' ? 'serveur (50 pers.)' : 'direct (12 pers.)'}` : ''}</span></div>
+    <div class="kpis" style="margin-bottom:12px">
+      <div class="kpi" style="--kc:#00b4d8"><div class="kpi-top">Réunions créées<span class="kpi-icon">${icon('call')}</span></div><div class="kpi-value">${num(S.meet_created || 0)}</div><div class="kpi-foot">${num(S.meet_meeting || 0)} réunion(s) · ${num(S.meet_course || 0)} cours · ${num(S.meet_emergency || 0)} urgente(s)<br>${num(S.meet_audio || 0)} audio · ${num(S.meet_video || 0)} vidéo</div></div>
+      <div class="kpi" style="--kc:#06d6a0"><div class="kpi-top">Participations<span class="kpi-icon">${icon('users')}</span></div><div class="kpi-value">${num(S.meet_joins || 0)}</div><div class="kpi-foot">${num(S.meet_sessions || 0)} séance(s) · record ${num(S.max_meet_people || 0)} personnes ensemble</div></div>
+      <div class="kpi" style="--kc:#8b7bff"><div class="kpi-top">Temps de réunion<span class="kpi-icon">${icon('clock')}</span></div><div class="kpi-value">${h(S.meet_sess_s)}</div><div class="kpi-foot">${h(S.meet_person_s)} cumulées par les participants · ${num(S.meet_screens || 0)} présentation(s) · ${num(S.meet_recs || 0)} enregistrement(s)</div></div>
+      <div class="kpi" style="--kc:#fbbf24"><div class="kpi-top">Délai des présentations<span class="kpi-icon">${icon('bolt')}</span></div><div class="kpi-value">${lat == null ? '—' : `<span class="pill ${latC}" style="font-size:inherit">${lat} ms</span>`}</div><div class="kpi-foot">${S.q_n ? `${num(S.q_n)} mesure(s) · ${Math.round(S.q_fps / S.q_n)} images/s · ${Math.round((S.q_slow || 0) / S.q_n * 100)} % au-delà de 0,7 s` : 'mesuré pendant les partages d\'écran'}</div></div>
+    </div>
+    <div class="grid-2 adm-grid">
+      <div><div class="legend" style="margin-bottom:6px"><span><i style="background:rgba(0,180,216,.5)"></i>Réunions créées</span><span><i style="background:linear-gradient(#00b4d8,#06d6a0)"></i>Participations</span></div><div id="meetChart"></div></div>
+      <div class="stack" style="gap:12px">
+        <div><p class="small" style="font-weight:700;margin:0 0 6px">Validité choisie pour le lien</p>${hbars(Object.fromEntries(Object.entries(life).filter(([, v]) => v)))}</div>
+        <div class="controls"><div class="control"><div class="control-text"><b>Direct vidéo : ${num(S.live_created || 0)} créé(s) · ${num(S.live_views || 0)} spectateur(s)</b><span>${num(S.live_embed || 0)} lien YouTube / Facebook… · ${num(S.live_hls || 0)} flux pro .m3u8</span></div></div></div>
+      </div>
+    </div>
+    <p class="small faint" style="margin:10px 0 0">Compté par le serveur : aucun nom, aucun sujet de réunion, aucune adresse IP.</p>
+  </div>`;
+}
+
 async function renderInsights(body) {
   body.innerHTML = `<div class="card"><p class="muted"><span class="spinner"></span> Chargement des retours…</p></div>`;
   let R, F, I;
@@ -182,6 +208,7 @@ async function renderInsights(body) {
       <div class="kpi" style="--kc:#8b7bff"><div class="kpi-top">Expéditeurs<span class="kpi-icon">${icon('upload')}</span></div><div class="kpi-value">${num(L.senders)}</div><div class="kpi-foot">${num(L.repeat)} ont envoyé 2 fois ou +</div></div>
       <div class="kpi" style="--kc:#fbbf24"><div class="kpi-top">Satisfaction<span class="kpi-icon">${icon('message')}</span></div><div class="kpi-value">${moodStars}</div><div class="kpi-foot">${num(T.fb.n)} avis · ${num(R.feedbackNew)} message(s) à lire</div></div>
     </div>
+    ${meetCard(R)}
     <div class="card" style="margin-bottom:18px">
       <div class="card-title"><h3>${icon('chart')}Visiteurs et envois</h3><div class="legend"><span><i style="background:rgba(0,180,216,.5)"></i>Visiteurs</span><span><i style="background:linear-gradient(#00b4d8,#06d6a0)"></i>Envois</span></div></div>
       <div id="insChart"></div>
@@ -242,6 +269,8 @@ async function renderInsights(body) {
     </div>`;
   const buckets = R.series.map(d => { const dt = new Date(d.day + 'T12:00:00Z'); return { label: dt.toLocaleDateString('fr-FR', { day: '2-digit' }), long: dt.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }), views: d.visitors, downloads: d.sent }; });
   barChart($('#insChart'), buckets, ['Visiteurs', 'Envois']);
+  const mb = R.series.map(d => { const dt = new Date(d.day + 'T12:00:00Z'); return { label: dt.toLocaleDateString('fr-FR', { day: '2-digit' }), long: dt.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }), views: d.meets || 0, downloads: d.joins || 0 }; });
+  barChart($('#meetChart'), mb, ['Réunions créées', 'Participations']);
   $('#insDays').onclick = (e) => { const b = e.target.closest('[data-d]'); if (!b) return; A.ins.days = +b.dataset.d; renderInsights(body); };
   $('#fbFilter').onclick = (e) => { const b = e.target.closest('[data-f]'); if (!b) return; A.ins.fbFilter = b.dataset.f; renderInsights(body); };
   $('#insWeekly').onclick = async (e) => { const b = e.currentTarget; b.disabled = true; try { const r = await aapi('/weekly', { method: 'POST', body: {} }); toast('Bilan envoyé à ' + r.to, 'success'); } catch (err) { toast(err.message, 'error'); } b.disabled = false; };

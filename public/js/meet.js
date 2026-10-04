@@ -40,6 +40,38 @@ async function getIce() {
 }
 
 /* ======================================================================
+   FAIBLE DÉLAI : la voix passe en premier ; la présentation et la caméra sont
+   plafonnées pour ne jamais saturer l'envoi (sinon les images s'accumulent et
+   le retard grandit). En mode direct, le débit est partagé entre les participants.
+   ====================================================================== */
+const clampN = (v, a, b) => Math.max(a, Math.min(b, v));
+function encFor(kind, n) {
+  n = Math.max(1, n || 1);
+  if (kind === 'a') return { priority: 'high', networkPriority: 'high' };
+  if (kind === 's') return { maxBitrate: Math.round(clampN(3200e3 / n, 300e3, 2500e3)), maxFramerate: 15, priority: 'high', networkPriority: 'high' };
+  const teacher = isCourse() && S.self && S.self.host;
+  const cap = S.sharing ? clampN(400e3 / n, 80e3, 200e3) : teacher ? clampN(2000e3 / n, 200e3, 1200e3) : clampN(1500e3 / n, 150e3, 900e3);
+  return { maxBitrate: Math.round(cap), maxFramerate: S.sharing ? 12 : 24, priority: teacher && !S.sharing ? 'medium' : 'low', networkPriority: 'low' };
+}
+function tuneSender(sender, kind, n) {
+  if (!sender || !sender.getParameters || !sender.setParameters) return;
+  let p; try { p = sender.getParameters(); } catch (e) { return; }
+  if (!p || !p.encodings || !p.encodings.length) return;          // pas encore négocié
+  const want = encFor(kind, n), e = p.encodings[0];
+  if (Object.keys(want).every(k => e[k] === want[k])) return;
+  Object.assign(e, want);
+  sender.setParameters(p).catch(() => {});
+}
+/* Grand nombre de participants en direct : présentation en 720p pour rester fluide */
+function fitScreen(n) {
+  if (!S.screen || !S.screen.applyConstraints) return;
+  const big = n >= 6;
+  if (S.screenBig === big) return;
+  S.screenBig = big;
+  S.screen.applyConstraints(big ? { width: { max: 1280 }, height: { max: 720 }, frameRate: { ideal: 15, max: 15 } } : { width: { max: 1920 }, height: { max: 1080 }, frameRate: { ideal: 15, max: 30 } }).catch(() => {});
+}
+
+/* ======================================================================
    MOTEUR « MESH » : une connexion par participant, 3 pistes fixes
    (0 = micro, 1 = caméra, 2 = écran) : couper / rallumer = replaceTrack, sans renégociation
    ====================================================================== */
@@ -56,6 +88,7 @@ class Mesh {
     pc.ontrack = (e) => { const i = pc.getTransceivers().indexOf(e.transceiver); if (i >= 0 && i < 3) this.h.onTrack(pid, KIND_AT[i], e.track, e.receiver); };
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'failed' && initiator) { try { pc.restartIce(); this.offer(pid); } catch (e) { /* ignore */ } }
+      if (pc.connectionState === 'connected') this.tune();
       this.h.onLink(pid, pc.connectionState);
     };
     if (initiator) {
@@ -77,10 +110,12 @@ class Mesh {
       await x.pc.setLocalDescription(await x.pc.createAnswer());
       this.h.signal(from, { sdp: x.pc.localDescription });
       x.pending.splice(0).forEach(c => x.pc.addIceCandidate(c).catch(() => {}));
+      this.tune();
     } else if (data.sdp && data.sdp.type === 'answer') {
       const x = this.pcs.get(from); if (!x) return;
       await x.pc.setRemoteDescription(data.sdp).catch(() => {});
       x.pending.splice(0).forEach(c => x.pc.addIceCandidate(c).catch(() => {}));
+      this.tune();
     } else if (data.cand) {
       const x = this.pcs.get(from) || await this.pcFor(from, false);
       if (x.pc.remoteDescription) x.pc.addIceCandidate(data.cand).catch(() => {}); else x.pending.push(data.cand);
@@ -89,9 +124,16 @@ class Mesh {
   setTrack(kind, track) {
     const i = KIND_AT.indexOf(kind);
     this.pcs.forEach(x => { const t = x.pc.getTransceivers()[i]; if (t) t.sender.replaceTrack(track).catch(() => {}); });
+    this.tune();
+  }
+  /** Débit de chaque envoi selon le nombre de participants (l'envoi total reste sous ~3 Mbit/s) */
+  tune() {
+    const n = this.pcs.size;
+    this.pcs.forEach(x => x.pc.getTransceivers().slice(0, 3).forEach((t, i) => tuneSender(t.sender, KIND_AT[i], n)));
+    fitScreen(n);
   }
   sync() { /* rien à faire : les pistes arrivent d'elles-mêmes */ }
-  removePeer(pid) { const x = this.pcs.get(pid); if (x) { try { x.pc.close(); } catch (e) { /* ignore */ } this.pcs.delete(pid); } }
+  removePeer(pid) { const x = this.pcs.get(pid); if (x) { try { x.pc.close(); } catch (e) { /* ignore */ } this.pcs.delete(pid); this.tune(); } }
   close() { [...this.pcs.keys()].forEach(p => this.removePeer(p)); }
 }
 
@@ -111,7 +153,7 @@ class Sfu {
     await this.run(() => this.push('a', this.h.local('a')));
   }
   async push(kind, trackObj) {
-    const t = this.pc.addTransceiver(trackObj, { direction: 'sendonly' });
+    const t = this.pc.addTransceiver(trackObj, { direction: 'sendonly', sendEncodings: [encFor(kind, 1)] });
     this.local[kind] = t;
     await this.pc.setLocalDescription(await this.pc.createOffer());
     const r = await this.call({ op: 'push', sessionDescription: { type: 'offer', sdp: this.pc.localDescription.sdp }, tracks: [{ kind, mid: t.mid }] });
@@ -120,7 +162,10 @@ class Sfu {
   setTrack(kind, trackObj) {
     if (this.local[kind]) this.local[kind].sender.replaceTrack(trackObj).catch(() => {});
     else if (trackObj) this.run(() => this.push(kind, trackObj));
+    this.tune();
   }
+  /** Avec le serveur de réunion, on n'envoie qu'une fois : pleine qualité */
+  tune() { Object.entries(this.local).forEach(([k, t]) => tuneSender(t.sender, k, 1)); }
   sync(people) {
     const want = [];
     people.forEach(p => (p.tracks || []).forEach(k => { const key = p.pid + '-' + k; if (!this.pulled.has(key)) { this.pulled.set(key, null); want.push({ pid: p.pid, kind: k }); } }));
@@ -325,6 +370,7 @@ async function afterJoin(r) {
   else for (const pid of S.people.keys()) S.engine.addPeer(pid).catch(e => console.warn('peer', e));
   if (S.urgent) { S.urgent = false; setTimeout(() => invite(true), 400); }
   if (!S.ticker) S.ticker = setInterval(tick, 100);
+  if (!S.qTimer) S.qTimer = setInterval(() => { measure().catch(() => {}); }, 3000);
 }
 
 function bindSocket(socket) {
@@ -408,6 +454,9 @@ function bindSocket(socket) {
 function onTrack(pid, kind, trackObj, receiver) {
   const p = S.people.get(pid); if (!p) return;
   p.streams[kind] = new MediaStream([trackObj]);
+  if (receiver) { p.recv = p.recv || {}; p.recv[kind] = receiver; }
+  // Présentation : chaque image est affichée dès qu'elle arrive (pas de mise en mémoire tampon)
+  if (kind === 's' && receiver) { try { receiver.playoutDelayHint = 0; } catch (e) { /* ignore */ } try { if ('jitterBufferTarget' in receiver) receiver.jitterBufferTarget = 0; } catch (e) { /* ignore */ } }
   if (kind === 'a') {
     if (!p.audioEl) { p.audioEl = document.createElement('audio'); p.audioEl.autoplay = true; p.audioEl.setAttribute('playsinline', ''); $('#mtAudios').appendChild(p.audioEl); }
     p.audioEl.srcObject = p.streams.a; p.audioEl.play().catch(() => { S.needTap = true; drawTop(); });
@@ -441,10 +490,11 @@ async function toggleCam() {
 }
 async function toggleScreen() {
   if (S.sharing) { stopScreen(); return; }
-  try { S.screen = (await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 10 } }, audio: false })).getVideoTracks()[0]; }
+  try { S.screen = (await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 }, width: { max: 1920 }, height: { max: 1080 } }, audio: false })).getVideoTracks()[0]; }
   catch (e) { return; }
   try { S.screen.contentHint = 'detail'; } catch (e) { /* ignore */ }
   S.screen.onended = stopScreen;
+  S.screenBig = null;
   S.sharing = true; S.engine.setTrack('s', S.screen); sendState({ screen: true });
   drawBar(); drawPeople();
 }
@@ -462,6 +512,7 @@ function leave(notify = true) {
   stopLocal();
   S.people && S.people.forEach(p => p.audioEl && p.audioEl.remove());
   clearInterval(S.ticker); S.ticker = null;
+  clearInterval(S.qTimer); S.qTimer = null; S.lat = null; S.latPrev = null;
   keepAwake(false);
   removeChrome();
 }
@@ -609,7 +660,8 @@ function drawPeople() {
     if (wantTrack && cur !== wantTrack) v.srcObject = want instanceof MediaStream ? want : new MediaStream([want]);
     else if (!wantTrack) v.srcObject = null;
     if (v.srcObject && v.paused) v.play().catch(() => {});
-    $('#mtStageL').textContent = sharer ? sharer.name + ' présente' : S.sharing ? 'Vous présentez votre écran' : '';
+    const lbl = $('#mtStageL');
+    if (!sharer || !lbl.querySelector('.lat') || S.latPrev?.pid !== sharer.pid) lbl.textContent = sharer ? sharer.name + ' présente' : S.sharing ? 'Vous présentez votre écran' : '';
   }
   drawPanel(); drawTop(); drawBarBadge();
 }
@@ -933,6 +985,32 @@ function recDraw() {
 }
 
 /* Horloge, voix qui parle */
+/* Délai mesuré de la présentation (réseau + mémoire tampon + décodage), affiché sur la scène
+   et envoyé au serveur toutes les 30 s pour la console admin (moyennes anonymes) */
+async function measure() {
+  if (!S.engine || S.ended) return;
+  const sharer = [...S.people.values()].find(p => p.screen && p.recv && p.recv.s);
+  if (!sharer) { S.lat = null; return; }
+  let st; try { st = await sharer.recv.s.getStats(); } catch (e) { return; }
+  let v = null, rtt = null;
+  st.forEach(r => {
+    if (r.type === 'inbound-rtp' && r.kind === 'video') v = r;
+    if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.currentRoundTripTime != null && (r.nominated || rtt == null)) rtt = r.currentRoundTripTime;
+  });
+  if (!v) return;
+  const prev = S.latPrev && S.latPrev.pid === sharer.pid ? S.latPrev : null;
+  S.latPrev = { pid: sharer.pid, jb: v.jitterBufferDelay || 0, em: v.jitterBufferEmittedCount || 0, dec: v.totalDecodeTime || 0, fd: v.framesDecoded || 0 };
+  if (!prev) return;
+  const em = S.latPrev.em - prev.em, fd = S.latPrev.fd - prev.fd;
+  const jb = em > 0 ? (S.latPrev.jb - prev.jb) / em : 0, dec = fd > 0 ? (S.latPrev.dec - prev.dec) / fd : 0;
+  const net = rtt == null ? 0.05 : (S.meeting.engine === 'sfu' ? rtt : rtt / 2);   // serveur : deux trajets
+  S.lat = Math.round((net + jb + dec) * 1000 + 60);                                // + capture, encodage, affichage (~60 ms mesurés)
+  S.fps = Math.round(v.framesPerSecond || 0);
+  const l = $('#mtStageL');
+  if (l) l.innerHTML = `${esc(sharer.name)} présente <i class="lat ${S.lat < 300 ? 'ok' : S.lat < 700 ? 'mid' : 'bad'}" title="Délai entre l'écran de ${esc(sharer.name)} et le vôtre">⚡ ${S.lat} ms</i>`;
+  if (Date.now() - (S.latSent || 0) > 30e3) { S.latSent = Date.now(); S.socket && S.socket.emit('meet-q', { lat: S.lat, fps: S.fps }); }
+}
+
 function tick() {
   const c = $('#mtClock'); if (c && S.meeting) c.textContent = fmtClock(Date.now() - S.meeting.startedAt);
   const grid = $('#mtGrid'); if (!grid) return;
