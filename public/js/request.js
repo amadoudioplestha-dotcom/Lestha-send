@@ -483,6 +483,7 @@ export const manageView = (() => {
           <a class="btn" href="/api/requests/${esc(id)}/zip?key=${kq}" ${ready.length ? '' : 'aria-disabled="true" tabindex="-1" style="pointer-events:none;opacity:.5"'}>${icon('zip', 'sm')}Tout télécharger</a>
           <a class="btn" href="/api/requests/${esc(id)}/export.csv?key=${kq}" ${ready.length ? '' : 'aria-disabled="true" tabindex="-1" style="pointer-events:none;opacity:.5"'}>${icon('clipboard', 'sm')}Exporter (Excel)</a>
           <button type="button" class="btn" id="cQr2">${icon('qr', 'sm')}QR code</button>
+          <button type="button" class="btn ghost" id="cMgmt" title="Pour gérer cet espace depuis un autre appareil">${icon('lock', 'sm')}Lien de gestion (privé)</button>
           <a class="btn ghost" href="/reunion?title=${encodeURIComponent(q.title)}" data-link>${icon('call', 'sm')}Organiser une réunion</a>
         </div>
       </div>
@@ -512,6 +513,7 @@ export const manageView = (() => {
     $('#dFilt', root).onclick = (e) => { const c = e.target.closest('[data-f]'); if (!c) return; filt = c.dataset.f; $$('#dFilt .chip', root).forEach(x => x.classList.toggle('active', x === c)); renderDeposits(); };
     $('#dSearch', root).oninput = (e) => { search = e.target.value; renderDeposits(); };
     $('#cQr2', root).onclick = () => bigQr(q.title, q.link);
+    $('#cMgmt', root).onclick = () => { copyText(location.origin + '/r/' + id + '#' + key); toast('Lien de gestion copié. Gardez-le pour vous : il donne accès aux dépôts.', 'warn', { duration: 6000 }); };
     renderDeposits();
     bindControls();
   }

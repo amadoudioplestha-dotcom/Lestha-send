@@ -286,39 +286,68 @@ function onLive({ id, event, stats, state }) {
 }
 
 /* ---------------- Outils ---------------- */
+/* Tout ce que cet appareil pilote : transferts, espaces Smart Drop, réunions durables, directs */
+const MEET_HOST = 'tx_meet_host_';
+function backupData() {
+  const meetings = ls.get('tx_meet_mine', []);
+  const hostKeys = {};
+  (Array.isArray(meetings) ? meetings : []).forEach(m => { const k = m && m.id && ls.get(MEET_HOST + m.id, null); if (k) hostKeys[m.id] = k; });
+  return { app: 'Lestha Send', version: 4, exportedAt: new Date().toISOString(), owned: owned.all(), requests: ownedRequests.all(), meetings, meetHostKeys: hostKeys, lives: ls.get('tx_lives', []), p2pHistory: ls.get('transferx_history', []) };
+}
+function restoreData(j) {
+  const n = { t: 0, r: 0, m: 0, l: 0 };
+  const list = Array.isArray(j) ? [] : (j.owned || []);
+  list.forEach(o => { if (o && o.id && o.key) { owned.upsert(o); n.t++; } });
+  (j.requests || []).forEach(o => { if (o && o.id && o.key) { ownedRequests.upsert(o); n.r++; } });
+  if (Array.isArray(j.meetings) && j.meetings.length) {
+    const cur = ls.get('tx_meet_mine', []), ids = new Set((Array.isArray(cur) ? cur : []).map(x => x.id));
+    const add = j.meetings.filter(x => x && x.id && !ids.has(x.id) && x.exp > Date.now());
+    ls.set('tx_meet_mine', add.concat(Array.isArray(cur) ? cur : []).slice(0, 12)); n.m = add.length;
+    Object.entries(j.meetHostKeys || {}).forEach(([id, k]) => { if (/^[A-Za-z0-9]+$/.test(id) && k) ls.set(MEET_HOST + id, k); });
+  }
+  if (Array.isArray(j.lives) && j.lives.length) {
+    const cur = ls.get('tx_lives', []), ids = new Set(cur.map(x => x.id));
+    const add = j.lives.filter(x => x && x.id && !ids.has(x.id)); ls.set('tx_lives', add.concat(cur).slice(0, 50)); n.l = add.length;
+  }
+  const hist = Array.isArray(j) ? j : (j.p2pHistory || []);
+  if (hist.length) { const cur = ls.get('transferx_history', []); const ids = new Set(cur.map(h => h.roomId)); ls.set('transferx_history', cur.concat(hist.filter(h => h.roomId && !ids.has(h.roomId))).slice(0, 200)); }
+  return n;
+}
 async function tools() {
+  const b = backupData();
+  const count = [[b.owned.length, 'transfert'], [b.requests.length, 'espace Smart Drop', 'espaces Smart Drop'], [Object.keys(b.meetHostKeys).length, 'réunion', 'réunions'], [b.lives.length, 'direct']]
+    .filter(([x]) => x).map(([x, one, many]) => x + ' ' + (x > 1 ? (many || one + 's') : one)).join(' · ') || 'rien pour l\'instant';
   const choice = await modal({
     title: 'Outils',
-    body: `<div class="stack" style="gap:10px">
-      <p class="small muted">Vos transferts sont liés à cet appareil par une clé de gestion privée. Utilisez ces outils pour les retrouver ailleurs.</p>
-      <label class="field"><span>Ajouter un transfert via son lien de gestion</span><div class="input-group"><input class="input" id="mgmtIn" placeholder="https://…/m/abc123#clé"><button type="button" class="btn" id="mgmtGo">Ajouter</button></div></label>
+    body: `<div class="stack" style="gap:12px">
+      <p class="small muted">Vos <b>transferts</b>, <b>espaces Smart Drop</b>, <b>réunions</b> et <b>directs</b> sont liés à cet appareil par des clés privées. Pour les retrouver sur un autre appareil ou un autre navigateur : <b>exportez</b> une sauvegarde ici, puis <b>importez</b>-la là-bas.</p>
+      <p class="small">Sur cet appareil : <b>${esc(count)}</b>.</p>
+      <label class="field"><span>Ou collez un lien de gestion (transfert ou espace Smart Drop)</span><div class="input-group"><input class="input" id="mgmtIn" placeholder="Lien privé, avec un # (…/m/… ou …/r/…)"><button type="button" class="btn" id="mgmtGo">Ajouter</button></div></label>
     </div>`,
     actions: [{ label: 'Exporter (sauvegarde)', icon: 'download', value: 'export' }, { label: 'Importer', icon: 'upload', value: 'import' }, { label: 'Fermer', cls: 'ghost', value: null }],
     onMount: (m, close) => {
       m.querySelector('#mgmtGo').onclick = () => {
         const v = m.querySelector('#mgmtIn').value.trim();
-        const mm = v.match(/\/m\/([A-Za-z0-9]+)#([A-Za-z0-9_-]+)/);
-        if (!mm) return toast('Lien de gestion invalide', 'warn');
-        owned.upsert({ id: mm[1], key: mm[2], title: 'Transfert importé', createdAt: Date.now() });
-        toast('Transfert ajouté', 'success'); close(null); refresh(); watchLive();
+        const t = v.match(/\/m\/([A-Za-z0-9]+)#([A-Za-z0-9_-]+)/), r = v.match(/\/r\/([A-Za-z0-9]+)#([A-Za-z0-9_-]{10,})/);
+        if (t) { owned.upsert({ id: t[1], key: t[2], title: 'Transfert importé', createdAt: Date.now() }); toast('Transfert ajouté', 'success'); close(null); refresh(); watchLive(); return; }
+        if (r) { ownedRequests.upsert({ id: r[1], key: r[2], title: (ownedRequests.get(r[1]) || {}).title || 'Espace Smart Drop', createdAt: Date.now() }); toast('Espace Smart Drop ajouté', 'success'); close(null); navigate('/r/' + r[1]); return; }
+        if (/\/(d|@)[\/\w-]*/.test(v) && !v.includes('#')) return toast('C\'est le lien public, à partager. Collez plutôt le lien de gestion privé (il contient un #).', 'warn', { duration: 6000 });
+        toast('Lien de gestion invalide', 'warn');
       };
     }
   });
   if (choice === 'export') {
-    const blob = new Blob([JSON.stringify({ app: 'Lestha Send', version: 3, exportedAt: new Date().toISOString(), owned: owned.all(), p2pHistory: ls.get('transferx_history', []) }, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'transferx-sauvegarde-' + new Date().toISOString().slice(0, 10) + '.json';
+    const blob = new Blob([JSON.stringify(backupData(), null, 2)], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'lestha-send-sauvegarde-' + new Date().toISOString().slice(0, 10) + '.json';
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-    toast('Sauvegarde téléchargée — elle contient vos clés de gestion, gardez-la privée', 'warn');
+    toast('Sauvegarde téléchargée. Elle contient vos clés privées : ne la partagez pas.', 'warn');
   } else if (choice === 'import') {
     const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'application/json,.json';
     inp.onchange = async () => {
       try {
-        const j = JSON.parse(await inp.files[0].text());
-        const list = Array.isArray(j) ? [] : (j.owned || []);
-        list.forEach(o => o.id && o.key && owned.upsert(o));
-        const hist = Array.isArray(j) ? j : (j.p2pHistory || []);
-        if (hist.length) { const cur = ls.get('transferx_history', []); const ids = new Set(cur.map(h => h.roomId)); ls.set('transferx_history', cur.concat(hist.filter(h => h.roomId && !ids.has(h.roomId))).slice(0, 200)); }
-        toast('Import réussi', 'success'); refresh(); watchLive();
+        const n = restoreData(JSON.parse(await inp.files[0].text()));
+        const parts = [[n.t, 'transfert(s)'], [n.r, 'espace(s) Smart Drop'], [n.m, 'réunion(s)'], [n.l, 'direct(s)']].filter(([x]) => x).map(([x, w]) => x + ' ' + w);
+        toast('Import réussi' + (parts.length ? ' : ' + parts.join(', ') : ''), 'success'); refresh(); watchLive();
       } catch (e) { toast('Fichier invalide', 'error'); }
     };
     inp.click();
