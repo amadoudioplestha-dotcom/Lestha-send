@@ -466,7 +466,7 @@ export const manageView = (() => {
   return {
     async render(r, { match, hash }) {
       root = r; id = match[1];
-      if (hash && /^[A-Za-z0-9_-]{10,}$/.test(hash)) { owned.upsert({ id, key: hash, createdAt: Date.now(), title: (owned.get(id) || {}).title || 'Demande' }); history.replaceState({}, '', '/r/' + id); }
+      if (hash && /^[A-Za-z0-9_-]{10,}$/.test(hash)) { owned.upsert({ id, key: hash, createdAt: Date.now(), title: (owned.get(id) || {}).title || 'Demande' }); history.replaceState(history.state, '', '/r/' + id); }
       const o = owned.get(id);
       if (!o) { root.innerHTML = `<section class="narrow"><div class="card"><div class="state-screen"><div class="state-icon info">${icon('lock')}</div><h2>Lien de gestion requis</h2><p class="muted">Ouvrez le lien de gestion reçu à la création de cette demande, depuis cet appareil.</p></div></div></section>`; return; }
       key = o.key;
@@ -493,7 +493,7 @@ export const manageView = (() => {
     const kq = encodeURIComponent(key);
     root.innerHTML = `
     <section class="stack sd-manage" style="--accent:${esc(q.color || '#06d6a0')}">
-      <a href="/dashboard" data-link class="btn ghost sm" style="align-self:flex-start">${icon('arrow-left', 'sm')}Tableau de bord</a>
+      <a href="/dashboard" data-link class="btn ghost sm back-link">${icon('arrow-left', 'sm')}Tableau de bord</a>
       <div class="card glow stack">
         <div class="row wrap between"><div class="row grow" style="min-width:240px"><div class="ficon sd-av" style="--c:var(--accent);width:52px;height:52px;border-radius:16px">${icon('inbox', 'lg')}</div><div class="fmeta"><h2 style="font-size:clamp(20px,3.6vw,28px)">${esc(q.title)}</h2><div class="small muted">${q.permanent ? `Lien personnel @${esc(q.handle || '')} · toujours ouvert` : `Smart Drop · créé le ${fmtDate(q.createdAt)} · ${q.state === 'expired' ? 'terminé' : 'jusqu\'au ' + new Date(q.expiresAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}`}${q.maxDeposits ? ` · ${ready.length}/${q.maxDeposits} dépôts` : ''}</div></div></div><span class="pill ${st[0]}" style="font-size:13px">${st[1]}</span></div>
         <div class="link-box"><input id="shareLink" readonly value="${esc(q.link)}"><button type="button" class="btn primary sm" id="btnCopy">${icon('copy', 'sm')}Copier</button></div>

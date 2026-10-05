@@ -69,7 +69,7 @@ function renderPage(media) {
   const roots = [...new Set(media.map(rootOf))];
   root.innerHTML = `
   <section class="watch-wrap">
-    <div class="watch-main">
+    <div class="watch-main" data-back-slot>
       <div class="player-box ${only ? 'protected' : ''}" id="pbox">
         ${isVideo
           ? `<video id="player" class="player" controls playsinline preload="metadata" ${only ? 'controlsList="nodownload noremoteplayback" disableRemotePlayback' : ''}></video>`

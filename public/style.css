@@ -1363,3 +1363,9 @@ body.in-meet .mr-grid button { background: rgba(255, 255, 255, .06); }
 .chip.sd-date { position: relative; display: inline-flex; align-items: center; gap: 6px; padding-right: 6px; cursor: pointer; }
 .chip.sd-date input { border: 0; background: transparent; color: inherit; font: inherit; padding: 0; min-width: 0; width: 128px; }
 .chip.sd-date.active { border-color: var(--t-cyan, #00b4d8); background: rgba(0, 180, 216, .12); }
+
+/* v3.12.7 — bouton Retour en haut des pages secondaires */
+.back-link { align-self: flex-start; display: inline-flex; gap: 6px; margin: 0 0 6px -6px; width: max-content; }
+.back-link span { white-space: nowrap; }
+.watch-main > .back-link { margin-bottom: 10px; }
+@media (max-width: 640px) { .back-link { margin-left: -4px; } }

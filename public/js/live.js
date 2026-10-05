@@ -100,7 +100,7 @@ export const roomView = (() => {
     async render(r, { match, hash }) {
       root = r; id = match[1];
       const m = (hash || '').match(/^m=([\w-]{10,})$/);
-      if (m) { mine.add({ id, key: m[1], role: 'mod', title: 'Co-animation', kind: 'camera', createdAt: Date.now() }); history.replaceState({}, '', '/live/' + id); }
+      if (m) { mine.add({ id, key: m[1], role: 'mod', title: 'Co-animation', kind: 'camera', createdAt: Date.now() }); history.replaceState(history.state, '', '/live/' + id); }
       me = mine.get(id); role = me ? (me.role || 'host') : 'learner';
       root.innerHTML = `<section class="narrow"><div class="skeleton" style="height:420px;border-radius:20px"></div></section>`;
       try { L = await api('/api/public/live/' + id); if (L && L.kind === 'camera') { root.innerHTML = `<section class="narrow"><div class="card"><div class="state-screen"><div class="state-icon info">${icon('call')}</div><h2>Cette classe a été remplacée</h2><p class="muted">Les classes virtuelles se font désormais dans « Réunion », en mode Cours : discussion, sondages, liste de présence et enregistrement MP3.</p><a class="btn primary" href="/reunion" data-link>${icon('call')}Créer un cours</a></div></div></section>`; return; } } catch (e) { root.innerHTML = `<section class="narrow"><div class="card"><div class="state-screen"><div class="state-icon warn">${icon('video')}</div><h2>Direct introuvable</h2><p class="muted">Ce direct n'existe plus.</p><a class="btn" href="/direct" data-link>${icon('video')}Créer un direct</a></div></div></section>`; return; }

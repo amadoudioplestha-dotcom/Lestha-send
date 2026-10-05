@@ -10,7 +10,7 @@ export default {
     root = r; id = match[1];
     root.innerHTML = skeleton();
     await load();
-    if (params && params.get('signaler') === '1') { history.replaceState({}, '', '/t/' + id); reportDialog(); }
+    if (params && params.get('signaler') === '1') { history.replaceState(history.state, '', '/t/' + id); reportDialog(); }
   },
   destroy() { clearInterval(timer); clearTimeout(poll); root = null; }
 };

@@ -38,7 +38,7 @@ export default {
     renderShell();
     await join();
     const code = params.get('pair');
-    if (code && /^\d{6}$/.test(code)) { history.replaceState({}, '', '/proximite'); joinPair(code); }
+    if (code && /^\d{6}$/.test(code)) { history.replaceState(history.state, '', '/proximite'); joinPair(code); }
   },
   destroy() {
     N.root = null;
@@ -346,7 +346,7 @@ async function onIncoming(p) {
   }
   N.sock.emit('near-reply', { to: p.from.deviceId, offerId: p.offerId, accept: true });
   keepAwake(true);
-  if (location.pathname !== '/proximite') toast(`Réception depuis ${p.from.name}…`, 'info', { action: 'Voir', onAction: () => { history.pushState({}, '', '/proximite'); dispatchEvent(new PopStateEvent('popstate')); } });
+  if (location.pathname !== '/proximite') toast(`Réception depuis ${p.from.name}…`, 'info', { action: 'Voir', onAction: () => { history.pushState({ idx: ((history.state && history.state.idx) || 0) + 1 }, '', '/proximite'); dispatchEvent(new PopStateEvent('popstate')); } });
   renderTransfers();
 }
 

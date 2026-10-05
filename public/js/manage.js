@@ -24,7 +24,7 @@ export default {
     root = r; id = match[1];
     if (hash && /^[A-Za-z0-9_-]{10,}$/.test(hash)) {
       owned.upsert({ id, key: hash, createdAt: (owned.get(id) || {}).createdAt || Date.now(), title: (owned.get(id) || {}).title || 'Transfert' });
-      history.replaceState({}, '', '/m/' + id);             // la clé ne reste pas dans l'historique
+      history.replaceState(history.state, '', '/m/' + id);             // la clé ne reste pas dans l'historique
     }
     const o = owned.get(id);
     if (!o) return askKey();
@@ -77,7 +77,7 @@ function renderAll() {
   const pend = ls.get('tx_pending', {})[id];
   root.innerHTML = `
   <section class="stack">
-    <a href="/dashboard" data-link class="btn ghost sm" style="align-self:flex-start">${icon('arrow-left', 'sm')}Tableau de bord</a>
+    <a href="/dashboard" data-link class="btn ghost sm back-link">${icon('arrow-left', 'sm')}Tableau de bord</a>
     <div class="card glow stack">
       <div class="row wrap between">
         <div class="row grow" style="min-width:240px">

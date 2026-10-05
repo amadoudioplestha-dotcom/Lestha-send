@@ -365,7 +365,7 @@ async function importShared() {
       list.push({ file: new File([blob], name, { type: res.headers.get('Content-Type') || blob.type }), path: null });
       await cache.delete(req);
     }
-    history.replaceState({}, '', '/');
+    history.replaceState(history.state, '', '/');
     if (list.length) { S.items.push(...list.map(it => ({ uid: ++uidSeq, file: it.file, path: null }))); toast(list.length + ' fichier(s) reçu(s) depuis le partage', 'success'); }
   } catch (e) { /* ignore */ }
 }
