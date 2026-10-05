@@ -36,7 +36,7 @@ function shell() {
       <div class="row wrap">
         <button type="button" class="btn sm" id="btnNotif">${icon('bell', 'sm')}<span>Alertes</span></button>
         <button type="button" class="btn sm" id="btnTools">${icon('settings', 'sm')}Outils</button>
-        <a class="btn sm" href="/demande" data-link>${icon('inbox', 'sm')}Demander des fichiers</a>
+        <a class="btn sm" href="/demande" data-link>${icon('inbox', 'sm')}Smart Drop · collecter des fichiers</a>
         <a class="btn sm primary" href="/" data-link>${icon('plus', 'sm')}Nouvel envoi</a>
       </div>
     </div>

@@ -152,7 +152,7 @@ async function renderCompose() {
         <p class="small faint center">${cloud ? 'Upload direct vers le stockage, en parallèle et reprenable. Aucune limite de débit imposée.' : `Jusqu'à ${bytes(MAX_DIRECT_BYTES, 0)} par transfert ; réception sur disque si le navigateur et l'espace disponible le permettent. Gardez Lestha Send ouvert pendant le téléchargement.`}</p>
         <a class="card request-cta" href="/demande" data-link>
           <span class="ficon" style="--c:#06d6a0">${icon('inbox')}</span>
-          <span class="fmeta"><b>Besoin de <span class="grad-text">recevoir</span> des fichiers ?</b><span class="small muted">Créez un lien de dépôt : vos apprenants, clients ou collègues vous envoient leurs fichiers.</span></span>
+          <span class="fmeta"><b>Besoin de <span class="grad-text">collecter</span> des fichiers ?</b><span class="small muted">Smart Drop : décrivez votre besoin (candidatures, devoirs, photos d'un événement…), partagez un lien ou un QR code. Chacun dépose sans compte et reçoit un accusé.</span></span>
           ${icon('arrow-right')}
         </a>
       </div>

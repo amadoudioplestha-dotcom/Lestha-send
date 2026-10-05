@@ -157,6 +157,21 @@ const relabel = (map, L) => Object.fromEntries(Object.entries(map || {}).map(([k
 const pc = (a, b) => (b ? Math.round(a / b * 100) + ' %' : '—');
 A.ins = { days: 30, fbFilter: 'new' };
 
+/* Smart Drop : espaces créés par secteur et dépôts reçus (compteurs du serveur) */
+const SECTOR_L = { rh: 'RH / Recrutement', education: 'Éducation / Formation', entreprise: 'Entreprise / PME', administration: 'Administration', ong: 'ONG / Association', evenement: 'Événementiel', audiovisuel: 'Audiovisuel / Photo', communication: 'Communication / Marketing', btp: 'Architecture / BTP', commerce: 'Commerce', finance: 'Comptabilité / Finance', juridique: 'Juridique / Conseil', recherche: 'Recherche / Université', projet: 'Projets / Prestations', autre: 'Autre' };
+function dropCard(R) {
+  const S = R.totals.srv || {};
+  const bySector = Object.fromEntries(Object.keys(SECTOR_L).map(k => [SECTOR_L[k], S['drop_' + k] || 0]).filter(([, v]) => v));
+  return `<div class="card" style="margin-bottom:18px"><div class="card-title"><h3>${icon('inbox')}Smart Drop</h3><span class="small faint">espaces de dépôt</span></div>
+    <div class="grid-2 adm-grid">
+      <div class="controls">
+        <div class="control"><div class="control-text"><b>${num(S.drop_created || 0)} espace(s) créé(s)</b><span>sur la période choisie</span></div></div>
+        <div class="control"><div class="control-text"><b>${num(S.drop_deposits || 0)} dépôt(s) reçu(s)</b><span>${S.drop_created ? (Math.round((S.drop_deposits || 0) / S.drop_created * 10) / 10).toString().replace('.', ',') + ' dépôt(s) par espace en moyenne' : 'aucun espace pour l\'instant'}</span></div></div>
+      </div>
+      <div><p class="small" style="font-weight:700;margin:0 0 6px">Secteurs choisis</p>${hbars(bySector)}</div>
+    </div></div>`;
+}
+
 /* Réunions, cours et direct vidéo : compteurs du serveur (anonymes) */
 function meetCard(R) {
   const S = R.totals.srv || {}, now = R.meetNow;
@@ -209,6 +224,7 @@ async function renderInsights(body) {
       <div class="kpi" style="--kc:#fbbf24"><div class="kpi-top">Satisfaction<span class="kpi-icon">${icon('message')}</span></div><div class="kpi-value">${moodStars}</div><div class="kpi-foot">${num(T.fb.n)} avis · ${num(R.feedbackNew)} message(s) à lire</div></div>
     </div>
     ${meetCard(R)}
+    ${dropCard(R)}
     <div class="card" style="margin-bottom:18px">
       <div class="card-title"><h3>${icon('chart')}Visiteurs et envois</h3><div class="legend"><span><i style="background:rgba(0,180,216,.5)"></i>Visiteurs</span><span><i style="background:linear-gradient(#00b4d8,#06d6a0)"></i>Envois</span></div></div>
       <div id="insChart"></div>

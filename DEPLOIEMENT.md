@@ -225,3 +225,34 @@ Pour savoir d'où viennent vos visiteurs, ajoutez `?src=` à vos liens publics :
 - Validité choisie pour les liens ; Direct vidéo créés (YouTube/Facebook ou flux pro) et spectateurs.
 - Graphique par jour, et réunions en cours en ce moment. Les mêmes chiffres figurent dans le bilan hebdomadaire par e-mail.
 - Compté par le serveur : aucun nom, aucun sujet, aucune adresse IP.
+
+## 20. Version 3.11 : réunions stabilisées et salle redessinée
+
+**Causes trouvées et corrigées**
+- « Le serveur audio ne répond pas » (serveur Cloudflare) : les voix et vidéos des autres étaient demandées **avant** que la connexion soit prête (Cloudflare répond 425), et les caméras **éteintes** étaient demandées aussi. Après la première erreur, la connexion restait à moitié négociée, d'où les erreurs « setRemoteDescription » en cascade. Désormais : on attend « connexion prête », on ne demande que les caméras allumées, chaque erreur remet la connexion dans un état propre, nouvel essai progressif, nouvelle session si elle expire.
+- Si le serveur Cloudflare reste en panne : après 3 reconstructions, **la réunion bascule seule en connexion directe** (jusqu'à 12 personnes), sans message d'erreur à l'écran. Identifiants Cloudflare refusés : les nouvelles réunions partent en direct pendant 10 minutes.
+- **Caméra noire** : quand deux messages de connexion arrivaient en même temps, deux connexions étaient créées pour la même personne et la caméra partait sur la mauvaise. Une seule connexion par personne désormais, messages traités dans l'ordre.
+- Coupure : relance automatique (3 essais), puis nouvelle connexion complète avec la personne concernée.
+- Messages précis pour le micro et la caméra (bloqué par le navigateur, absent, utilisé par une autre application, allumé sans image) au lieu de messages génériques.
+
+**Nouveau**
+- Voyant de connexion en haut : point vert (connecté), « Reconnexion… », « Connexion instable », « Reconnecté », « Erreur ». Un appui ouvre **Réglages et diagnostic** : autorisations, micro, caméra, vidéos et sons reçus, type de connexion, temps aller-retour, choix du micro et de la caméra, bouton « Relancer la connexion ».
+- Caméra avant / arrière sur téléphone (menu « Plus »).
+- Journal exploitable dans Render → Logs (lignes `{"t":"meet",…}` : entrée, sortie, erreurs Cloudflare avec leur code, repli, incidents des appareils), sans nom ni sujet.
+
+**Design**
+- Salle en studio sombre plein écran, barre épurée à boutons ronds (icônes et info-bulles) : Micro, Caméra, Présenter, Main, Réactions, Plus, Quitter ; Participants et Discussion à droite. Sur téléphone : Micro, Caméra, Main, Plus, Quitter.
+- Menu « Plus » (fenêtre sur ordinateur, feuille qui monte sur téléphone) : Sondage, Enregistrer, Inviter, Changer de caméra, Vue mosaïque / orateur, Plein écran, Réglages et diagnostic.
+- Cours avec présentation : l'écran partagé en grand, **la caméra de l'enseignant en incrustation** (déplaçable, se range dans un coin), les élèves dans une bande à droite (en bas sur téléphone). Sans présentation : l'enseignant en grand.
+- Mosaïque qui s'ajuste à l'écran, animations douces (arrivée des vignettes, scène, menus), barre qui s'efface pendant une présentation et revient au moindre mouvement.
+- Rien à configurer.
+
+## 21. Version 3.12 : Smart Drop
+
+- Page « Demande » devenue **Smart Drop** : décrivez votre besoin (« Je veux recevoir des candidatures pour un poste… »), le formulaire est proposé (15 secteurs), modifiable champ par champ, avec aperçu.
+- Règles : types de fichiers, taille par fichier et par dépôt, nombre maximal de dépôts, date limite, code (espace privé), couleur, coordonnées.
+- Déposant : formulaire adapté, un emplacement par pièce (CV, lettre…), vérification avant l'envoi, pause / annulation, **accusé de réception** avec numéro (CAND-0001…), enregistrable en PDF, et par e-mail si le service e-mail est configuré.
+- Gestion : statuts (Reçu, En cours d'analyse, À compléter, Validé, Refusé, Archivé) avec note et e-mail au déposant, recherche, filtres, **Exporter (Excel)**, **Tout télécharger** (un dossier par dépôt), QR code en grand, « Organiser une réunion ».
+- Les anciennes demandes et les liens @nom continuent de fonctionner.
+- Console admin → Retours & usage : carte « Smart Drop » (espaces par secteur, dépôts).
+- Rien à configurer. Le rapport complet est dans `RAPPORT-v3.12.md`.

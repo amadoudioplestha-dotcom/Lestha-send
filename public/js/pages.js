@@ -109,7 +109,7 @@ function faq(cfg) {
     ['Faut-il créer un compte ?', 'Non. Pour aller plus loin (fichiers plus lourds, envoi du lien par e-mail, lien personnel @nom), il suffit de confirmer votre adresse e-mail avec un code à 6 chiffres. Pas de mot de passe.'],
     ['Que se passe-t-il si ma connexion coupe ?', 'L\'envoi reprend automatiquement là où il s\'était arrêté quand la connexion revient. Vous n\'avez rien à refaire.'],
     ['Comment protéger un fichier sensible ?', 'Ajoutez un code PIN de 6 à 8 chiffres au moment de l\'envoi et communiquez-le séparément. Vous pouvez aussi limiter le nombre de téléchargements ou supprimer le lien à tout moment.'],
-    ['Comment recevoir des fichiers de plusieurs personnes ?', 'Créez une « demande de fichiers », ou réservez votre lien personnel lestha-send.com/@votre-nom : chacun y dépose ses fichiers et vous les retrouvez au même endroit.'],
+    ['Comment recevoir des fichiers de plusieurs personnes ?', 'Créez un espace Smart Drop (décrivez votre besoin : candidatures, devoirs, photos…, le formulaire est prêt), ou réservez votre lien personnel lestha-send.com/@votre-nom : chacun y dépose ses fichiers et vous les retrouvez au même endroit.'],
     ['Lestha Send fonctionne-t-il sur téléphone ?', 'Oui, sur Android, iPhone et ordinateur, directement dans le navigateur. Vous pouvez aussi l\'installer comme une application depuis le menu de votre navigateur.'],
     ['Quelqu\'un m\'a envoyé un lien suspect, que faire ?', 'Ne téléchargez rien et utilisez le bouton « Signaler » de la page. Un lien signalé plusieurs fois est suspendu automatiquement.']
   ];
