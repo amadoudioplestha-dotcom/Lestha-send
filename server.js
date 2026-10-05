@@ -14,6 +14,7 @@ const { mountCloud } = require('./lib/cloud');
 const { mountP2P } = require('./lib/p2p');
 const { createSecurity } = require('./lib/security');
 const { mountAdmin } = require('./lib/admin');
+const { versionAssets } = require('./lib/assets');
 const { mountRequests } = require('./lib/requests');
 const { mountNearby } = require('./lib/nearby');
 const { mountLive } = require('./lib/live');
@@ -120,7 +121,7 @@ async function main() {
   const renderIndex = () => {
     if (indexHtml && process.env.NODE_ENV === 'production') return indexHtml;
     const base = String(env.PUBLIC_URL || '').replace(/\/$/, '');
-    indexHtml = require('fs').readFileSync(path.join(pub, 'index.html'), 'utf8').replace(/__PUBLIC_URL__/g, base);
+    indexHtml = versionAssets(require('fs').readFileSync(path.join(pub, 'index.html'), 'utf8').replace(/__PUBLIC_URL__/g, base), { publicDir: pub, version: VERSION });
     return indexHtml;
   };
   const sendIndex = (req, res) => { res.set('Cache-Control', 'no-cache'); res.type('html').send(renderIndex()); };

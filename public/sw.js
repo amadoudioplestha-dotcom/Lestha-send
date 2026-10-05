@@ -4,7 +4,7 @@
  * - n'intercepte JAMAIS les API, les téléchargements ni socket.io
  */
 'use strict';
-const VERSION = 'tx-v3.12.2';
+const VERSION = 'tx-v3.12.3';
 const SHELL = ['/', '/style.css', '/js/theme.js', '/js/main.js', '/js/ux.js', '/js/core.js', '/js/router.js', '/js/send.js', '/js/uploader.js', '/js/p2p.js', '/js/receive-code.js', '/js/meet.js', '/js/receive.js', '/js/dashboard.js', '/js/manage.js', '/js/charts.js', '/js/opfs-worker.js', '/js/nearby.js', '/js/watch.js', '/js/request.js', '/js/review-tools.js', '/js/live.js', '/manifest.json', '/icon-192.png', '/icon-512.png', '/icon-192.svg', '/vendor/qrcode.js'];
 
 self.addEventListener('install', (event) => {
@@ -58,7 +58,7 @@ self.addEventListener('fetch', (event) => {
         if (res.ok) cache.put(req, res.clone());
         return res;
       } catch (e) {
-        return (await cache.match(req)) || Response.error();
+        return (await cache.match(req)) || (await cache.match(req, { ignoreSearch: true })) || Response.error();
       }
     })());
   }
