@@ -313,7 +313,7 @@ class Sfu {
   /** Image noire : on récupère à nouveau la caméra de cette personne */
   repull(pid, kind) {
     const key = pid + '-' + kind, mid = this.pulled.get(key);
-    if (mid === undefined) return;
+    if (!mid) return;                               // pas encore reçue, ou demande déjà en cours
     this.pulled.delete(key); this.retries.delete(key);
     if (mid) { this.mids.delete(mid); this.run(() => this.call({ op: 'close', mids: [mid] })).catch(() => {}); }
     const p = S.people.get(pid); if (p) this.sync([p]);
@@ -541,7 +541,7 @@ function bindSocket(socket) {
   if (S.bound === socket) return;
   S.bound = socket;
   const mine = () => !!S.id && !S.ended;
-  socket.on('meet-joined', (p) => { if (!mine()) return; S.people.set(p.pid, Object.assign({ streams: {} }, p)); drawPeople(); toast(p.name + ' a rejoint la réunion', 'info', { duration: 2500 }); });
+  socket.on('meet-joined', (p) => { if (!mine()) return; S.people.set(p.pid, Object.assign({ streams: {} }, p)); drawPeople(); if (p.cam) camWatch(p.pid); toast(p.name + ' a rejoint la réunion', 'info', { duration: 2500 }); });
   socket.on('meet-left', ({ pid, why }) => {
     if (!mine()) return;
     const p = S.people.get(pid); if (!p) return;
@@ -554,8 +554,9 @@ function bindSocket(socket) {
     if (!mine()) return;
     if (S.self && p.pid === S.self.pid) { S.self = Object.assign(S.self, p); if (!p.hand && S.hand) S.hand = false; drawBar(); drawPeople(); return; }
     const cur = S.people.get(p.pid); if (!cur) return;
-    const raised = !cur.hand && p.hand;
+    const raised = !cur.hand && p.hand, camOn = !cur.cam && p.cam;
     Object.assign(cur, p);
+    if (camOn) camWatch(cur.pid);
     if (S.engine && S.engine.sync) S.engine.sync([cur]);
     if (raised) toast('✋ ' + cur.name + ' lève la main', 'info', { duration: 3500 });
     drawPeople();
@@ -1173,9 +1174,23 @@ async function quality() {
     const black = S.meeting.kind === 'video' && p.cam && !!v && !v.videoWidth;
     p.blk = black ? (p.blk || 0) + 1 : 0;
     if (t) t.classList.toggle('v-wait', p.blk >= 2);
-    if (p.blk === 3 || p.blk === 8) { S.engine.repull(p.pid, 'c'); diag('video-black', S.engine instanceof Sfu ? 'sfu' : 'mesh'); }
+    if ((p.blk === 2 || p.blk === 5 || p.blk === 9) && !(p.camWatchUntil > Date.now())) { S.engine.repull(p.pid, 'c'); diag('video-black', S.engine instanceof Sfu ? 'sfu' : 'mesh'); }
   });
   refreshNet();
+}
+/* Caméra qui vient de s'allumer chez quelqu'un : on vérifie l'image après 3 s puis 5,5 s,
+   sans attendre le contrôle régulier. Image toujours noire alors que la vidéo est reçue → on la redemande. */
+function camWatch(pid) {
+  const check = (last) => {
+    const p = S.people.get(pid); if (!p || !p.cam || S.ended || !S.engine) return;
+    const v = document.querySelector(`#mtRoom .mt-tile[data-pid="${pid}"] video`);
+    if (!v || v.videoWidth) return;
+    if (!(p.streams && p.streams.c)) { if (!last) setTimeout(() => check(true), 2500); return; }
+    S.engine.repull(pid, 'c'); diag('video-black-early', S.engine instanceof Sfu ? 'sfu' : 'mesh');
+    if (!last) setTimeout(() => check(true), 2500);
+  };
+  const p = S.people.get(pid); if (p) p.camWatchUntil = Date.now() + 8000;
+  setTimeout(() => check(false), 3000);
 }
 
 function openPanel(tab, toggle) {
