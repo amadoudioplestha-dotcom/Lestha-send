@@ -122,3 +122,62 @@ export function printReport(file, comments, fps = 25, reviews = []) {
   w.document.close();
   return true;
 }
+
+/* ---------- Marqueurs pour Adobe Premiere Pro (XML) et Final Cut Pro / DaVinci Resolve (FCPXML) ---------- */
+const xml = (s) => String(s == null ? '' : s).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/g, ' ').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const NTSC = { 23.976: [24, 1001, 24000], 29.97: [30, 1001, 30000], 47.952: [48, 1001, 48000], 59.94: [60, 1001, 60000], 119.88: [120, 1001, 120000] };
+const rateOf = (fps) => { const n = NTSC[fps]; return n ? { base: n[0], ntsc: true, num: n[1], den: n[2] } : { base: Math.round(fps), ntsc: false, num: 1, den: Math.round(fps) }; };
+const markText = (c) => `${c.name} : ${c.text}`.replace(/[\r\n]+/g, ' ').slice(0, 300);
+
+/** Adobe Premiere Pro : Fichier › Importer le fichier XML → une séquence avec un marqueur par remarque */
+export function exportXMEML(file, comments, fps = 25, info = {}) {
+  const r = rateOf(fps), list = top(comments), fr = (t) => Math.round((Number(t) || 0) * fps);
+  const dur = Math.max(fr(info.duration || 0), ...list.map(c => fr(c.end || c.time) + 1), 1);
+  const rate = `<rate><timebase>${r.base}</timebase><ntsc>${r.ntsc ? 'TRUE' : 'FALSE'}</ntsc></rate>`;
+  const name = `${base(file.name)}${file.v ? ' V' + file.v : ''} — remarques`;
+  const out = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="4">
+  <sequence id="lestha-send">
+    <name>${xml(name)}</name>
+    <duration>${dur}</duration>
+    ${rate}
+    <timecode>${rate}<string>00:00:00:00</string><frame>0</frame><displayformat>NDF</displayformat></timecode>
+    <media><video><format><samplecharacteristics>${rate}<width>${info.vw || 1920}</width><height>${info.vh || 1080}</height></samplecharacteristics></format><track/></video><audio><track/></audio></media>
+${list.map(c => `    <marker><name>${xml(c.name)}${c.resolved ? ' ✓' : ''}</name><comment>${xml(markText(c))}</comment><in>${fr(c.time)}</in><out>${c.end ? fr(c.end) : -1}</out></marker>`).join('\n')}
+  </sequence>
+</xmeml>
+`;
+  download(base(file.name) + (file.v ? '_V' + file.v : '') + '_premiere.xml', out, 'application/xml');
+}
+
+/** Final Cut Pro (et DaVinci Resolve) : Fichier › Importer › XML → projet avec marqueurs « à faire » / « faits » */
+export function exportFCPXML(file, comments, fps = 25, info = {}) {
+  const r = rateOf(fps), list = top(comments);
+  const t = (sec) => { const f = Math.round((Number(sec) || 0) * fps); return f === 0 ? '0s' : `${f * r.num}/${r.den}s`; };
+  const frame = `${r.num}/${r.den}s`;
+  const dur = Math.max(info.duration || 0, ...list.map(c => (c.end || c.time) + 1 / fps), 1 / fps);
+  const name = `${base(file.name)}${file.v ? ' V' + file.v : ''} — remarques`;
+  const out = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.10">
+  <resources>
+    <format id="r1" frameDuration="${frame}" width="${info.vw || 1920}" height="${info.vh || 1080}"/>
+  </resources>
+  <library>
+    <event name="Lestha Send">
+      <project name="${xml(name)}">
+        <sequence format="r1" duration="${t(dur)}" tcStart="0s" tcFormat="NDF">
+          <spine>
+            <gap name="Remarques" offset="0s" start="0s" duration="${t(dur)}">
+${list.map(c => `              <marker start="${t(c.time)}" duration="${c.end ? t(Math.max(1 / fps, c.end - c.time)) : frame}" value="${xml(markText(c))}" completed="${c.resolved ? 1 : 0}"/>`).join('\n')}
+            </gap>
+          </spine>
+        </sequence>
+      </project>
+    </event>
+  </library>
+</fcpxml>
+`;
+  download(base(file.name) + (file.v ? '_V' + file.v : '') + '.fcpxml', out, 'application/xml');
+}

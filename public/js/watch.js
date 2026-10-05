@@ -5,13 +5,17 @@
 import { $, esc, icon, bytes, fileKind, ls, ss, api, visitorId, toast, relTime } from './core.js';
 import { navigate } from './router.js';
 import { track } from './ux.js';
-import { FPS_LIST, tc, short, contentRect, drawShapes, exportEDL, exportCSV, printReport } from './review-tools.js';
+import { FPS_LIST, tc, short, contentRect, drawShapes, exportEDL, exportCSV, printReport, exportXMEML, exportFCPXML } from './review-tools.js';
+import * as PRO from './review-pro.js';
 
 let root = null, id = null, data = null, cur = null, reportTimer = null, wmTimer = null, pollTimer = null, lastReport = 0;
 let player = null, tsPlayer = null, rafId = 0, onKey = null, onResize = null;
 let onFullscreenKey = null;
 let fps = 25, inPt = null, outPt = null, loop = false, filter = 'all';
 let drawMode = false, tool = 'arrow', color = '#f43f5e', shapes = [], shown = null, drawing = null, replyOpen = null;
+/* revue « pro » : qualité lue, repères de cadrage, remarque vocale en attente, comparaison */
+let X = null, srcSel = null, guide = { aspect: '', safe: false, thirds: false }, voice = null, waits = [], startAt = null;
+let pendingSeek = null, onPendingMeta = null, lastSeek = 0, onGuideFs = null, recorder = null, voiceUrl = null, metaSeen = false;
 
 const token = () => ss.get('tx_tk_' + id);
 const q = (extra = '') => `v=${encodeURIComponent(visitorId())}${token() ? '&tk=' + encodeURIComponent(token()) : ''}${extra}`;
@@ -35,7 +39,9 @@ export default {
     fps = Number(ls.get('tx_fps', 25)) || 25;
     const wanted = params.get('f');
     cur = media.find(f => f.id === wanted) || latestOf(media, rootOf(media[0]));
-    inPt = outPt = null; shapes = []; shown = null; drawMode = false; replyOpen = null;
+    if (cur.fps) fps = cur.fps;                     // cadence détectée à l'envoi
+    const tq = params.get('t'); startAt = tq != null && tq !== '' && Number(tq) >= 0 ? Number(tq) : null;
+    inPt = outPt = null; shapes = []; shown = null; drawMode = false; replyOpen = null; voice = null; waits = []; metaSeen = false; pendingSeek = null; onPendingMeta = null;
     renderPage(media);
   },
   destroy() {
@@ -44,7 +50,11 @@ export default {
     if (onFullscreenKey) document.removeEventListener('keydown', onFullscreenKey);
     if (onResize) window.removeEventListener('resize', onResize);
     if (tsPlayer) { try { tsPlayer.destroy(); } catch (e) { /* ignore */ } tsPlayer = null; }
-    root = null; player = null;
+    if (X) { PRO.stopCompare(X); clearInterval(X.wmVTimer); }
+    if (onGuideFs) { document.removeEventListener('fullscreenchange', onGuideFs); onGuideFs = null; }
+    if (recorder) { recorder.kill(); recorder = null; }
+    if (voiceUrl) { URL.revokeObjectURL(voiceUrl); voiceUrl = null; }
+    root = null; player = null; X = null;
   }
 };
 
@@ -74,22 +84,26 @@ function renderPage(media) {
         ${isVideo
           ? `<video id="player" class="player" controls playsinline preload="metadata" ${only ? 'controlsList="nodownload noremoteplayback" disableRemotePlayback' : ''}></video>`
           : `<div class="audio-art">${icon('music', 'xl')}</div><audio id="player" controls preload="metadata" ${only ? 'controlsList="nodownload"' : ''} style="width:100%"></audio>`}
-        ${isVideo ? '<canvas class="draw-layer" id="draw"></canvas>' : ''}
+        ${isVideo ? '<canvas class="guides-layer" id="rvGuides"></canvas><canvas class="draw-layer" id="draw"></canvas>' : ''}
         <div class="player-toolbar">
+          ${isVideo ? '<span class="q-badge" id="qBadge"></span>' : ''}
           <button type="button" class="btn sm fullscreen-btn" id="fullscreen" aria-label="Passer en plein écran" title="Plein écran (F)">${icon('fullscreen', 'sm')}<span>Plein écran</span></button>
         </div>
+        ${data.wmViewer ? `<div class="wm-gate hidden" id="wmGate"><form class="card stack" id="wmForm" style="gap:10px;max-width:340px"><b>${icon('shield', 'sm')} Visionnage protégé</b><span class="small muted">Votre nom s'affichera en filigrane sur l'image.</span><input class="input" id="wmName" maxlength="60" placeholder="Votre nom" required value="${esc(ls.get('tx_comment_name', ''))}"><button class="btn primary" type="submit">${icon('play', 'sm')}Regarder</button></form></div>` : ''}
         ${data.watermark ? `<div class="watermark" id="wm">${esc(data.watermark)}</div>` : ''}
         <div class="player-error hidden" id="perr"></div>
       </div>
       ${isVideo ? `
       <div class="rv-bar">
-        <div class="rv-track" id="track" title="Cliquez pour aller à ce moment"><div class="rv-range hidden" id="trRange"></div><div class="rv-head" id="trHead"></div><div id="trMarks"></div></div>
+        <div class="rv-heat hidden" id="rvHeat"></div>
+        <div class="rv-track" id="track" title="Cliquez pour aller à ce moment"><div class="rv-range hidden" id="trRange"></div><div class="rv-head" id="trHead"></div><div id="trReacts" class="rv-reacts-line"></div><div id="trMarks"></div></div>
         <div class="rv-ctrl">
           <button type="button" class="btn sm icon ghost" id="bBack" title="Image précédente (←)">‹</button>
           <button type="button" class="btn sm icon" id="bPlay" title="Lecture / pause (espace ou K)">${icon('play', 'sm')}</button>
           <button type="button" class="btn sm icon ghost" id="bFwd" title="Image suivante (→)">›</button>
           <span class="rv-tc" id="tc">00:00:00:00</span>
           <select class="input rv-sel" id="selFps" title="Images par seconde">${FPS_LIST.map(f => `<option value="${f}" ${f === fps ? 'selected' : ''}>${f} i/s</option>`).join('')}</select>
+          <select class="input rv-sel" id="selQ" title="Qualité de lecture"></select>
           <select class="input rv-sel" id="selRate" title="Vitesse">${[0.25, 0.5, 1, 1.5, 2].map(r => `<option value="${r}" ${r === 1 ? 'selected' : ''}>${r}×</option>`).join('')}</select>
           <span class="grow"></span>
           <button type="button" class="btn sm ghost" id="bIn" title="Début de plage (I)">I</button>
@@ -102,7 +116,17 @@ function renderPage(media) {
           <span class="rv-colors">${COLORS.map(c => `<button type="button" class="rv-color ${color === c ? 'active' : ''}" data-color="${c}" style="--c:${c}" aria-label="Couleur"></button>`).join('')}</span>
           <button type="button" class="btn sm ghost" id="bUndo">Annuler</button><button type="button" class="btn sm ghost" id="bClear">Effacer</button>
         </div>
-        <div class="tiny faint rv-keys">Raccourcis : <b>espace/K</b> lecture · <b>J</b> −5 s · <b>L</b> avance rapide · <b>← →</b> image par image · <b>⇧ ← →</b> 1 s · <b>I / O</b> plage · <b>D</b> dessiner · <b>C</b> commenter</div>
+        <div class="rv-pro">
+          <select class="input rv-sel" id="selGuide" title="Repères de cadrage">${PRO.GUIDES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
+          <button type="button" class="btn sm ghost" id="bSafe" title="Zones de sécurité action 93 % / titres 90 % (Z)">Zones</button>
+          <button type="button" class="btn sm ghost" id="bThirds" title="Grille des tiers">Tiers</button>
+          <button type="button" class="btn sm ghost" id="bShot" title="Capture PNG en pleine résolution avec timecode (P)">${icon('image', 'sm')}Capture</button>
+          ${chain.length > 1 ? `<button type="button" class="btn sm ghost" id="bCmp" title="Comparer deux versions">${icon('layout', 'sm')}Comparer</button>` : ''}
+          <button type="button" class="btn sm ghost" id="bShare" title="Copier un lien qui ouvre la vidéo à cet instant">${icon('link', 'sm')}Cet instant</button>
+          ${review ? `<span class="grow"></span><span class="rv-emojis" id="rvEmojis" title="Réagir à ce moment">${['👍', '❤️', '🔥', '👏', '😂', '😮', '⚠️'].map(e => `<button type="button" class="rv-emo" data-emo="${e}">${e}</button>`).join('')}</span>` : ''}
+        </div>
+        <div class="rv-cmpbar hidden" id="cmpBar"></div>
+        <div class="tiny faint rv-keys">Raccourcis : <b>espace/K</b> lecture · <b>J</b> −5 s · <b>L</b> avance rapide · <b>← →</b> image par image · <b>⇧ ← →</b> 1 s · <b>I / O</b> plage · <b>D</b> dessiner · <b>C</b> commenter · <b>P</b> capture · <b>Z</b> zones</div>
       </div>` : ''}
       <div class="watch-head">
         <div style="min-width:0">
@@ -125,17 +149,20 @@ function renderPage(media) {
           <input class="input" id="cName" maxlength="60" placeholder="Votre nom" value="${esc(ls.get('tx_comment_name', ''))}">
           <textarea class="input" id="cText" maxlength="500" placeholder="Votre remarque à ce moment précis… (C)" style="min-height:64px"></textarea>
           <div class="small faint" id="cMeta"></div>
-          <button class="btn primary sm" type="submit">${icon('message', 'sm')}Commenter à <span id="cAt">0:00</span></button>
+          <div class="rv-voice hidden" id="cVoice"></div>
+          <div class="row" style="gap:6px"><button type="button" class="btn sm ghost icon" id="cMic" title="Remarque vocale (90 s au plus)" aria-label="Remarque vocale">${icon('mic', 'sm')}</button><button class="btn primary sm grow" type="submit">${icon('message', 'sm')}Commenter à <span id="cAt">0:00</span></button></div>
         </form>
         <div class="row" style="justify-content:space-between;margin-top:12px;gap:6px;flex-wrap:wrap">
           <div class="chips" id="cFilter">${[['all', 'Toutes'], ['open', 'À traiter'], ['done', 'Traitées']].map(([v, l]) => `<button type="button" class="chip ${filter === v ? 'active' : ''}" data-f="${v}">${l}</button>`).join('')}</div>
-          <div class="row" style="gap:4px"><button type="button" class="btn sm ghost" id="xEdl" title="Marqueurs pour DaVinci Resolve">EDL</button><button type="button" class="btn sm ghost" id="xCsv" title="Tableau Excel / Sheets">CSV</button><button type="button" class="btn sm ghost" id="xPdf" title="Rapport imprimable / PDF">PDF</button></div>
+          <div class="row" style="gap:4px;flex-wrap:wrap"><button type="button" class="btn sm ghost" id="xEdl" title="Marqueurs pour DaVinci Resolve">EDL</button><button type="button" class="btn sm ghost" id="xPr" title="Marqueurs pour Adobe Premiere Pro (XML)">Premiere</button><button type="button" class="btn sm ghost" id="xFc" title="Marqueurs pour Final Cut Pro et DaVinci Resolve (FCPXML)">Final Cut</button><button type="button" class="btn sm ghost" id="xCsv" title="Tableau Excel / Sheets">CSV</button><button type="button" class="btn sm ghost" id="xPdf" title="Rapport imprimable / PDF">PDF</button></div>
         </div>
         <div class="stack comments" id="cList" style="gap:6px;margin-top:10px"></div></div>` : ''}
       <div class="tip">${icon('refresh')}<span>La lecture reprend automatiquement là où vous vous étiez arrêté${only ? '. L\'expéditeur a désactivé le téléchargement de ce contenu' : ''}.</span></div>
     </aside>
   </section>`;
   player = $('#player');
+  X = { id, data, cur, player, src, fps: () => fps, curLabel: 'V' + (cur.v || 1), originalSrc: k.ts ? null : src(cur.id), wmVTimer: null, compare: null };
+  srcSel = isVideo ? chooseSource(ls.get('tx_q', 'auto')) : null;
   attachSource(k);
   const fullscreenButton = $('#fullscreen', root);
   const playerBox = $('#pbox', root);
@@ -161,7 +188,11 @@ function renderPage(media) {
     } catch (e) { /* ignore */ }
   });
   const saved = Number(ls.get('tx_pos_' + id + cur.id, 0));
-  player.addEventListener('loadedmetadata', () => { if (saved > 5 && saved < player.duration - 10) { player.currentTime = saved; toast('Reprise à ' + short(saved), 'info'); } paintMarks(); sizeCanvas(); }, { once: true });
+  player.addEventListener('loadedmetadata', () => {
+    if (startAt != null && startAt < player.duration) { player.currentTime = startAt; toast('Ouvert à ' + tc(startAt, fps), 'info'); }
+    else if (saved > 5 && saved < player.duration - 10) { player.currentTime = saved; toast('Reprise à ' + short(saved), 'info'); }
+    metaSeen = true; paintMarks(); sizeCanvas(); proPaint();
+  }, { once: true });
   player.addEventListener('timeupdate', () => {
     if (Math.abs((ls.get('tx_pos_' + id + cur.id, 0)) - player.currentTime) > 4) ls.set('tx_pos_' + id + cur.id, Math.floor(player.currentTime));
     if (loop && inPt != null && outPt != null && player.currentTime >= outPt) player.currentTime = inPt;
@@ -170,12 +201,13 @@ function renderPage(media) {
   player.addEventListener('play', () => { shown = null; if (!drawMode) redraw(); syncPlayBtn(); });
   player.addEventListener('pause', () => { report(true); syncPlayBtn(); });
   player.addEventListener('ended', () => { ls.del('tx_pos_' + id + cur.id); report(true, 100); });
-  player.addEventListener('error', () => { if (!tsPlayer) showError(); });
+  player.addEventListener('error', () => { if (!tsPlayer && (!srcSel || srcSel.original)) showError(); });
   if (only) $('#pbox').addEventListener('contextmenu', (e) => e.preventDefault());
   const wm = $('#wm');
   if (wm) { const move = () => { wm.style.left = (8 + Math.random() * 60) + '%'; wm.style.top = (8 + Math.random() * 70) + '%'; }; move(); clearInterval(wmTimer); wmTimer = setInterval(move, 12000); }
-  if (isVideo) bindReviewBar(review);
+  if (isVideo) { bindReviewBar(review); bindPro(review, chain); }
   if (review) { bindComments(); renderDecision(); startPolling(); }
+  if (data.wmViewer) bindViewerWatermark();
   clearInterval(reportTimer);
   reportTimer = setInterval(() => { if (player && !player.paused) report(); }, 15000);
   cancelAnimationFrame(rafId);
@@ -202,7 +234,8 @@ async function togglePlayerFullscreen(box, media) {
 
 /** Source : lecture native, ou MPEG-TS (.ts / .m2ts) via mpegts.js (Media Source Extensions) */
 async function attachSource(k) {
-  if (!k.ts) { player.src = src(cur.id); return; }
+  const sel = srcSel || { id: cur.id, original: true };
+  if (!k.ts || !sel.original) { player.src = src(sel.id); return; }
   try {
     if (!window.mpegts) await new Promise((res, rej) => { const s = document.createElement('script'); s.src = '/vendor/mpegts.js'; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
     const m = window.mpegts;
@@ -212,6 +245,125 @@ async function attachSource(k) {
     tsPlayer.attachMediaElement(player);
     tsPlayer.load();
   } catch (e) { showError('Le lecteur .TS n\'a pas pu démarrer.'); }
+}
+
+/* ============================== revue « pro » ============================== */
+function chooseSource(pref) {
+  const list = PRO.sourcesOf(cur);
+  if (pref === 'auto' || pref == null) return Object.assign({ auto: true }, PRO.autoPick(list));
+  const want = Number(pref);
+  return list.filter(s => s.h <= want).pop() || list[0];
+}
+function paintQ() {
+  const list = PRO.sourcesOf(cur), pref = ls.get('tx_q', 'auto');
+  const sel = $('#selQ'), badge = $('#qBadge');
+  if (sel) {
+    sel.classList.toggle('hidden', list.length < 2);
+    sel.innerHTML = `<option value="auto" ${pref === 'auto' ? 'selected' : ''}>Auto${srcSel && srcSel.auto ? ' · ' + srcSel.label.replace('Original · ', '') : ''}</option>` + list.slice().reverse().map(s => `<option value="${s.original ? 'orig' : s.h}" ${pref !== 'auto' && srcSel && srcSel.id === s.id ? 'selected' : ''}>${esc(s.label)}</option>`).join('');
+  }
+  if (badge) { badge.textContent = srcSel ? srcSel.label.replace('Original · ', 'Original ') : ''; badge.classList.toggle('hidden', !srcSel || list.length < 2); }
+}
+function switchSource(next, why) {
+  if (!next || !player) return;
+  if (srcSel && next.id === srcSel.id) { srcSel = next; paintQ(); return; }
+  // Avant le tout premier chargement, la reprise (instant demandé, position sauvegardée) s'en charge déjà
+  if (!metaSeen) { srcSel = next; if (tsPlayer) { try { tsPlayer.destroy(); } catch (e) { /* ignore */ } tsPlayer = null; } attachSource(kindOf(cur)); paintQ(); if (why) toast(why, 'info', { duration: 3500 }); return; }
+  // Deux changements rapprochés : on garde la position d'avant le premier (la vidéo n'a pas encore rechargé)
+  if (!pendingSeek) pendingSeek = { t: player.currentTime, playing: !player.paused, rate: player.playbackRate };
+  srcSel = next;
+  if (tsPlayer) { try { tsPlayer.destroy(); } catch (e) { /* ignore */ } tsPlayer = null; }
+  if (onPendingMeta) player.removeEventListener('loadedmetadata', onPendingMeta);
+  onPendingMeta = () => {
+    const ps = pendingSeek; pendingSeek = null; onPendingMeta = null; if (!ps || !player) return;
+    player.currentTime = ps.t; player.playbackRate = ps.rate; if (ps.playing) player.play().catch(() => {}); sizeCanvas(); proPaint();
+  };
+  player.addEventListener('loadedmetadata', onPendingMeta, { once: true });
+  attachSource(kindOf(cur));
+  paintQ();
+  if (why) toast(why, 'info', { duration: 3500 });
+}
+/** Saccades répétées en mode Auto : on descend d'une qualité pour rester fluide */
+function onWaiting() {
+  if (!srcSel || !srcSel.auto || player.paused || player.seeking || player.currentTime < 1 || Date.now() - lastSeek < 2500) return;
+  const now = Date.now(); waits = waits.filter(x => now - x < 30000); waits.push(now);
+  if (waits.length < 3) return;
+  waits = [];
+  const list = PRO.sourcesOf(cur), i = list.findIndex(s => s.id === srcSel.id);
+  if (i > 0) switchSource(Object.assign({ auto: true }, list[i - 1]), `Connexion lente : passage en ${list[i - 1].label} pour rester fluide`);
+}
+function proPaint() {
+  if (!X || !player || !player.duration) return;
+  PRO.drawWave(X); PRO.drawGuides(X, guide);
+  PRO.paintReacts(X, (data.reacts || []).filter(r => r.fid === cur.id));
+  PRO.drawHeat(X, myComments(), (data.reacts || []).filter(r => r.fid === cur.id));
+}
+function bindPro(review, chain) {
+  paintQ();
+  $('#selQ').onchange = (e) => {
+    const v = e.target.value; ls.set('tx_q', v === 'orig' ? '99999' : v);
+    switchSource(chooseSource(v === 'orig' ? 99999 : v));
+  };
+  player.addEventListener('waiting', onWaiting);
+  player.addEventListener('seeking', () => { lastSeek = Date.now(); });
+  // Qualité illisible par ce navigateur (codec) : retour automatique à l'original
+  player.addEventListener('error', () => { if (srcSel && !srcSel.original) { const o = PRO.sourcesOf(cur).pop(); switchSource(Object.assign({ auto: srcSel.auto }, o), 'Cette qualité ne se lit pas ici : lecture de l\'original'); } });
+  PRO.bindHoverPreview(X);
+  const g = () => PRO.drawGuides(X, guide);
+  $('#selGuide').onchange = (e) => { guide.aspect = e.target.value; g(); };
+  const tog = (btn, k) => { guide[k] = !guide[k]; btn.classList.toggle('active', guide[k]); g(); };
+  $('#bSafe').onclick = (e) => tog(e.currentTarget, 'safe');
+  $('#bThirds').onclick = (e) => tog(e.currentTarget, 'thirds');
+  if (onGuideFs) document.removeEventListener('fullscreenchange', onGuideFs);
+  onGuideFs = g; document.addEventListener('fullscreenchange', g);
+  if (data.playback === 'only') { const bs = $('#bShot'); if (bs) bs.remove(); }   // visionnage seul : pas d'export d'image
+  const bsh = $('#bShot'); if (bsh) bsh.onclick = shot;
+  $('#bShare').onclick = () => PRO.shareMoment(X);
+  const bc = $('#bCmp'); if (bc) bc.onclick = () => openCompare(chain);
+  const emo = $('#rvEmojis');
+  if (emo) emo.onclick = async (e) => {
+    const b = e.target.closest('[data-emo]'); if (!b) return;
+    PRO.burstReact(b.dataset.emo);
+    try { const r = await api(`/api/public/t/${id}/react?${q()}`, { method: 'POST', body: { fid: cur.id, time: player.currentTime, e: b.dataset.emo, v: visitorId() } }); data.reacts = r.reacts; proPaint(); }
+    catch (err) { toast(err.message, 'warn'); }
+  };
+}
+async function shot() {
+  if (!X || data.playback === 'only' || !$('#bShot')) return;
+  toast('Capture en cours…', 'info', { duration: 1500 });
+  try { const r = await PRO.captureFrame(X, { shapes: drawMode || shapes.length ? shapes : (shown || []), wmText: data.wmViewer ? PRO.savedName() : '', staticWm: data.watermark || '' }); toast(`Image ${r.W} × ${r.H} enregistrée`, 'success'); track('use', { m: 'capture' }); }
+  catch (e) { toast('Capture impossible : le stockage n\'autorise pas la lecture de l\'image depuis ce site (règle CORS « GET » du bucket R2).', 'error', { duration: 8000 }); }
+}
+function openCompare(chain) {
+  const bar = $('#cmpBar'); if (!bar) return;
+  if (X.compare) { PRO.stopCompare(X); bar.classList.add('hidden'); $('#bCmp').classList.remove('active'); return; }
+  const others = chain.filter(f => f.id !== cur.id);
+  let other = others.filter(f => (f.v || 1) < (cur.v || 1)).pop() || others[0], mode = 'wipe';
+  const start = () => {
+    const h = srcSel ? srcSel.h : 10000, os = PRO.sourcesOf(other), pick = os.filter(s => s.h <= h).pop() || os[0];
+    PRO.startCompare(X, { srcId: pick.id, label: 'V' + (other.v || 1) }, mode);
+    bar.innerHTML = `<span class="small muted">Comparer V${cur.v || 1} avec</span>${others.map(f => `<button type="button" class="chip ${f.id === other.id ? 'active' : ''}" data-cv="${f.id}">V${f.v || 1}</button>`).join('')}
+      <span class="grow"></span><span class="chips"><button type="button" class="chip ${mode === 'wipe' ? 'active' : ''}" data-cm="wipe">Rideau</button><button type="button" class="chip ${mode === 'side' ? 'active' : ''}" data-cm="side">Côte à côte</button></span>
+      <button type="button" class="btn sm ghost" data-cx>${icon('x', 'sm')}Fermer</button>`;
+  };
+  bar.classList.remove('hidden'); $('#bCmp').classList.add('active');
+  bar.onclick = (e) => {
+    const v = e.target.closest('[data-cv]'), m = e.target.closest('[data-cm]'), x = e.target.closest('[data-cx]');
+    if (v) { other = chain.find(f => f.id === v.dataset.cv); start(); }
+    if (m) { mode = m.dataset.cm; start(); }
+    if (x) openCompare(chain);
+  };
+  start();
+}
+function bindViewerWatermark() {
+  const gate = $('#wmGate'), name = PRO.savedName();
+  const go = (n) => { gate && gate.classList.add('hidden'); PRO.viewerWatermark(X, n); };
+  if (name) return go(name);
+  gate.classList.remove('hidden');
+  player.addEventListener('play', () => { if (!gate.classList.contains('hidden')) player.pause(); });
+  $('#wmForm').onsubmit = (e) => {
+    e.preventDefault(); const n = $('#wmName').value.trim(); if (!n) return;
+    ls.set('tx_comment_name', n); const c = $('#cName'); if (c) c.value = n; go(n); player.play().catch(() => {});
+  };
 }
 
 /* ============================== barre de revue ============================== */
@@ -273,7 +425,7 @@ function bindReviewBar(review) {
     $('#bClear').onclick = () => { shapes = []; redraw(); updateMeta(); };
     bindCanvas();
   }
-  onResize = () => { sizeCanvas(); };
+  onResize = () => { sizeCanvas(); proPaint(); };
   window.addEventListener('resize', onResize);
   onKey = (e) => {
     if (!root || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -289,6 +441,8 @@ function bindReviewBar(review) {
       i: setIn, o: setOut,
       d: () => { if (data.allowComments) toggleDraw(); },
       c: () => { const t = $('#cText'); if (t) { player.pause(); t.focus(); } },
+      p: () => shot(),
+      z: () => { const b = $('#bSafe'); if (b) b.click(); },
       escape: () => { if (drawMode) toggleDraw(false); else clearRange(); }
     }[k];
     if (act) { e.preventDefault(); act(); }
@@ -366,7 +520,7 @@ function renderList() {
     return `<div class="rv-comment ${c.resolved ? 'done' : ''}" data-c="${c.id}">
       <div class="row" style="gap:8px;align-items:flex-start">
         <button type="button" class="c-time" data-open="${c.id}" title="Aller à ce moment">${tc(c.time, fps)}${c.end ? '<br>→ ' + tc(c.end, fps) : ''}</button>
-        <div class="grow" style="min-width:0"><b>${esc(c.name)}</b> <span class="tiny faint">${relTime(c.at)}</span>${c.draw ? ` <button type="button" class="rv-pill" data-open="${c.id}">${icon('edit', 'sm')}dessin</button>` : ''}<div class="c-text">${esc(c.text)}</div></div>
+        <div class="grow" style="min-width:0"><b>${esc(c.name)}</b> <span class="tiny faint">${relTime(c.at)}</span>${c.draw ? ` <button type="button" class="rv-pill" data-open="${c.id}">${icon('edit', 'sm')}dessin</button>` : ''}<div class="c-text">${esc(c.text)}</div>${c.voice ? `<audio class="rv-audio" controls preload="none" src="/api/public/t/${id}/voice/${c.id}?${q()}"></audio>` : ''}</div>
         <label class="rv-check" title="${c.resolved ? 'Traité' + (c.resolvedBy ? ' par ' + esc(c.resolvedBy) : '') : 'Marquer comme traité'}"><input type="checkbox" data-res="${c.id}" ${c.resolved ? 'checked' : ''}><span>${icon('check', 'sm')}</span></label>
       </div>
       ${reps.map(r => `<div class="rv-reply"><b>${esc(r.name)}</b> ${esc(r.text)} <span class="tiny faint">${relTime(r.at)}</span></div>`).join('')}
@@ -374,7 +528,7 @@ function renderList() {
     </div>`;
   }).join('') : `<p class="small faint">${tops.length ? 'Aucune remarque dans ce filtre.' : 'Aucune remarque. Mettez en pause au bon moment (ou marquez une plage avec I et O), dessinez si besoin, puis écrivez.'}</p>`)
     + (others.length ? `<p class="tiny faint" style="margin-top:6px">Autres versions : ${others.map(o => `V${o.v} · ${o.n} remarque(s)`).join(' · ')}</p>` : '');
-  paintMarks();
+  paintMarks(); proPaint();
   const rf = box.querySelector('.rv-replyform input'); if (rf) rf.focus();
 }
 
@@ -402,16 +556,29 @@ function bindComments() {
     } catch (err) { toast(err.message, 'error'); }
   };
   $('#cText').addEventListener('focus', () => player && player.pause());
+  const vbox = $('#cVoice');
+  const rec = recorder = PRO.voiceRecorder($('#cMic'), (blob, dur) => {
+    voice = blob ? { blob, dur } : null;
+    if (voiceUrl) { URL.revokeObjectURL(voiceUrl); voiceUrl = null; }
+    if (!voice) { vbox.classList.add('hidden'); vbox.innerHTML = ''; return; }
+    if (player) player.pause();
+    vbox.classList.remove('hidden');
+    voiceUrl = URL.createObjectURL(blob);
+    vbox.innerHTML = `<audio controls src="${voiceUrl}"></audio><button type="button" class="btn sm ghost" id="cVoiceX">${icon('trash', 'sm')}</button>`;
+    $('#cVoiceX').onclick = () => rec.clear();
+  });
   $('#cForm').onsubmit = async (e) => {
     e.preventDefault();
-    const text = $('#cText').value.trim(); if (!text) return;
+    const text = $('#cText').value.trim(); if (!text && !voice) return;
     const hasRange = inPt != null && outPt != null;
     const body = { fid: cur.id, time: hasRange ? inPt : player.currentTime, text, name: nameVal(), v: visitorId() };
+    if (voice) { body.voice = await PRO.blobToB64(voice.blob); body.voiceType = voice.blob.type; body.voiceDur = voice.dur; }
     if (hasRange) body.end = outPt;
     if (shapes.length) body.draw = shapes;
     try {
       const r = await api(`/api/public/t/${id}/comments?${q()}`, { method: 'POST', body });
-      data.comments = r.comments; $('#cText').value = ''; track('use', { m: 'review' });
+      data.comments = r.comments; $('#cText').value = ''; track('use', { m: voice ? 'voice' : 'review' });
+      if (voice) rec.clear();
       shapes = []; if (drawMode) toggleDraw(false); clearRange(); redraw(); renderList();
       toast('Remarque ajoutée à ' + tc(r.comment.time, fps), 'success');
     } catch (err) { toast(err.message, 'error'); }
@@ -419,6 +586,9 @@ function bindComments() {
   const fileForExport = () => ({ name: cur.name, v: cur.v });
   $('#xEdl').onclick = () => { exportEDL(fileForExport(), myComments(), fps, 1); toast('EDL téléchargé : dans DaVinci Resolve, clic droit sur la timeline › Timelines › Import › Timeline Markers from EDL', 'info', { duration: 9000 }); };
   $('#xCsv').onclick = () => exportCSV(fileForExport(), myComments(), fps);
+  const info = () => ({ duration: player && player.duration, vw: cur.vw || (player && player.videoWidth), vh: cur.vh || (player && player.videoHeight) });
+  $('#xPr').onclick = () => { exportXMEML(fileForExport(), myComments(), fps, info()); toast('Dans Premiere Pro : Fichier › Importer, choisissez le fichier .xml : une séquence avec les marqueurs apparaît', 'info', { duration: 9000 }); };
+  $('#xFc').onclick = () => { exportFCPXML(fileForExport(), myComments(), fps, info()); toast('Dans Final Cut Pro ou DaVinci Resolve : Fichier › Importer › XML', 'info', { duration: 9000 }); };
   $('#xPdf').onclick = () => { if (!printReport(fileForExport(), myComments(), fps, (data.reviews || {})[cur.id] || [])) toast('Autorisez les fenêtres pop-up pour imprimer le rapport', 'error'); };
 }
 function nameVal() { const n = ($('#cName')?.value || '').trim(); ls.set('tx_comment_name', n); return n; }
@@ -452,13 +622,13 @@ function renderDecision() {
 function startPolling() {
   clearInterval(pollTimer);
   let sig = '';
-  const sign = () => JSON.stringify([(data.comments || []).map(c => c.id + (c.resolved ? 1 : 0)), data.reviews]);
+  const sign = () => JSON.stringify([(data.comments || []).map(c => c.id + (c.resolved ? 1 : 0)), data.reviews, (data.reacts || []).length]);
   sig = sign();
   pollTimer = setInterval(async () => {
     if (!root || document.hidden) return;
     try {
       const r = await api(`/api/public/t/${id}/review?${q()}`);
-      data.comments = r.comments; data.reviews = r.reviews;
+      data.comments = r.comments; data.reviews = r.reviews; if (r.reacts) data.reacts = r.reacts;
       if (r.files) { const had = new Set((data.files || []).map(f => f.id)); const nv = r.files.filter(f => !had.has(f.id)); if (nv.length) { data.files = r.files; if (nv.some(f => rootOf(f) === rootOf(cur))) toast('Nouvelle version disponible : V' + Math.max(...nv.map(f => f.v || 1)), 'info', { action: 'Ouvrir', onAction: () => navigate(`/w/${id}?f=${nv[nv.length - 1].id}`) }); } }
       const s = sign();
       if (s !== sig) { sig = s; const typing = document.activeElement && document.activeElement.closest && document.activeElement.closest('#cList'); if (!typing) renderList(); renderDecision(); }

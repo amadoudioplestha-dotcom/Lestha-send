@@ -4,10 +4,13 @@ import { navigate } from './router.js';
 import { bucketize, barChart, feedItem, refreshTimes } from './charts.js';
 import { shareGrid, bindShare, resumePending } from './send.js';
 import { Uploader } from './uploader.js';
-import { tc, exportEDL, exportCSV, printReport } from './review-tools.js';
+import { tc, exportEDL, exportCSV, printReport, exportXMEML, exportFCPXML } from './review-tools.js';
+import { buildProxies, proxySupported } from './proxies.js';
 
 function onComment(d) {
   if (!t || !d || d.id !== t.id) return;
+  if (d.react) { t.reacts = (t.reacts || []).concat(d.react).slice(-1000); return; }   // réaction emoji d'un relecteur
+  if (!d.comment) return;
   const i = (t.comments || []).findIndex(c => c.id === d.comment.id);
   if (i >= 0) t.comments[i] = d.comment; else t.comments = (t.comments || []).concat(d.comment);
   renderComments();
@@ -176,7 +179,8 @@ function renderComments() {
         <div class="row" style="gap:4px;flex-wrap:wrap">
           <a class="btn sm" href="/w/${esc(t.id)}?f=${esc(f.id)}" data-link>${icon('play', 'sm')}Ouvrir</a>
           ${t.state !== 'expired' ? `<button type="button" class="btn sm" data-newv="${f.id}">${icon('upload', 'sm')}Nouvelle version</button>` : ''}
-          ${list.length ? `<button type="button" class="btn sm ghost" data-x="edl" data-fid="${f.id}" title="Marqueurs DaVinci Resolve">EDL</button><button type="button" class="btn sm ghost" data-x="csv" data-fid="${f.id}">CSV</button><button type="button" class="btn sm ghost" data-x="pdf" data-fid="${f.id}">PDF</button>` : ''}
+          ${t.state !== 'expired' && proxySupported() && /^video|\.(mp4|mov|m4v|webm|mkv)$/i.test((f.type || '') + ' ' + f.name) ? `<button type="button" class="btn sm ghost" data-px="${f.id}" title="480p · 720p · 1080p pour regarder en ligne avec une petite connexion">${icon('film', 'sm')}${f.q && f.q.length ? 'Qualités : ' + f.q.map(x => x.h + 'p').join(' · ') : 'Créer les qualités'}</button>` : ''}
+          ${list.length ? `<button type="button" class="btn sm ghost" data-x="edl" data-fid="${f.id}" title="Marqueurs DaVinci Resolve">EDL</button><button type="button" class="btn sm ghost" data-x="pr" data-fid="${f.id}" title="Marqueurs Adobe Premiere Pro">Premiere</button><button type="button" class="btn sm ghost" data-x="fc" data-fid="${f.id}" title="Marqueurs Final Cut Pro / Resolve">Final Cut</button><button type="button" class="btn sm ghost" data-x="csv" data-fid="${f.id}">CSV</button><button type="button" class="btn sm ghost" data-x="pdf" data-fid="${f.id}">PDF</button>` : ''}
         </div>
       </div>
       <div class="rv-upl hidden" id="upl-${f.id}"></div>
@@ -201,10 +205,13 @@ function renderComments() {
       const f = t.files.find(z => z.id === x.dataset.fid); const cs = all.filter(c => c.fid === f.id);
       if (x.dataset.x === 'edl') { exportEDL(f, cs, fps, 1); toast('Dans DaVinci Resolve : clic droit sur la timeline › Timelines › Import › Timeline Markers from EDL', 'info', { duration: 9000 }); }
       else if (x.dataset.x === 'csv') exportCSV(f, cs, fps);
+      else if (x.dataset.x === 'pr') exportXMEML(f, cs, f.fps || fps, { vw: f.vw, vh: f.vh });
+      else if (x.dataset.x === 'fc') exportFCPXML(f, cs, f.fps || fps, { vw: f.vw, vh: f.vh });
       else if (!printReport(f, cs, fps, (t.reviews || {})[f.id] || [])) toast('Autorisez les fenêtres pop-up pour imprimer le rapport', 'error');
       return;
     }
     const nv = e.target.closest('[data-newv]'); if (nv) newVersion(nv.dataset.newv);
+    const px = e.target.closest('[data-px]'); if (px) pickForProxies(px.dataset.px);
   };
   box.onchange = async (e) => {
     const cb = e.target.closest('[data-res]'); if (!cb) return;
@@ -228,13 +235,34 @@ function newVersion(fid) {
     up.addEventListener('progress', (e) => { const p = e.detail.total ? e.detail.loaded / e.detail.total * 100 : 100; const a = $('#uplPct-' + fid, root), b = $('#uplBar-' + fid, root); if (a) a.textContent = Math.floor(p) + ' %'; if (b) b.style.width = p + '%'; });
     up.addEventListener('stalled', (e) => show(`<div class="banner bad">${icon('shield')}<span>${e.detail.kind === 'cors' ? 'Le stockage refuse l\'envoi (règle CORS R2).' : 'Assemblage en échec : ' + esc(e.detail.message)}</span></div>`));
     up.addEventListener('error', (e) => { keepAwakeSafe(false); toast('Envoi interrompu : ' + e.detail.message, 'error'); });
-    up.addEventListener('done', () => { keepAwakeSafe(false); toast(`V${r.file.v} en ligne : les relecteurs la voient sur le même lien 🎬`, 'success'); load(); });
+    up.addEventListener('done', () => { keepAwakeSafe(false); toast(`V${r.file.v} en ligne : les relecteurs la voient sur le même lien 🎬`, 'success'); load(); if (proxySupported()) runProxies(file, r.file.id, fid); });
     keepAwakeSafe(true);
     up.start();
   };
   inp.click();
 }
 const keepAwakeSafe = (on) => keepAwake(on);
+
+/* ---------- Qualités de visionnage : l'original est sur cet appareil, on fabrique 480p · 720p · 1080p ---------- */
+function pickForProxies(fid) {
+  const f = t.files.find(x => x.id === fid); if (!f) return;
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'video/*,.mov,.mkv,.mp4,.webm';
+  inp.onchange = () => {
+    const file = inp.files[0]; if (!file) return;
+    if (file.size !== f.size) return toast(`Ce n'est pas le même fichier : choisissez « ${f.name} » (${bytes(f.size)}), celui qui a été envoyé.`, 'error', { duration: 7000 });
+    runProxies(file, fid, fid, (f.q || []).map(x => x.h));
+  };
+  toast(`Choisissez sur cet appareil le fichier d'origine « ${f.name} »`, 'info', { duration: 4000 });
+  inp.click();
+}
+function runProxies(file, fid, zoneFid, skip = []) {
+  const zone = $('#upl-' + zoneFid, root);
+  const show = (html) => { const z = $('#upl-' + zoneFid, root) || zone; if (z) { z.classList.remove('hidden'); z.innerHTML = html; } };
+  keepAwakeSafe(true);
+  buildProxies(file, { id, key, fid, skip, onStep: (st) => show(`<div class="small">${esc(st.label)} <b>${Math.round(st.pct * 100)} %</b> · gardez cette page ouverte</div><div class="life"><i style="width:${st.pct * 100}%"></i></div>`) })
+    .then(async (r) => { keepAwakeSafe(false); try { await load(); } catch (e) { /* ignore */ } show(`<div class="small">${icon('check', 'sm')} ${r.made.length ? 'Qualités prêtes : ' + r.made.map(m => m.h + 'p').join(' · ') : 'Vidéo déjà légère : l\'original suffit'}</div>`); })
+    .catch((e) => { keepAwakeSafe(false); show(`<div class="banner warn">${icon('film')}<span>${esc(e.message)}</span></div>`); });
+}
 const relTimeLocal = (ts) => { const m = Math.round((Date.now() - ts) / 60000); return m < 1 ? 'à l\'instant' : m < 60 ? 'il y a ' + m + ' min' : m < 1440 ? 'il y a ' + Math.round(m / 60) + ' h' : new Date(ts).toLocaleDateString('fr-FR'); };
 
 function renderPerFile() {
@@ -259,7 +287,8 @@ function renderControls() {
   el.innerHTML = `
     <div class="control"><div class="control-text"><b>Lecture en ligne</b><span>${t.playback === 'only' ? 'Visionnage seul : téléchargement désactivé' : t.playback === 'on' ? 'Vidéos et audios lisibles en ligne' : 'Téléchargement uniquement'}</span></div><div class="chips">${[['off', 'Non'], ['on', 'Oui'], ['only', 'Seule']].map(([v, l]) => `<button type="button" class="chip ${(t.playback || 'off') === v ? 'active' : ''}" data-pb="${v}">${l}</button>`).join('')}</div></div>
     ${t.playback && t.playback !== 'off' ? `<div class="control"><div class="control-text"><b>Commentaires horodatés</b><span>Les spectateurs commentent un moment précis</span></div><label class="switch"><input type="checkbox" id="cCom" ${t.allowComments ? 'checked' : ''}><span class="track"></span></label></div>
-    <div class="control"><div class="control-text"><b>Lien de visionnage</b><span>Ouvre directement le lecteur</span></div><button type="button" class="btn sm" id="cWatch">${icon('copy', 'sm')}Copier</button></div>` : ''}
+    <div class="control"><div class="control-text"><b>Lien de visionnage</b><span>Ouvre directement le lecteur</span></div><button type="button" class="btn sm" id="cWatch">${icon('copy', 'sm')}Copier</button></div>
+    <div class="control"><div class="control-text"><b>Filigrane au nom du spectateur</b><span>Anti-fuite : chacun indique son nom, qui s'affiche sur l'image</span></div><label class="switch"><input type="checkbox" id="cWmV" ${t.watermarkViewer ? 'checked' : ''}><span class="track"></span></label></div>` : ''}
     <div class="control"><div class="control-text"><b>Lien actif</b><span>Désactivez pour bloquer temporairement l'accès</span></div><label class="switch"><input type="checkbox" id="cActive" ${t.disabled ? '' : 'checked'}><span class="track"></span></label></div>
     <div class="control"><div class="control-text"><b>Prolonger</b><span>Repousser l'expiration</span></div><div class="chips"><button type="button" class="chip" data-ext="${86400e3}">+1 j</button><button type="button" class="chip" data-ext="${7 * 86400e3}">+7 j</button></div></div>
     <div class="control"><div class="control-text"><b>Code PIN</b><span>${t.pinEnabled ? 'Protection activée' : 'Aucune protection'}</span></div><div class="row"><button type="button" class="btn sm" id="cPin">${icon('lock', 'sm')}${t.pinEnabled ? 'Changer' : 'Définir'}</button>${t.pinEnabled ? `<button type="button" class="btn sm ghost" id="cPinOff">Retirer</button>` : ''}</div></div>
@@ -269,6 +298,7 @@ function renderControls() {
     <div class="control"><div class="control-text"><b>Supprimer maintenant</b><span>Efface définitivement les fichiers</span></div><button type="button" class="btn sm danger" id="cDel">${icon('trash', 'sm')}Supprimer</button></div>`;
   el.querySelectorAll('[data-pb]').forEach(b => b.onclick = () => patch({ playback: b.dataset.pb }, 'Mode de lecture mis à jour'));
   const cc = $('#cCom', el); if (cc) cc.onchange = (e) => patch({ allowComments: e.target.checked }, e.target.checked ? 'Commentaires activés' : 'Commentaires désactivés');
+  const cwv = $('#cWmV', el); if (cwv) cwv.onchange = (e) => patch({ watermarkViewer: e.target.checked }, e.target.checked ? 'Filigrane au nom du spectateur activé' : 'Filigrane retiré');
   const cw = $('#cWatch', el); if (cw) cw.onclick = async () => { await navigator.clipboard.writeText(t.link.replace('/t/', '/w/')).catch(() => {}); toast('Lien de visionnage copié', 'success'); };
   $('#cActive', el).onchange = (e) => patch({ disabled: !e.target.checked }, e.target.checked ? 'Lien réactivé' : 'Lien désactivé');
   el.querySelectorAll('[data-ext]').forEach(b => b.onclick = () => patch({ extendMs: +b.dataset.ext }, 'Expiration prolongée'));

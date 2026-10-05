@@ -7,6 +7,7 @@ import { codeBox } from './p2p.js';
 import { track, afterSuccess } from './ux.js';
 import { MAX_DIRECT_BYTES, validateDirectFiles } from './direct-limits.mjs';
 import { openProfile, openHandle } from './profile.js';
+import { buildProxies, proxySupported, isVideoFile } from './proxies.js';
 
 /* Compteurs publics de la page d'accueil (vrais chiffres, affichés seulement à partir d'un certain volume) */
 let statsCache = null;
@@ -631,6 +632,7 @@ function renderSuccess() {
           <button type="button" class="btn sm ghost" id="btnMgmt" style="align-self:flex-start">${icon('link', 'sm')}Copier le lien de gestion (privé)</button>
         </div>
       </div>
+      ${pxVideos(c).length && proxySupported() ? `<div class="px-card" id="pxCard"></div>` : ''}
       <div class="row wrap">
         <a class="btn grow" href="/m/${esc(c.id)}" data-link>${icon('chart')}Suivre en temps réel</a>
         <button type="button" class="btn ghost grow" id="btnNew">${icon('plus')}Nouvel envoi</button>
@@ -640,7 +642,40 @@ function renderSuccess() {
   bindShare(rootEl, c.link, c.title, c);
   renderQR($('#qrBox', rootEl), c.link);
   $('#btnMgmt', rootEl).onclick = async () => { await copyText(c.manageLink); toast('Lien de gestion copié — gardez-le privé : il permet de gérer ce transfert', 'success'); };
+  if ($('#pxCard', rootEl)) { if (!isMobile) startProxies(c); paintPx(c); }
   $('#btnNew', rootEl).onclick = () => { active = null; clearItems(); S.opts.emails = []; S.opts.title = ''; S.opts.message = ''; S.opts.pin = ''; document.title = 'Lestha Send'; renderCompose(); };
+}
+
+/* ---------- Qualités de visionnage (480p · 720p · 1080p) fabriquées sur cet appareil après l'envoi ---------- */
+const pxVideos = (c) => ((c.uploader && c.uploader.items) || []).filter(it => isVideoFile(it.file) && it.file.size > 1e6);
+function startProxies(c) {
+  if (c.px) return;
+  const vids = pxVideos(c); if (!vids.length) return;
+  c.px = { state: 'run', label: 'Préparation…', pct: 0 };
+  keepAwake(true);
+  (async () => {
+    for (const [i, it] of vids.entries()) {
+      try {
+        const r = await buildProxies(it.file, { id: c.id, key: c.key, fid: it.meta.id, onStep: (st) => { c.px.label = (vids.length > 1 ? `${i + 1}/${vids.length} · ` : '') + st.label; c.px.pct = (i + st.pct) / vids.length; paintPx(c); } });
+        c.px.made = (c.px.made || []).concat(r.made.map(m => m.h + 'p'));
+      } catch (e) { c.px.err = e.message; }
+    }
+    c.px.state = 'done'; keepAwake(false); paintPx(c);
+  })();
+}
+function paintPx(c) {
+  const el = rootEl && $('#pxCard', rootEl); if (!el) return;
+  const px = c.px;
+  if (!px) {
+    el.innerHTML = `<div class="px-head">${icon('film')}<div><b>Qualités de visionnage</b><span>480p · 720p · 1080p : vos destinataires regardent en ligne même avec une petite connexion. L'original reste intact.</span></div></div>
+      <button type="button" class="btn primary sm" id="pxGo">${icon('bolt', 'sm')}Préparer les qualités</button>`;
+    $('#pxGo', el).onclick = () => { startProxies(c); paintPx(c); };
+    return;
+  }
+  const pct = Math.round((px.pct || 0) * 100);
+  el.innerHTML = px.state === 'done'
+    ? `<div class="px-head">${icon(px.made && px.made.length ? 'check' : 'film')}<div><b>${px.made && px.made.length ? 'Qualités prêtes : ' + esc([...new Set(px.made)].join(' · ')) : 'Vidéo déjà légère : l\'original suffit'}</b><span>${px.err ? esc(px.err) : 'Le lecteur choisit automatiquement la qualité selon la connexion de chacun.'}</span></div></div>`
+    : `<div class="px-head">${icon('film')}<div><b>Qualités de visionnage · ${pct} %</b><span>${esc(px.label)} Gardez cette page ouverte : votre lien fonctionne déjà.</span></div></div><div class="px-bar"><i style="width:${pct}%"></i></div>`;
 }
 
 export function shareGrid() {
