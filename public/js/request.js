@@ -46,6 +46,8 @@ export const createView = {
   async render(root) {
     const cfg = await getConfig();
     let cat; try { cat = await catalog(); } catch (e) { cat = null; }
+    const maxTtl = (cat && cat.limits && cat.limits.maxTtl) || cfg.maxTtl || 7 * DAY;
+    const dayStr = (ts) => { const d = new Date(ts); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
     const o = { ttl: 7 * DAY, maxBytes: 5 * GB, maxFileBytes: 0, accept: [], sector: 'autre', color: COLORS[0], fields: [], receipt: true, notifyDepositor: true };
     const apply = (tp) => {
       o.sector = tp.sector; o.accept = tp.accept.slice(); o.fields = JSON.parse(JSON.stringify(tp.fields));
@@ -83,7 +85,8 @@ export const createView = {
           <div class="field"><span>${icon('cloud', 'sm')}Taille max par dépôt</span><div class="chips" id="rMax">${[[100 * MB, '100 Mo'], [GB, '1 Go'], [5 * GB, '5 Go'], [20 * GB, '20 Go'], [100 * GB, '100 Go']].map(([v, l]) => `<button type="button" class="chip" data-v="${v}">${l}</button>`).join('')}</div></div>
         </div>
         <div class="grid-2" style="gap:12px">
-          <div class="field"><span>${icon('clock', 'sm')}Date limite</span><div class="chips" id="rTtl">${[[DAY, '1 jour'], [3 * DAY, '3 jours'], [7 * DAY, '7 jours'], [14 * DAY, '14 jours'], [30 * DAY, '30 jours']].filter(([v]) => v <= (cfg.maxTtl || 30 * DAY)).map(([v, l]) => `<button type="button" class="chip ${v === o.ttl ? 'active' : ''}" data-v="${v}">${l}</button>`).join('')}</div></div>
+          <div class="field"><span>${icon('clock', 'sm')}Date limite</span><div class="chips" id="rTtl">${[[DAY, '1 jour'], [3 * DAY, '3 jours'], [7 * DAY, '7 jours'], [14 * DAY, '14 jours'], [30 * DAY, '30 jours']].filter(([v]) => v <= maxTtl).map(([v, l]) => `<button type="button" class="chip ${v === o.ttl ? 'active' : ''}" data-v="${v}">${l}</button>`).join('')}<label class="chip sd-date" title="Choisir une date précise">${icon('clock', 'sm')}<input type="date" id="sdDeadline" min="${dayStr(Date.now() + DAY)}" max="${dayStr(Date.now() + maxTtl)}" aria-label="Date limite précise"></label></div>
+            <small class="faint" id="sdTtlHint">Jusqu'à ${Math.round(maxTtl / DAY)} jours. Les fichiers reçus restent disponibles 30 jours après chaque dépôt, puis sont supprimés automatiquement.</small></div>
           <label class="field"><span>${icon('users', 'sm')}Nombre maximal de dépôts</span><input class="input" id="sdMaxDep" inputmode="numeric" maxlength="6" placeholder="Illimité"></label>
         </div>
         <details class="sd-more"><summary>${icon('settings', 'sm')}Personnalisation, accès et notifications</summary>
@@ -104,6 +107,14 @@ export const createView = {
     const bh = $('#btnHandle', root); if (bh) bh.onclick = () => openHandle();
     const chipsSel = (sel, key) => $(sel, root).addEventListener('click', (e) => { const c = e.target.closest('[data-v]'); if (!c) return; o[key] = Number(c.dataset.v); $$(sel + ' .chip', root).forEach(x => x.classList.toggle('active', x === c)); });
     chipsSel('#rTtl', 'ttl'); chipsSel('#rMax', 'maxBytes');
+    const dl = $('#sdDeadline', root);
+    $('#rTtl', root).addEventListener('click', (e) => { if (e.target.closest('[data-v]')) { o.deadline = 0; dl.value = ''; dl.parentElement.classList.remove('active'); } });
+    dl.onchange = () => {
+      if (!dl.value) { o.deadline = 0; return; }
+      o.deadline = new Date(dl.value + 'T23:59:00').getTime();
+      $$('#rTtl .chip[data-v]', root).forEach(x => x.classList.remove('active')); dl.parentElement.classList.add('active');
+      $('#sdTtlHint', root).textContent = 'Dépôts acceptés jusqu\'au ' + new Date(o.deadline).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) + ' à 23 h 59. Fichiers conservés 30 jours après chaque dépôt.';
+    };
     const drawRules = () => {
       $('#rMax', root).querySelectorAll('.chip').forEach(c => c.classList.toggle('active', +c.dataset.v === o.maxBytes));
       if (!cat) return;
@@ -180,7 +191,7 @@ export const createView = {
       if (!o.fields.some(f => f.type === 'file' || f.type === 'files')) return toast('Ajoutez au moins un champ « Un fichier » ou « Plusieurs fichiers »', 'warn');
       if (o.fields.some(f => !String(f.label || '').trim())) return toast('Chaque champ doit avoir un libellé', 'warn');
       const body = { title: $('#rTitle', root).value.trim(), message: $('#rMsg', root).value.trim(), ownerName: $('#rName', root).value.trim(), ttl: o.ttl, maxBytes: o.maxBytes, pin: pin.value || null,
-        sector: o.sector, fields: o.fields, accept: o.accept, maxFileBytes: o.maxFileBytes, maxDeposits: +md.value || 0, color: o.color, contact: $('#sdContact', root).value.trim(),
+        deadline: o.deadline || 0, sector: o.sector, fields: o.fields, accept: o.accept, maxFileBytes: o.maxFileBytes, maxDeposits: +md.value || 0, color: o.color, contact: $('#sdContact', root).value.trim(),
         receipt: $('#sdReceipt', root).checked, notifyDepositor: $('#sdNotifyDep', root).checked };
       if (body.pin && !/^\d{6,8}$/.test(body.pin)) return toast('Le code contient 6 à 8 chiffres', 'warn');
       if (cfg.tier !== 'full' && !verifiedEmail()) {
@@ -302,7 +313,7 @@ export const depositView = (() => {
         ${fieldsHtml(info.fields, info, answers, files, false)}
         <div class="file-summary"><span>${n} fichier(s) · max ${bytes(info.maxBytes, 0)} par dépôt</span><b style="${t > info.maxBytes ? 'color:var(--rose)' : ''}">${bytes(t)}</b></div>
         <button type="button" class="btn primary xl block sd-go" id="dGo">${icon('upload')}Envoyer mon dépôt${n ? ' · ' + bytes(t) : ''}</button>
-        <p class="small faint center">${icon('lock', 'sm')} Aucun compte nécessaire. ${info.receipt ? 'Un numéro d\'accusé de réception vous sera remis.' : ''}</p>
+        <p class="small faint center">${icon('lock', 'sm')} Aucun compte nécessaire. ${info.receipt ? 'Un numéro d\'accusé de réception vous sera remis.' : ''}<br>Vos réponses et fichiers sont transmis uniquement à ${esc(info.ownerName || 'l\'organisateur')} et supprimés automatiquement au plus tard 30 jours après votre dépôt.</p>
       </div>
     </section>`;
     root.querySelectorAll('[data-a]').forEach(el => el.addEventListener('input', () => { answers[el.dataset.a] = el.value; save(); }));
@@ -487,7 +498,7 @@ export const manageView = (() => {
           <div class="stack" style="gap:10px" id="dList"></div></div>
         <div class="card"><div class="card-title"><h3>${icon('settings')}Contrôles</h3></div><div class="controls">
           <div class="control"><div class="control-text"><b>Dépôts ouverts</b><span>Fermez pour ne plus rien recevoir</span></div><label class="switch"><input type="checkbox" id="cOpen" ${q.closed ? '' : 'checked'}><span class="track"></span></label></div>
-          ${q.permanent ? '' : `<div class="control"><div class="control-text"><b>Prolonger</b><span>Repousser la date limite</span></div><div class="chips"><button type="button" class="chip" data-ext="${DAY}">+1 j</button><button type="button" class="chip" data-ext="${7 * DAY}">+7 j</button></div></div>`}
+          ${q.permanent ? '' : `<div class="control"><div class="control-text"><b>Date limite</b><span>Actuellement le ${new Date(q.expiresAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })} · jusqu'à 30 jours à partir d'aujourd'hui</span></div><div class="chips"><button type="button" class="chip" data-ext="${7 * DAY}">+7 j</button><label class="chip sd-date" title="Choisir une date">${icon('clock', 'sm')}<input type="date" id="cDeadline" aria-label="Nouvelle date limite"></label></div></div>`}
           <div class="control"><div class="control-text"><b>Code pour déposer</b><span>${q.pinEnabled ? 'Espace privé' : 'Espace public'}</span></div><div class="row"><button type="button" class="btn sm" id="cPin">${icon('lock', 'sm')}${q.pinEnabled ? 'Changer' : 'Définir'}</button>${q.pinEnabled ? '<button type="button" class="btn sm ghost" id="cPinOff">Retirer</button>' : ''}</div></div>
           <div class="control"><div class="control-text"><b>Taille max par dépôt</b><span>${bytes(q.maxBytes, 0)}</span></div><div class="chips">${[[GB, '1 Go'], [5 * GB, '5 Go'], [20 * GB, '20 Go']].map(([v, l]) => `<button type="button" class="chip ${q.maxBytes === v ? 'active' : ''}" data-max="${v}">${l}</button>`).join('')}</div></div>
           ${q.smart ? `<div class="control"><div class="control-text"><b>Accusé par e-mail</b><span>Envoyé au déposant après son dépôt</span></div><label class="switch"><input type="checkbox" id="cRcpt" ${q.receipt ? 'checked' : ''}><span class="track"></span></label></div>
@@ -548,6 +559,8 @@ export const manageView = (() => {
       if (pin) patch({ pin }, 'Code enregistré');
     };
     const off = $('#cPinOff', root); if (off) off.onclick = () => patch({ pin: null }, 'Code retiré');
+    const cd = $('#cDeadline', root);
+    if (cd) { const z = (t) => { const d = new Date(t); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }; cd.min = z(Date.now() + DAY); cd.max = z(Date.now() + 30 * DAY); cd.onchange = () => { if (cd.value) patch({ expiresAt: new Date(cd.value + 'T23:59:00').getTime() }, 'Date limite : ' + new Date(cd.value + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })); }; }
     const rc = $('#cRcpt', root); if (rc) rc.onchange = (e) => patch({ receipt: e.target.checked }, e.target.checked ? 'Accusés de réception activés' : 'Accusés de réception désactivés');
     const nd = $('#cNDep', root); if (nd) nd.onchange = (e) => patch({ notifyDepositor: e.target.checked }, e.target.checked ? 'Les déposants seront prévenus' : 'Les déposants ne seront plus prévenus');
     $('#cDel', root).onclick = async () => {

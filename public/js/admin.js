@@ -160,9 +160,18 @@ A.ins = { days: 30, fbFilter: 'new' };
 /* Smart Drop : espaces créés par secteur et dépôts reçus (compteurs du serveur) */
 const SECTOR_L = { rh: 'RH / Recrutement', education: 'Éducation / Formation', entreprise: 'Entreprise / PME', administration: 'Administration', ong: 'ONG / Association', evenement: 'Événementiel', audiovisuel: 'Audiovisuel / Photo', communication: 'Communication / Marketing', btp: 'Architecture / BTP', commerce: 'Commerce', finance: 'Comptabilité / Finance', juridique: 'Juridique / Conseil', recherche: 'Recherche / Université', projet: 'Projets / Prestations', autre: 'Autre' };
 function dropCard(R) {
-  const S = R.totals.srv || {};
+  const S = R.totals.srv || {}, N = R.dropNow;
+  const ST = { open: ['ok', 'Ouvert'], closed: ['bad', 'Fermé'], expired: ['', 'Terminé'], full: ['warn', 'Complet'] };
+  const now = N ? `<div class="kpis" style="margin-bottom:12px">
+      <div class="kpi" style="--kc:#06d6a0"><div class="kpi-top">Espaces de dépôt<span class="kpi-icon">${icon('inbox')}</span></div><div class="kpi-value">${num(N.spaces)}</div><div class="kpi-foot">${num(N.open || 0)} ouvert(s) · ${num(N.expired || 0)} terminé(s) · ${num(N.closed || 0)} fermé(s)${N.full ? ' · ' + num(N.full) + ' complet(s)' : ''} · ${num(N.handles)} lien(s) @</div></div>
+      <div class="kpi" style="--kc:#00b4d8"><div class="kpi-top">Dépôts reçus<span class="kpi-icon">${icon('upload')}</span></div><div class="kpi-value">${num(N.deposits)}</div><div class="kpi-foot">${num(N.files)} fichier(s)${N.uploading ? ' · ' + num(N.uploading) + ' en cours d\'envoi' : ''}</div></div>
+      <div class="kpi" style="--kc:#fbbf24"><div class="kpi-top">Volume stocké<span class="kpi-icon">${icon('cloud')}</span></div><div class="kpi-value">${bytes(N.bytes)}</div><div class="kpi-foot">dans le Cloud (R2), supprimé 30 jours après chaque dépôt</div></div>
+      <div class="kpi" style="--kc:#8b7bff"><div class="kpi-top">Traitement<span class="kpi-icon">${icon('check')}</span></div><div class="kpi-value">${num((N.reviews || {}).validated || 0)}</div><div class="kpi-foot">validé(s) · ${num((N.reviews || {}).received || 0)} à traiter · ${num((N.reviews || {}).incomplete || 0)} à compléter</div></div>
+    </div>
+    ${N.recent.length ? `<p class="small" style="font-weight:700;margin:0 0 6px">Derniers espaces créés</p><div class="stack" style="gap:6px;margin-bottom:12px">${N.recent.map(x => `<div class="row" style="justify-content:space-between;gap:10px"><span class="small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${esc(x.title)}</b> <span class="faint">· ${esc(SECTOR_L[x.sector] || x.sector)} · ${relTime(x.createdAt)}</span></span><span class="row" style="gap:6px;flex:none"><span class="small muted">${num(x.deposits)} dépôt(s)</span><span class="pill ${(ST[x.state] || ['', x.state])[0]}">${(ST[x.state] || ['', x.state])[1]}</span></span></div>`).join('')}</div>` : ''}` : '';
   const bySector = Object.fromEntries(Object.keys(SECTOR_L).map(k => [SECTOR_L[k], S['drop_' + k] || 0]).filter(([, v]) => v));
   return `<div class="card" style="margin-bottom:18px"><div class="card-title"><h3>${icon('inbox')}Smart Drop</h3><span class="small faint">espaces de dépôt</span></div>
+    ${now}
     <div class="grid-2 adm-grid">
       <div class="controls">
         <div class="control"><div class="control-text"><b>${num(S.drop_created || 0)} espace(s) créé(s)</b><span>sur la période choisie</span></div></div>

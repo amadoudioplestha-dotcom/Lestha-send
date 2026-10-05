@@ -256,3 +256,9 @@ Pour savoir d'où viennent vos visiteurs, ajoutez `?src=` à vos liens publics :
 - Les anciennes demandes et les liens @nom continuent de fonctionner.
 - Console admin → Retours & usage : carte « Smart Drop » (espaces par secteur, dépôts).
 - Rien à configurer. Le rapport complet est dans `RAPPORT-v3.12.md`.
+
+## 22. Version 3.12.1 : Smart Drop jusqu'à 30 jours, statistiques en direct
+
+- Espaces Smart Drop : date limite **jusqu'à 30 jours** pour les comptes (adresse e-mail confirmée), même si un envoi classique reste à 7 jours. Choix d'une **date précise** à la création et dans la gestion (avancer ou repousser, toujours dans les 30 jours). Variable facultative `DROP_MAX_DAYS` (30 par défaut, plafonnée par `MAX_TTL_DAYS`).
+- Les fichiers reçus restent disponibles 30 jours après chaque dépôt, puis sont supprimés automatiquement ; le déposant en est informé sur le formulaire.
+- Console admin → Retours & usage → « Smart Drop » : espaces en ce moment (ouverts, terminés, fermés, complets, liens @), dépôts reçus, fichiers, volume stocké, avancement du traitement, derniers espaces créés.
