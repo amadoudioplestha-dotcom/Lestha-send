@@ -28,3 +28,20 @@ test('Smart Drop : modèles, champs nettoyés, contrôle des dépôts, numéros'
   const legacy = SD.checkDeposit({}, { name: 'Moussa', message: 'salut', files: [{ name: 'a.txt', size: 3 }] });
   assert.equal(legacy.name, 'Moussa'); assert.equal(legacy.answers.message, 'salut');
 });
+
+test('Smart Drop : chemins de fichiers sûrs (ZIP) et types vérifiés aussi sur le chemin', () => {
+  const { safePath } = require('../lib/util');
+  assert.equal(safePath('....//....//....//evil.exe'), '..../..../..../evil.exe');
+  assert.equal(safePath('../../a/b.txt'), 'a/b.txt');
+  assert.equal(safePath('a\\..\\..\\x.pdf'), 'a/x.pdf');
+  assert.equal(safePath('/etc/passwd'), 'etc/passwd');
+  assert.ok(!safePath('../../../x').split('/').includes('..'));
+  const t = SD.catalog().templates.find(x => x.id === 'devoir');
+  const q = { fields: SD.cleanFields(t.fields), accept: ['pdf'] };
+  const one = (files) => SD.checkDeposit(q, { answers: { etudiant: 'Awa' }, files });
+  assert.equal(one([{ name: 'cv.pdf', path: 'x/../../cv.exe', size: 10 }]).status, 415, '.exe caché dans le chemin refusé');
+  assert.equal(one([{ name: 'cv.pdf', path: '../../../cv.pdf', size: 10 }]).files[0].path, 'cv.pdf', 'chemin nettoyé');
+  assert.ok(one([null, { name: 'a.pdf', size: 3 }]).files, 'entrée vide ignorée sans erreur');
+  assert.equal(one([{ name: 'devoir.pdf', path: 'evil.exe/', size: 10 }]).status, 415, 'barre finale : .exe refusé');
+  assert.equal(safePath('C:\\x\\y.pdf'), 'C-/x/y.pdf', 'pas de « : » dans un chemin de ZIP');
+});

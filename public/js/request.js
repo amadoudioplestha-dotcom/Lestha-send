@@ -87,7 +87,7 @@ export const createView = {
         <div class="grid-2" style="gap:12px">
           <div class="field"><span>${icon('clock', 'sm')}Date limite</span><div class="chips" id="rTtl">${[[DAY, '1 jour'], [3 * DAY, '3 jours'], [7 * DAY, '7 jours'], [14 * DAY, '14 jours'], [30 * DAY, '30 jours']].filter(([v]) => v <= maxTtl).map(([v, l]) => `<button type="button" class="chip ${v === o.ttl ? 'active' : ''}" data-v="${v}">${l}</button>`).join('')}<label class="chip sd-date" title="Choisir une date précise">${icon('clock', 'sm')}<input type="date" id="sdDeadline" min="${dayStr(Date.now() + DAY)}" max="${dayStr(Date.now() + maxTtl)}" aria-label="Date limite précise"></label></div>
             <small class="faint" id="sdTtlHint">Jusqu'à ${Math.round(maxTtl / DAY)} jours. Les fichiers reçus restent disponibles 30 jours après chaque dépôt, puis sont supprimés automatiquement.</small></div>
-          <label class="field"><span>${icon('users', 'sm')}Nombre maximal de dépôts</span><input class="input" id="sdMaxDep" inputmode="numeric" maxlength="6" placeholder="Illimité"></label>
+          <label class="field"><span>${icon('users', 'sm')}Nombre maximal de dépôts</span><input class="input" id="sdMaxDep" inputmode="numeric" maxlength="4" placeholder="Illimité (2000 au plus)"></label>
         </div>
         <details class="sd-more"><summary>${icon('settings', 'sm')}Personnalisation, accès et notifications</summary>
           <div class="stack" style="margin-top:12px">
@@ -183,7 +183,7 @@ export const createView = {
     $('#sdPreview', root).onclick = () => modal({ title: 'Aperçu pour le déposant', wide: true, body: `<div class="sd-preview" style="--accent:${o.color}"><h3>${esc($('#rTitle', root).value || 'Déposez vos fichiers')}</h3>${$('#rMsg', root).value.trim() ? `<div class="message-bubble">${esc($('#rMsg', root).value.trim())}</div>` : ''}${fieldsHtml(o.fields, { acceptLabel: acceptText(o.accept), maxFileBytes: o.maxFileBytes }, {}, {}, true)}</div>`, actions: [{ label: 'Fermer', cls: 'primary' }] });
     drawFields(); drawRules();
     const pin = $('#rPin', root); pin.oninput = () => { pin.value = pin.value.replace(/\D/g, '').slice(0, 8); };
-    const md = $('#sdMaxDep', root); md.oninput = () => { md.value = md.value.replace(/\D/g, '').slice(0, 6); };
+    const md = $('#sdMaxDep', root); md.oninput = () => { md.value = md.value.replace(/\D/g, '').slice(0, 4); if (+md.value > 2000) md.value = '2000'; };
     const nt = $('#rNotify', root); if (nt) nt.onchange = () => $('#rMailF', root).classList.toggle('hidden', !nt.checked);
     function acceptText(acc) { return acc.length && cat ? acc.map(k => cat.accept[k].label).join(', ') : 'Tous les types'; }
     $('#rf', root).onsubmit = async (e) => {
@@ -405,14 +405,33 @@ export const depositView = (() => {
     up.addEventListener('state', () => { const b = root && $('#ban', root); if (b) b.innerHTML = up && up.state === 'offline' ? `<div class="banner warn">${icon('wifi-off')}<span>Connexion perdue : reprise automatique au retour du réseau.</span></div>` : ''; });
     up.addEventListener('stalled', (e) => { const b = root && $('#ban', root); if (!b) return; const msg = e.detail.kind === 'cors' ? 'L\'envoi n\'arrive pas à démarrer : le stockage refuse la connexion depuis ce site. Prévenez l\'organisateur. La page continue d\'essayer.' : 'Fichiers envoyés, mais l\'assemblage échoue (« ' + e.detail.message + ' »). La page réessaie automatiquement.'; b.innerHTML = `<div class="banner bad">${icon('shield')}<span>${esc(msg)}</span></div>`; });
     up.addEventListener('error', (e) => { keepAwake(false); toast('Dépôt interrompu : ' + e.detail.message, 'error'); });
-    up.addEventListener('done', async () => {
-      for (let i = 0; i < 5; i++) { try { await api(`/api/transfers/${r.transferId}/finalize`, { method: 'POST', key: r.uploadKey, body: {} }); break; } catch (e) { await new Promise(res => setTimeout(res, 1500)); } }
-      keepAwake(false); up = null;
+    /* Validation finale : l'accusé n'est affiché que si le serveur a bien enregistré le dépôt */
+    const finalize = async () => {
+      for (const wait of [0, 1500, 3000, 5000, 8000, 12000]) {
+        if (wait) await new Promise(res => setTimeout(res, wait));
+        try { await api(`/api/transfers/${r.transferId}/finalize`, { method: 'POST', key: r.uploadKey, body: {} }); return true; } catch (e) { if (e.status === 404 || e.status === 403) return false; }
+      }
+      return false;
+    };
+    const notSaved = () => {
+      if (!root) return toast('Le dépôt n\'a pas pu être validé. Rouvrez la page pour réessayer.', 'error', { duration: 8000 });
+      const box = $('#st', root); if (box) box.textContent = 'Fichiers envoyés, validation en attente';
+      const b = $('#ban', root); if (!b) return;
+      b.innerHTML = `<div class="banner warn">${icon('wifi-off')}<span>Vos fichiers sont arrivés, mais la validation du dépôt n'a pas abouti (réseau ou serveur). <b>Aucun accusé n'a encore été délivré.</b></span><button type="button" class="btn sm" id="dRetry">Réessayer</button></div>`;
+      $('#dRetry', root).onclick = async (ev) => { ev.target.disabled = true; ev.target.textContent = 'Validation…'; if (await finalize()) ok(); else { ev.target.disabled = false; ev.target.textContent = 'Réessayer'; toast('Toujours impossible. Vérifiez votre connexion puis réessayez.', 'warn'); } };
+    };
+    const ok = () => {
       try { ls.del('tx_dep_answers_' + id); } catch (e) { /* ignore */ }
       if (!root) return toast('Dépôt terminé ✅ · n° ' + r.receipt.no, 'success');
       receipt(r.receipt, list, sum);
       track('sent', { m: 'request', b: sum }); afterSuccess('request');
       confetti(50);
+    };
+    up.addEventListener('done', async () => {
+      const done = await finalize();
+      keepAwake(false); up = null;
+      if (!done) return notSaved();
+      return ok();
     });
     up.start();
   }
@@ -499,7 +518,7 @@ export const manageView = (() => {
           <div class="stack" style="gap:10px" id="dList"></div></div>
         <div class="card"><div class="card-title"><h3>${icon('settings')}Contrôles</h3></div><div class="controls">
           <div class="control"><div class="control-text"><b>Dépôts ouverts</b><span>Fermez pour ne plus rien recevoir</span></div><label class="switch"><input type="checkbox" id="cOpen" ${q.closed ? '' : 'checked'}><span class="track"></span></label></div>
-          ${q.permanent ? '' : `<div class="control"><div class="control-text"><b>Date limite</b><span>Actuellement le ${new Date(q.expiresAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })} · jusqu'à 30 jours à partir d'aujourd'hui</span></div><div class="chips"><button type="button" class="chip" data-ext="${7 * DAY}">+7 j</button><label class="chip sd-date" title="Choisir une date">${icon('clock', 'sm')}<input type="date" id="cDeadline" aria-label="Nouvelle date limite"></label></div></div>`}
+          ${q.permanent ? '' : `<div class="control"><div class="control-text"><b>Date limite</b><span>Actuellement le ${new Date(q.expiresAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })} · jusqu'à ${q.deadlineMaxDays || 30} jours à partir d'aujourd'hui</span></div><div class="chips"><button type="button" class="chip" data-ext="${7 * DAY}">+7 j</button><label class="chip sd-date" title="Choisir une date">${icon('clock', 'sm')}<input type="date" id="cDeadline" aria-label="Nouvelle date limite"></label></div></div>`}
           <div class="control"><div class="control-text"><b>Code pour déposer</b><span>${q.pinEnabled ? 'Espace privé' : 'Espace public'}</span></div><div class="row"><button type="button" class="btn sm" id="cPin">${icon('lock', 'sm')}${q.pinEnabled ? 'Changer' : 'Définir'}</button>${q.pinEnabled ? '<button type="button" class="btn sm ghost" id="cPinOff">Retirer</button>' : ''}</div></div>
           <div class="control"><div class="control-text"><b>Taille max par dépôt</b><span>${bytes(q.maxBytes, 0)}</span></div><div class="chips">${[[GB, '1 Go'], [5 * GB, '5 Go'], [20 * GB, '20 Go']].map(([v, l]) => `<button type="button" class="chip ${q.maxBytes === v ? 'active' : ''}" data-max="${v}">${l}</button>`).join('')}</div></div>
           ${q.smart ? `<div class="control"><div class="control-text"><b>Accusé par e-mail</b><span>Envoyé au déposant après son dépôt</span></div><label class="switch"><input type="checkbox" id="cRcpt" ${q.receipt ? 'checked' : ''}><span class="track"></span></label></div>
@@ -562,7 +581,7 @@ export const manageView = (() => {
     };
     const off = $('#cPinOff', root); if (off) off.onclick = () => patch({ pin: null }, 'Code retiré');
     const cd = $('#cDeadline', root);
-    if (cd) { const z = (t) => { const d = new Date(t); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }; cd.min = z(Date.now() + DAY); cd.max = z(Date.now() + 30 * DAY); cd.onchange = () => { if (cd.value) patch({ expiresAt: new Date(cd.value + 'T23:59:00').getTime() }, 'Date limite : ' + new Date(cd.value + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })); }; }
+    if (cd) { const z = (t) => { const d = new Date(t); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }; cd.min = z(Date.now() + DAY); cd.max = z(Date.now() + (q.deadlineMaxDays || 30) * DAY); cd.onchange = () => { if (cd.value) patch({ expiresAt: new Date(cd.value + 'T23:59:00').getTime() }, 'Date limite : ' + new Date(cd.value + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })); }; }
     const rc = $('#cRcpt', root); if (rc) rc.onchange = (e) => patch({ receipt: e.target.checked }, e.target.checked ? 'Accusés de réception activés' : 'Accusés de réception désactivés');
     const nd = $('#cNDep', root); if (nd) nd.onchange = (e) => patch({ notifyDepositor: e.target.checked }, e.target.checked ? 'Les déposants seront prévenus' : 'Les déposants ne seront plus prévenus');
     $('#cDel', root).onclick = async () => {

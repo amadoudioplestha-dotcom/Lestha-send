@@ -101,6 +101,15 @@ async function main() {
   const server = http.createServer(app);
   const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 1e6, pingInterval: 20000, pingTimeout: 30000 });
   io.use(origin.socket);
+  /* Un message malformé (ex. null) ne doit jamais arrêter le serveur : chaque gestionnaire est protégé */
+  io.on('connection', (socket) => {
+    const on = socket.on.bind(socket);
+    socket.on = (ev, fn) => on(ev, (...args) => {
+      for (let i = 0; i < args.length; i++) if (args[i] === null) args[i] = undefined;   // null → valeurs par défaut
+      try { const r = fn.apply(socket, args); if (r && typeof r.catch === 'function') r.catch(e => console.warn('⚠️ Message ignoré (' + String(ev).slice(0, 30) + ') :', e && e.message)); }
+      catch (e) { console.warn('⚠️ Message ignoré (' + String(ev).slice(0, 30) + ') :', e && e.message); }
+    });
+  });
   app.use(origin.http);
 
   // En-têtes de sécurité légers
@@ -228,6 +237,7 @@ async function main() {
   });
 
   const shutdown = async () => { try { await db.flushAll(); if (ctx.stats) await ctx.stats.flush(); if (ctx.insights) await ctx.insights.flush(); } catch (e) { /* ignore */ } process.exit(0); };
+  process.on('unhandledRejection', (e) => console.warn('⚠️ Erreur asynchrone ignorée :', e && e.message));
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 }

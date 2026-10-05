@@ -457,6 +457,12 @@ async function renderLobby(id) {
   const socket = await getSocket();
   const peek = await emitAck(socket, 'meet-peek', { id });
   if (!root) return;
+  if (peek.error && !peek.gone) {
+    // Réseau ou serveur injoignable : la réunion existe peut-être encore, on ne l'oublie pas
+    root.innerHTML = `<section class="narrow"><div class="card"><div class="state-screen"><div class="state-icon warn">${icon('wifi-off')}</div><h2>Connexion impossible</h2><p class="muted">${esc(peek.error)}</p><button type="button" class="btn primary" id="lbRetry">${icon('refresh')}Réessayer</button></div></div></section>`;
+    $('#lbRetry', root).onclick = () => renderLobby(id);
+    return;
+  }
   if (peek.error) {
     forgetMine(id);
     root.innerHTML = `<section class="narrow"><div class="card"><div class="state-screen"><div class="state-icon bad">${icon('x')}</div><h2>Réunion introuvable</h2><p class="muted">${esc(peek.error)}</p><a class="btn primary" href="/reunion" data-link>${icon('call')}Créer une réunion</a></div></div></section>`;
