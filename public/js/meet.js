@@ -258,10 +258,27 @@ class Sfu {
       throw e;
     }
   }
+  /* Caméra ou écran coupé : Cloudflare supprime une piste qui ne reçoit plus rien pendant 30 s, et elle reste
+     ensuite noire chez tout le monde. On envoie donc une image minuscule (1 image/s) à la place, jusqu'au retour. */
   setTrack(kind, trackObj) {
-    if (this.local[kind]) safeReplace(this.local[kind].sender, trackObj);
-    else if (trackObj && this.ready) this.run(() => this.push(kind, trackObj)).catch(e => this.onErr(e, 'push'));
+    if (this.local[kind]) safeReplace(this.local[kind].sender, trackObj || (kind === 'a' ? null : keepAliveTrack()));
+    else if (trackObj && this.ready) this.run(() => this.push(kind, trackObj)).catch(e => { this.onErr(e, 'push'); this.pushLater(kind, 0); });
     this.tune();
+  }
+  /** Publication refusée (réseau lent, serveur occupé) : nouvel essai, sinon la caméra resterait invisible pour les autres */
+  pushLater(kind, n) {
+    if (n >= 4) return;
+    setTimeout(() => {
+      const t = this.h.local(kind);
+      if (!t || this.local[kind] || this.closed || !this.ready) return;
+      this.run(() => this.push(kind, t)).catch(e => { this.onErr(e, 'push'); this.pushLater(kind, n + 1); });
+    }, 1500 * 2 ** n);
+  }
+  /** Quelqu'un ne reçoit toujours pas notre image : on republie tout sur une session neuve (45 s au moins entre deux) */
+  republish() {
+    if (!this.ready || this.recovering || Date.now() - (this.lastRepublish || 0) < 45e3) return;
+    this.lastRepublish = Date.now(); this.attempts = 0;
+    this.recover('republish');
   }
   /** Avec le serveur de réunion, on n'envoie qu'une fois : pleine qualité */
   tune() { Object.entries(this.local).forEach(([k, t]) => tuneSender(t.sender, k, 1)); }
@@ -360,6 +377,18 @@ class Sfu {
    ====================================================================== */
 let actx = null;
 function audioCtx() { if (!actx) { const C = window.AudioContext || window.webkitAudioContext; actx = C ? new C() : null; } if (actx && actx.state === 'suspended') actx.resume().catch(() => {}); return actx; }
+/* Image d'attente minuscule (64×36, 1 image/s) : garde vivante la piste vidéo chez Cloudflare quand la caméra est coupée */
+let kaTrack = null;
+function keepAliveTrack() {
+  if (kaTrack && kaTrack.readyState === 'live') return kaTrack;
+  try {
+    const c = document.createElement('canvas'); c.width = 64; c.height = 36; const x = c.getContext('2d');
+    let f = 0; const paint = () => { x.fillStyle = '#0b1016'; x.fillRect(0, 0, 64, 36); x.fillStyle = (f++ % 2) ? '#0c1117' : '#0b1016'; x.fillRect(0, 0, 1, 1); };
+    paint(); kaTrack = c.captureStream(1).getVideoTracks()[0];
+    const t = setInterval(() => { if (!kaTrack || kaTrack.readyState !== 'live') return clearInterval(t); paint(); }, 1000);
+    return kaTrack;
+  } catch (e) { return null; }
+}
 function silentTrack() { const a = audioCtx(); if (!a) return null; const d = a.createMediaStreamDestination(); const o = a.createOscillator(); const g = a.createGain(); g.gain.value = 0; o.connect(g).connect(d); o.start(); const t = d.stream.getAudioTracks()[0]; t.enabled = false; return t; }
 function meter(trackObj) {
   const a = audioCtx(); if (!a || !trackObj) return null;
@@ -567,7 +596,11 @@ function bindSocket(socket) {
     if (raised) toast('✋ ' + cur.name + ' lève la main', 'info', { duration: 3500 });
     drawPeople();
   });
-  socket.on('meet-signal', ({ from, data }) => { if (mine() && S.engine instanceof Mesh) S.engine.onSignal(from, data).catch(e => console.warn('signal', e)); });
+  socket.on('meet-signal', ({ from, data }) => {
+    if (!mine()) return;
+    if (S.engine instanceof Mesh) S.engine.onSignal(from, data).catch(e => console.warn('signal', e));
+    else if (S.engine instanceof Sfu && data && data.republish) S.engine.republish();
+  });
   socket.on('meet-force', (f = {}) => {
     const { action, by } = f;
     if (!mine()) return;
@@ -1181,6 +1214,8 @@ async function quality() {
     p.blk = black ? (p.blk || 0) + 1 : 0;
     if (t) t.classList.toggle('v-wait', p.blk >= 2);
     if ((p.blk === 2 || p.blk === 5 || p.blk === 9) && !(p.camWatchUntil > Date.now())) { S.engine.repull(p.pid, 'c'); diag('video-black', S.engine instanceof Sfu ? 'sfu' : 'mesh'); }
+    // Toujours noir après deux nouvelles demandes : la piste est perdue chez Cloudflare, on demande à la personne de republier
+    if ((p.blk === 7 || p.blk === 20) && S.engine instanceof Sfu && S.socket) { S.socket.emit('meet-signal', { to: p.pid, data: { republish: 1 } }); diag('video-republish', 'sfu'); }
   });
   refreshNet();
 }
