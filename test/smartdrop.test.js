@@ -45,3 +45,15 @@ test('Smart Drop : chemins de fichiers sûrs (ZIP) et types vérifiés aussi sur
   assert.equal(one([{ name: 'devoir.pdf', path: 'evil.exe/', size: 10 }]).status, 415, 'barre finale : .exe refusé');
   assert.equal(safePath('C:\\x\\y.pdf'), 'C-/x/y.pdf', 'pas de « : » dans un chemin de ZIP');
 });
+
+test('Smart Drop : nom du déposant jamais écrit deux fois', () => {
+  const F = { id: 'f', type: 'files', label: 'Fichiers', required: true };
+  const t = (id, label) => ({ id, type: 'text', label });
+  const name = (fields, answers) => SD.checkDeposit({ fields }, { answers, files: [{ name: 'a.pdf', size: 1, field: 'f' }] });
+  assert.equal(name([t('nom', 'Nom'), t('prenom', 'Prénom'), F], { nom: 'Diop', prenom: 'Awa' }).name, 'Awa Diop');
+  assert.equal(name([t('nom', 'Nom et prénom'), F], { nom: 'Awa Diop' }).name, 'Awa Diop', 'un seul champ « Nom et prénom »');
+  assert.equal(name([t('text1', 'Nom'), t('text2', 'Prénom'), F], { text1: 'Diop', text2: 'Awa' }).name, 'Awa Diop', 'champs ajoutés à la main');
+  assert.equal(name([t('nom', 'Nom'), t('prenom', 'Prénom'), F], { nom: 'Awa Diop', prenom: 'Awa' }).name, 'Awa Diop', 'nom complet tapé dans « Nom »');
+  assert.equal(name([t('projet', 'Nom du projet'), t('nom', 'Nom ou société'), F], { projet: 'X', nom: 'Studio Y' }).name, 'Studio Y');
+  assert.deepEqual(name([t('nom', 'Nom'), t('prenom', 'Prénom'), t('classe', 'Classe'), F], { nom: 'Diop', prenom: 'Awa', classe: 'L2' }).nameFields, ['prenom', 'nom']);
+});

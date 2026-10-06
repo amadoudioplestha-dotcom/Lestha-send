@@ -31,6 +31,11 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## 3.16.1 — Smart Drop
+- Le nom du déposant n'apparaît plus deux fois dans la liste des dépôts (il est en titre, il n'est plus répété dans les réponses). Détection du nom plus fiable : « Nom et prénom », champs ajoutés à la main, nom complet tapé dans « Nom ».
+- Changement de statut (Validé, À compléter…) : le message « le déposant est prévenu » n'apparaît que si l'e-mail est réellement parti ; sinon l'application dit que le déposant n'a pas laissé d'e-mail.
+- Modèle « Rendu de devoir » : champ e-mail facultatif ajouté, pour que l'élève soit prévenu de la correction.
+
 ## Nouveautés 3.16 — Replay du cours
 - **Enregistrer → « Replay du cours »** : au lieu de filmer l'écran, l'application note ce qui se passe. La voix (MP3 léger), chaque page présentée (une seule image par page), les annotations, le pointeur laser, qui parle et la discussion, avec leur moment exact.
 - À la fin, **un seul fichier .html** (environ 15 Mo par heure de cours) qui se lit **sans connexion**, sur téléphone comme sur ordinateur. Pages et annotations sont rejouées en même temps que la voix, nettes à toutes les tailles.

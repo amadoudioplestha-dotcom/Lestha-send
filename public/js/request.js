@@ -545,7 +545,10 @@ export const manageView = (() => {
     if (!list.length) { box.innerHTML = `<p class="small faint center" style="padding:18px">Aucun dépôt ne correspond.</p>`; return; }
     box.innerHTML = list.map(d => {
       const rv = REV[d.review || 'received'] || REV.received, live = d.status === 'ready' && d.state !== 'deleted' && d.state !== 'expired';
-      const ans = fields.map(f => [f.label, (d.answers || {})[f.id]]).filter(([, v]) => v && (!Array.isArray(v) || v.length));
+      // Le nom du déposant est déjà en titre : on ne le répète pas dans les réponses
+      const words = String(d.name || '').toLowerCase().split(/\s+/);
+      const isName = (f, v) => (Array.isArray(d.nameFields) ? d.nameFields.includes(f.id) : /nom|name|pr[ée]nom/i.test(f.label + ' ' + f.id) && String(v).toLowerCase().split(/\s+/).every(w => words.includes(w)));
+      const ans = fields.map(f => [f.label, (d.answers || {})[f.id], f]).filter(([, v, f]) => v && (!Array.isArray(v) || v.length) && !(f.type === 'text' && isName(f, v)));
       return `<div class="receiver-item sd-dep" data-id="${esc(d.id)}">
       <div class="receiver-top"><span class="row"><span class="avatar" style="width:38px;height:38px;border-radius:12px;font-size:15px">${esc((d.name || '?').charAt(0).toUpperCase())}</span><span><b>${esc(d.name)}</b>${d.no ? ` <span class="sd-dno">${esc(d.no)}</span>` : ''}<br><span class="tiny faint">${relTime(d.at)} · ${(d.files && d.files.length) || 0} fichier(s) · ${bytes(d.size)}</span></span></span>
       ${d.status !== 'ready' ? '<span class="pill warn">Envoi en cours…</span>' : d.state === 'deleted' ? '<span class="pill">Supprimé</span>' : d.state === 'expired' ? '<span class="pill">Expiré</span>' : `<select class="input sd-rev ${rv[0]}" data-rev aria-label="Statut">${Object.entries(REV).map(([k, [, l]]) => `<option value="${k}" ${k === (d.review || 'received') ? 'selected' : ''}>${l}</option>`).join('')}</select>`}</div>
@@ -560,7 +563,7 @@ export const manageView = (() => {
       try {
         const r = await api(`/api/requests/${id}/deposits/${did}`, { method: 'PATCH', key, body });
         Object.assign(d, r);
-        if (body.review) { e.target.className = 'input sd-rev ' + REV[r.review][0]; toast(`${d.no || d.name} : ${REV[r.review][1]}${q.notifyDepositor && d.email && ['incomplete', 'validated', 'refused', 'review'].includes(r.review) ? ' · le déposant est prévenu' : ''}`, 'success'); clearTimeout(reloadT); reloadT = setTimeout(load, 900); }
+        if (body.review) { e.target.className = 'input sd-rev ' + REV[r.review][0]; toast(`${d.no || d.name} : ${REV[r.review][1]}${r.notified ? ' · le déposant est prévenu par e-mail' : q.notifyDepositor && !d.email && r.review !== 'received' ? ' · pas d\'e-mail laissé : le déposant n\'est pas prévenu' : ''}`, 'success'); clearTimeout(reloadT); reloadT = setTimeout(load, 900); }
         else toast('Note enregistrée', 'success', { duration: 1500 });
       } catch (err) { toast(err.message, 'error'); }
     };
