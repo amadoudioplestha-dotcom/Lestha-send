@@ -1,5 +1,5 @@
 /* Encodage MP3 de l'enregistrement d'une réunion, au fil de l'eau (LAME, licence LGPL : /vendor/LAME-LICENSE.txt)
-   rate (facultatif) : fréquence de sortie plus basse, pour la voix seule (replay léger : 24 kHz) */
+   rate (facultatif) : fréquence de sortie plus basse, pour la voix seule (replay léger : 16 kHz) */
 importScripts('/vendor/lame.min.js');
 let enc = null, out = [], step = 1, pos = 0, prev = 0;
 function resample(f) {

@@ -31,6 +31,17 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.17 — Compte enseignant (e-mail + code, sans mot de passe)
+- Bouton **Connexion** en haut de l'écran : on tape son e-mail, on reçoit un code à 6 chiffres. Rien à retenir.
+- Transferts, espaces Smart Drop, réunions et directs sont gardés dans le compte et **retrouvés sur tout nouvel appareil** (téléphone perdu ou changé, ordinateur de l'école). Synchronisation automatique ; un élément supprimé sur un appareil disparaît aussi des autres.
+- « Se déconnecter » : garder ou effacer les espaces de cet appareil (appareil partagé, cybercafé).
+- Côté serveur : un coffre par adresse, chiffré (AES-256-GCM), nom de fichier non lié à l'adresse. Élèves et déposants : toujours sans compte.
+- Nécessite l'envoi d'e-mails (SendGrid ou SMTP) ; sans lui, le bouton n'apparaît pas. Conseillé : définir `APP_SECRET` sur Render pour que la clé du coffre ne soit pas rangée dans le même stockage.
+
+## 3.16.2 — Son du replay
+- Correction importante : le son du replay était muet (l'encodeur MP3 abîmait la voix à 24 kHz). Le replay enregistre maintenant la voix en 16 kHz / 24 kbit/s, nette et toujours aussi légère.
+- Le son de votre propre présentation (vidéo, musique partagée avec « Partager aussi le son ») entre dans l'enregistrement, même micro coupé. Changer de micro pendant l'enregistrement ne coupe plus la voix.
+
 ## 3.16.1 — Smart Drop
 - Le nom du déposant n'apparaît plus deux fois dans la liste des dépôts (il est en titre, il n'est plus répété dans les réponses). Détection du nom plus fiable : « Nom et prénom », champs ajoutés à la main, nom complet tapé dans « Nom ».
 - Changement de statut (Validé, À compléter…) : le message « le déposant est prévenu » n'apparaît que si l'e-mail est réellement parti ; sinon l'application dit que le déposant n'a pas laissé d'e-mail.

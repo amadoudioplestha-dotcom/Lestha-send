@@ -1789,3 +1789,14 @@ body.in-meet .mr-grid button { background: rgba(255, 255, 255, .06); }
 
 /* ===== v3.16 — Replay du cours ===== */
 .rec-new { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 99px; background: var(--grad); color: #04121a; font-size: 11px; font-weight: 700; font-style: normal; vertical-align: 2px; }
+
+/* ===== v3.17 — Compte ===== */
+.acct-btn { display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 11px; white-space: nowrap; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; transition: border-color .2s, transform .2s; }
+.acct-btn:hover { border-color: var(--border-2); }
+.acct-btn .i { width: 16px; height: 16px; }
+.acct-btn.on { padding: 0; width: 38px; justify-content: center; background: transparent; border-color: transparent; }
+.acct-av { width: 34px; height: 34px; border-radius: 50%; display: inline-grid; place-items: center; flex: none; background: var(--grad); color: #04121a; font-weight: 800; font-size: 15px; }
+.acct-card { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 14px; border: 1px solid var(--border); }
+.acct-card span:last-child { display: flex; flex-direction: column; min-width: 0; }
+.acct-card b { overflow: hidden; text-overflow: ellipsis; }
+.acct-card small { color: var(--muted); font-size: 12.5px; }

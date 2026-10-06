@@ -2,6 +2,7 @@
 import { $, ss, toast, enableRipples, lowMemory, isWebView, getConfig, icon } from './core.js';
 import { route, startRouter } from './router.js';
 import { trackPage, openFeedback } from './ux.js';
+import { accountInit } from './account.js';
 window.addEventListener('tx:route', trackPage);
 
 // Appareils modestes : effets allégés (évite les rechargements forcés par manque de mémoire)
@@ -43,6 +44,9 @@ try {
   }
 } catch (e) { /* ignore */ }
 if (isWebView) setTimeout(() => toast('Navigateur intégré détecté : pour les gros fichiers, ouvrez Lestha Send dans Chrome ou Safari.', 'info', { duration: 8000 }), 900);
+
+/* Compte enseignant (e-mail + code) : vos espaces sur tous vos appareils */
+accountInit();
 
 /* Statut réseau */
 const net = $('#netStatus');

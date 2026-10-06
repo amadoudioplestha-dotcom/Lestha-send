@@ -64,10 +64,32 @@ export function fileKind(name = '', type = '', size = 0) {
 }
 
 /* ---------------- Stockage local (toujours protégé) ---------------- */
+/* Listes synchronisées avec le compte (3.17) : un élément retiré est noté dans « tx_gone »
+   pour ne pas revenir à la synchronisation suivante */
+const SYNCED = new Set(['tx_owned', 'tx_requests', 'tx_meet_mine', 'tx_lives']);
+let storeHook = null;
+/** Appelé à chaque changement d'une donnée du compte (transferts, espaces, réunions, directs, connexion) */
+export const onStoreChange = (fn) => { storeHook = fn; };
+const synced = (k) => SYNCED.has(k) || k.startsWith('tx_meet_host_') || k === 'tx_sender_token';
+function tombstones(prev, next) {
+  const ids = (a) => new Set((Array.isArray(a) ? a : []).map(x => x && x.id).filter(Boolean));
+  const p = ids(prev), n = ids(next);
+  let gone; try { gone = JSON.parse(localStorage.getItem('tx_gone') || '[]'); } catch (e) { gone = []; }
+  const before = gone.length;
+  gone = gone.filter(id => !n.has(id));
+  p.forEach(id => { if (!n.has(id) && !gone.includes(id)) gone.push(id); });
+  if (gone.length !== before || p.size > n.size) try { localStorage.setItem('tx_gone', JSON.stringify(gone.slice(-1000))); } catch (e) { /* ignore */ }
+}
 export const ls = {
   get(k, def) { try { const v = localStorage.getItem(k); return v == null ? def : JSON.parse(v); } catch (e) { return def; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } },
-  del(k) { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } }
+  set(k, v) {
+    const prev = SYNCED.has(k) ? this.get(k, []) : null;
+    try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { return false; }
+    if (prev) tombstones(prev, v);
+    if (storeHook && synced(k)) try { storeHook(k); } catch (e) { /* ignore */ }
+    return true;
+  },
+  del(k) { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } if (storeHook && synced(k)) try { storeHook(k); } catch (e) { /* ignore */ } }
 };
 export const ss = {
   get(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } },

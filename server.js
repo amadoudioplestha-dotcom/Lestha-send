@@ -25,6 +25,7 @@ const { createInsights } = require('./lib/insights');
 const { createCodes } = require('./lib/codes');
 const { mountMeet } = require('./lib/meet');
 const { createSettings } = require('./lib/settings');
+const { mountAccount } = require('./lib/account');
 const VERSION = require('./package.json').version;
 
 const env = process.env;
@@ -126,6 +127,8 @@ async function main() {
 
   app.use(express.json({ limit: '5mb' }));
   ctx.verifiedEmail = mountVerify(app, { mailer, signer, captcha });
+  // Compte enseignant (e-mail confirmé) : coffre chiffré de ses espaces, retrouvés sur tout appareil
+  mountAccount(app, { storage, secret, verifiedEmail: ctx.verifiedEmail });
 
   // Fichiers statiques : le service worker et le HTML ne doivent jamais être figés en cache
   const pub = path.join(__dirname, 'public');

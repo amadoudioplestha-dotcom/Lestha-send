@@ -735,7 +735,7 @@ async function shareScreen(withSound) {
   S.screen = st.getVideoTracks()[0];
   S.screenAudio = st.getAudioTracks()[0] || null; S.screenAudioOn = !!S.screenAudio;
   if (withSound && !S.screenAudio) toast('Le son n\'est pas partagé : choisissez un onglet Chrome (ou l\'écran entier sous Windows) et laissez « Partager l\'audio » coché.', 'warn', { duration: 9000 });
-  else if (S.screenAudio) { try { S.screenAudio.contentHint = 'music'; } catch (e) { /* ignore */ } S.screenAudio.onended = () => { S.screenAudio = null; S.screenAudioOn = false; S.engine && S.engine.setTrack('x', null); drawBar(); }; }
+  else if (S.screenAudio) { recAdd('self-x', S.screenAudio); try { S.screenAudio.contentHint = 'music'; } catch (e) { /* ignore */ } S.screenAudio.onended = () => { S.screenAudio = null; S.screenAudioOn = false; S.engine && S.engine.setTrack('x', null); drawBar(); }; }
   T.askNotify();
   if (!T.floatOpenNow() && T.floatSupported()) toast('Gardez un œil sur la classe pendant que vous présentez', 'info', { duration: 9000, action: 'Fenêtre flottante', onAction: () => T.floatOpen(false) });
   try { S.screen.contentHint = 'detail'; } catch (e) { /* ignore */ }
@@ -1122,7 +1122,7 @@ async function switchMic(deviceId) {
   try { tr = (await navigator.mediaDevices.getUserMedia({ audio: Object.assign({}, AUDIO_C, { deviceId: { exact: deviceId } }) })).getAudioTracks()[0]; }
   catch (e) { return toast(micError(e), 'warn'); }
   const old = S.mic; tr.enabled = !S.muted; S.mic = tr; S.micOk = true;
-  S.engine && S.engine.setTrack('a', tr); S.selfLevel = meter(tr);
+  S.engine && S.engine.setTrack('a', tr); S.selfLevel = meter(tr); recAdd('self', tr);
   try { old && old.stop(); } catch (e) { /* ignore */ }
   toast('Micro changé', 'success', { duration: 1800 });
 }
@@ -1508,7 +1508,9 @@ function pickMime(video) {
   return list.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
 }
 function recAdd(key, trackObj) {
-  if (!R.on || !trackObj || R.srcs.has(key)) return;
+  if (!R.on || !trackObj) return;
+  key += ':' + trackObj.id;                    // micro changé, nouveau partage d'écran : nouvelle source
+  if (R.srcs.has(key)) return;
   try { const s = R.ac.createMediaStreamSource(new MediaStream([trackObj])); s.connect(R.mix); R.srcs.set(key, s); } catch (e) { /* ignore */ }
 }
 /** Choix du format avant d'enregistrer : MP3 (cours, podcasts) ou vidéo */
@@ -1541,12 +1543,13 @@ async function recStart() {
   Object.assign(R, { ac, mix, dest: ac.createMediaStreamDestination(), srcs: new Map(), on: true, chunks: [], t0: Date.now(), fmt, video: fmt === 'video', replay: fmt === 'replay', mp3: fmt.startsWith('mp3') || fmt === 'replay' });
   comp.connect(R.dest);
   recAdd('self', S.mic);
-  S.people.forEach(p => p.streams.a && recAdd(p.pid, p.streams.a.getAudioTracks()[0]));
+  if (S.screenAudio) recAdd('self-x', S.screenAudio);           // son de ma présentation (vidéo, musique)
+  S.people.forEach(p => { p.streams.a && recAdd(p.pid, p.streams.a.getAudioTracks()[0]); p.streams.x && recAdd(p.pid + '-x', p.streams.x.getAudioTracks()[0]); });
   if (R.mp3) {
     // MP3 encodé pendant la réunion (pas d'attente à la fin, mémoire réduite)
     try { R.worker = new Worker('/js/mp3-worker.js'); } catch (e) { R.on = false; return toast('Enregistrement MP3 impossible sur cet appareil.', 'error'); }
-    // Replay : voix seule en 24 kHz / 24 kbit/s (≈ 11 Mo par heure)
-    R.worker.postMessage(R.replay ? { cmd: 'init', sampleRate: ac.sampleRate, rate: 24000, kbps: 24 } : { cmd: 'init', sampleRate: ac.sampleRate, kbps: +fmt.split('-')[1] || 128 });
+    // Replay : voix en 16 kHz / 24 kbit/s (≈ 11 Mo par heure). Plus bas, LAME rééchantillonne lui-même et le son devient inaudible
+    R.worker.postMessage(R.replay ? { cmd: 'init', sampleRate: ac.sampleRate, rate: 16000, kbps: 24 } : { cmd: 'init', sampleRate: ac.sampleRate, kbps: +fmt.split('-')[1] || 128 });
     R.worker.onmessage = (e) => { if (e.data && e.data.blob) (R.replay ? replayDone : recDone)(e.data.blob); };
     R.node = ac.createScriptProcessor(4096, 1, 1);
     R.node.onaudioprocess = (e) => { if (R.on) R.worker.postMessage({ cmd: 'pcm', d: new Float32Array(e.inputBuffer.getChannelData(0)) }); };

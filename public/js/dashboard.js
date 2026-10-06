@@ -5,8 +5,11 @@ import { bucketize, barChart, feedItem, refreshTimes } from './charts.js';
 import { resumePending } from './send.js';
 import * as p2p from './p2p.js';
 import { ownedRequests } from './request.js';
+import { backupData, restoreData } from './account.js';
 
 let subFn = null, discFn = null;
+/* Éléments retrouvés depuis le compte (autre appareil) : la liste se met à jour */
+const onAccount = () => { if (root) { refresh(true); watchLive(); } };
 let root = null, items = [], filter = ls.get('tx_dash_filter', 'all'), search = '', timer = null, sock = null;
 
 export default {
@@ -20,8 +23,9 @@ export default {
     clearInterval(timer);
     timer = setInterval(() => { refreshTimes(root); if (document.visibilityState === 'visible') refresh(true); }, 30000);
     watchLive();
+    window.addEventListener('tx:account', onAccount);
   },
-  destroy() { clearInterval(timer); root = null; if (sock) sock.off('transfer-event', onLive); const c = $('#chart'); if (c && c._cleanup) c._cleanup(); }
+  destroy() { clearInterval(timer); window.removeEventListener('tx:account', onAccount); root = null; if (sock) sock.off('transfer-event', onLive); const c = $('#chart'); if (c && c._cleanup) c._cleanup(); }
 };
 
 function shell() {
@@ -287,32 +291,6 @@ function onLive({ id, event, stats, state }) {
 
 /* ---------------- Outils ---------------- */
 /* Tout ce que cet appareil pilote : transferts, espaces Smart Drop, réunions durables, directs */
-const MEET_HOST = 'tx_meet_host_';
-function backupData() {
-  const meetings = ls.get('tx_meet_mine', []);
-  const hostKeys = {};
-  (Array.isArray(meetings) ? meetings : []).forEach(m => { const k = m && m.id && ls.get(MEET_HOST + m.id, null); if (k) hostKeys[m.id] = k; });
-  return { app: 'Lestha Send', version: 4, exportedAt: new Date().toISOString(), owned: owned.all(), requests: ownedRequests.all(), meetings, meetHostKeys: hostKeys, lives: ls.get('tx_lives', []), p2pHistory: ls.get('transferx_history', []) };
-}
-function restoreData(j) {
-  const n = { t: 0, r: 0, m: 0, l: 0 };
-  const list = Array.isArray(j) ? [] : (j.owned || []);
-  list.forEach(o => { if (o && o.id && o.key) { owned.upsert(o); n.t++; } });
-  (j.requests || []).forEach(o => { if (o && o.id && o.key) { ownedRequests.upsert(o); n.r++; } });
-  if (Array.isArray(j.meetings) && j.meetings.length) {
-    const cur = ls.get('tx_meet_mine', []), ids = new Set((Array.isArray(cur) ? cur : []).map(x => x.id));
-    const add = j.meetings.filter(x => x && x.id && !ids.has(x.id) && x.exp > Date.now());
-    ls.set('tx_meet_mine', add.concat(Array.isArray(cur) ? cur : []).slice(0, 12)); n.m = add.length;
-    Object.entries(j.meetHostKeys || {}).forEach(([id, k]) => { if (/^[A-Za-z0-9]+$/.test(id) && k) ls.set(MEET_HOST + id, k); });
-  }
-  if (Array.isArray(j.lives) && j.lives.length) {
-    const cur = ls.get('tx_lives', []), ids = new Set(cur.map(x => x.id));
-    const add = j.lives.filter(x => x && x.id && !ids.has(x.id)); ls.set('tx_lives', add.concat(cur).slice(0, 50)); n.l = add.length;
-  }
-  const hist = Array.isArray(j) ? j : (j.p2pHistory || []);
-  if (hist.length) { const cur = ls.get('transferx_history', []); const ids = new Set(cur.map(h => h.roomId)); ls.set('transferx_history', cur.concat(hist.filter(h => h.roomId && !ids.has(h.roomId))).slice(0, 200)); }
-  return n;
-}
 async function tools() {
   const b = backupData();
   const count = [[b.owned.length, 'transfert'], [b.requests.length, 'espace Smart Drop', 'espaces Smart Drop'], [Object.keys(b.meetHostKeys).length, 'réunion', 'réunions'], [b.lives.length, 'direct']]
@@ -320,7 +298,7 @@ async function tools() {
   const choice = await modal({
     title: 'Outils',
     body: `<div class="stack" style="gap:12px">
-      <p class="small muted">Vos <b>transferts</b>, <b>espaces Smart Drop</b>, <b>réunions</b> et <b>directs</b> sont liés à cet appareil par des clés privées. Pour les retrouver sur un autre appareil ou un autre navigateur : <b>exportez</b> une sauvegarde ici, puis <b>importez</b>-la là-bas.</p>
+      <p class="small muted">Vos <b>transferts</b>, <b>espaces Smart Drop</b>, <b>réunions</b> et <b>directs</b> sont liés à cet appareil par des clés privées. Le plus simple : <b>connectez-vous avec votre e-mail</b> (bouton en haut), tout est retrouvé sur vos autres appareils. Sinon : <b>exportez</b> une sauvegarde ici, puis <b>importez</b>-la là-bas.</p>
       <p class="small">Sur cet appareil : <b>${esc(count)}</b>.</p>
       <label class="field"><span>Ou collez un lien de gestion (transfert ou espace Smart Drop)</span><div class="input-group"><input class="input" id="mgmtIn" placeholder="Lien privé, avec un # (…/m/… ou …/r/…)"><button type="button" class="btn" id="mgmtGo">Ajouter</button></div></label>
     </div>`,
