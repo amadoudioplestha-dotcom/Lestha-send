@@ -1419,3 +1419,72 @@ body.in-meet .mr-grid button { background: rgba(255, 255, 255, .06); }
 }
 .rv-decide .btn { white-space: normal; line-height: 1.2; min-height: 40px; text-align: center; }
 #cForm .btn.grow { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ===================== 3.14 — Outils de l'enseignant ===================== */
+.ti { width: 20px; height: 20px; flex: none; }
+.mb .ti, .mm-item .ti { width: 22px; height: 22px; }
+.mb#bFloat.on { background: rgba(103, 232, 249, .2); color: #a5f3fc; }
+
+/* Annotations : calque, tableau blanc, bouton et barre d'outils */
+.mt-ink { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none; touch-action: none; }
+.meet-stage.inking .mt-ink { pointer-events: auto; cursor: crosshair; }
+.meet-stage.inking[data-tool="laser"] .mt-ink { cursor: none; }
+.meet-stage.inking[data-tool="text"] .mt-ink, .meet-stage.inking[data-tool="note"] .mt-ink { cursor: text; }
+.meet-stage.inking[data-tool="eraser"] .mt-ink { cursor: cell; }
+.mt-board { position: absolute; z-index: 1; background: #fbfbf8; background-image: radial-gradient(rgba(15, 23, 42, .11) 1px, transparent 1.4px); background-size: 22px 22px; border-radius: 6px; }
+.mt-board.hidden { display: none; }
+.meet-stage.board video { visibility: hidden; }
+.meet-ann { position: absolute; top: 12px; right: 60px; z-index: 4; display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 14px; border: 0; border-radius: 12px; background: rgba(7, 11, 20, .72); color: #fff; font: 600 13px Inter, system-ui, sans-serif; cursor: pointer; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .12); }
+.meet-ann:hover { background: rgba(0, 180, 216, .85); }
+.meet-ann.hidden { display: none; }
+.meet-stage.self-share .meet-ann { top: 60px; }
+.ink-bar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 5; display: flex; align-items: center; gap: 3px; padding: 6px; border-radius: 16px; background: rgba(15, 18, 28, .94); box-shadow: 0 16px 40px rgba(0, 0, 0, .5), inset 0 0 0 1px rgba(255, 255, 255, .1); max-width: calc(100% - 24px); overflow-x: auto; scrollbar-width: none; }
+.ink-bar.hidden { display: none; }
+.ib { flex: none; width: 38px; height: 38px; border: 0; border-radius: 11px; background: transparent; color: #e9effb; display: grid; place-items: center; cursor: pointer; transition: background .15s; }
+.ib:hover { background: rgba(255, 255, 255, .1); }
+.ib.on { background: #8ab4f8; color: #0b1a33; }
+.ib .ti { width: 20px; height: 20px; }
+.ib-emo { font-size: 19px; line-height: 1; }
+.ib-dot { width: 20px; height: 20px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(255, 255, 255, .8); }
+.ib-sep { flex: none; width: 1px; height: 24px; background: rgba(255, 255, 255, .16); margin: 0 3px; }
+.ink-pop { position: absolute; bottom: 54px; z-index: 6; padding: 10px; border-radius: 14px; background: rgba(15, 18, 28, .97); box-shadow: 0 16px 40px rgba(0, 0, 0, .5), inset 0 0 0 1px rgba(255, 255, 255, .1); }
+.ink-bar:has(.ink-pop) { overflow: visible; }
+.ink-colors { display: grid; grid-template-columns: repeat(5, 28px); gap: 8px; }
+.ink-colors button { width: 28px; height: 28px; border-radius: 50%; border: 0; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .25); }
+.ink-colors button.on { box-shadow: 0 0 0 2px #0f121c, 0 0 0 4px #8ab4f8; }
+.ink-sizes { display: flex; gap: 6px; margin-top: 10px; }
+.ink-sizes button, .ink-list button { flex: 1; display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 0; border-radius: 10px; background: rgba(255, 255, 255, .06); color: #e9effb; font: 600 12px Inter, system-ui, sans-serif; cursor: pointer; white-space: nowrap; }
+.ink-sizes button i { border-radius: 50%; flex: none; }
+.ink-sizes button.on, .ink-list button.on { background: #8ab4f8; color: #0b1a33; }
+.ink-list { display: grid; gap: 4px; min-width: 150px; }
+.ink-stamps { display: grid; grid-template-columns: repeat(6, 36px); gap: 4px; }
+.ink-stamps button { width: 36px; height: 36px; border: 0; border-radius: 10px; background: rgba(255, 255, 255, .06); font-size: 20px; cursor: pointer; }
+.ink-stamps button.on { background: rgba(138, 180, 248, .35); }
+.ink-type { position: absolute; z-index: 6; min-width: 160px; max-width: 60%; padding: 4px 6px; border: 2px dashed #8ab4f8; border-radius: 6px; background: rgba(0, 0, 0, .35); font: 700 20px Inter, system-ui, sans-serif; resize: both; outline: none; }
+.ink-type.note { background: #fde68a; font-weight: 600; font-size: 15px; min-height: 70px; }
+@media (max-width: 720px) { .meet-ann span { display: none; } .meet-ann { width: 38px; padding: 0; justify-content: center; right: 58px; } .ib { width: 34px; height: 34px; } .ink-bar { bottom: 8px; } }
+
+/* Pastilles de l'en-tête : minuteur et état de la classe */
+.mt-chips { display: flex; gap: 6px; align-items: center; flex: none; }
+.mt-chips:empty { display: none; }
+.mt-chip { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 99px; border: 1px solid rgba(255, 255, 255, .12); background: rgba(255, 255, 255, .06); color: #e9effb; font: 600 13px Inter, system-ui, sans-serif; cursor: pointer; white-space: nowrap; }
+.mt-chip .ti { width: 16px; height: 16px; }
+.mt-chip.timer { color: #67e8f9; border-color: rgba(103, 232, 249, .35); background: rgba(103, 232, 249, .08); }
+.mt-chip.timer b { font-variant-numeric: tabular-nums; font-size: 14px; }
+.mt-chip.timer small { color: #9aa8c2; max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+.mt-chip.timer.soon { background: #e11d48; border-color: #e11d48; color: #fff; animation: recpulse 1s infinite; }
+.mt-chip.timer.over { background: rgba(244, 63, 94, .18); color: #fecdd3; }
+.mt-chip.pulse.lost { border-color: rgba(251, 113, 133, .45); background: rgba(251, 113, 133, .1); }
+.mt-chip.away { color: #cbd5e1; }
+@media (max-width: 720px) { .mt-chip.timer small { display: none; } .mt-chips { flex-wrap: wrap; } }
+.tm-presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; }
+
+/* Compris / perdu : menu des réactions, vignettes et liste (vus par l'animateur) */
+.mr-pulse { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid rgba(148,163,184,.18); }
+.mr-pulse button { padding: 11px 8px; border: 0; border-radius: 12px; background: rgba(148,163,184,.12); color: inherit; font: 600 14px Inter, system-ui, sans-serif; cursor: pointer; }
+.mr-pulse button.on.ok { background: #059669; color: #fff; }
+.mr-pulse button.on.lost { background: #e11d48; color: #fff; }
+.mt-tile.lost::after { content: '🤔'; position: absolute; top: 8px; left: 8px; font-size: 20px; line-height: 1; padding: 4px 6px; border-radius: 10px; background: rgba(225, 29, 72, .85); z-index: 2; }
+.mt-tile.away { opacity: .55; }
+.mt-pl { flex: none; font-size: 16px; }
+.poll-tpl { flex-wrap: wrap; gap: 6px; }

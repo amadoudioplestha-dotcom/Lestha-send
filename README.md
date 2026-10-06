@@ -1,4 +1,4 @@
-# TransferX 3.5 — transfert de fichiers sans limites
+# TransferX 3.14 — transfert de fichiers sans limites
 
 Deux modes, une seule application :
 
@@ -30,6 +30,16 @@ En P2P, le fichier ne vit que sur l'appareil de l'expéditeur : dès qu'il quitt
 Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléchargés, journal, et contrôles : activer/désactiver, prolonger, PIN, limite de destinataires, QR code, **lien de gestion privé** (piloter depuis un autre appareil), suppression immédiate, sauvegarde/import.
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
+
+## Nouveautés 3.14 — Outils de l'enseignant pendant une réunion ou un cours
+
+- **Fenêtre flottante** (Chrome, Edge) : elle s'ouvre en cliquant « Présenter » et reste au-dessus de PowerPoint ou d'un autre onglet. On y voit les mains levées dans l'ordre (bouton « Donner la parole »), les réactions, la discussion (on peut répondre), « compris / perdu », qui suit le cours, le minuteur, et on y coupe son micro ou arrête la présentation. Bouton dédié dans la barre pendant une présentation. Safari : version image en lecture seule. Ailleurs : notification du système, titre de l'onglet qui clignote, petit son.
+- **Annotations** sur la présentation : pointeur laser, stylo, surligneur, encre éphémère, lignes, flèches, rectangles, ellipses, zone de texte, note, tampons (✅ ❌ ⭐ ❓…), 10 couleurs, 3 épaisseurs, gomme, annuler (Ctrl+Z), tout effacer, « autoriser les participants à annoter ». Les traits tombent au même endroit chez tout le monde (ordinateur et téléphone), sont visibles par ceux qui arrivent en retard, apparaissent dans l'enregistrement vidéo et disparaissent à la fin de la présentation.
+- **Tableau blanc** : l'animateur l'ouvre sans partager d'écran (menu « Plus »), avec les mêmes outils.
+- **Minuteur commun** (1 à 30 min ou au choix, avec intitulé) : compte à rebours chez tous et signal sonore à la fin.
+- **« J'ai compris / Je suis perdu »** dans le menu des réactions : l'enseignant voit le compte dans l'en-tête, une pastille 🤔 sur la vignette, et peut donner la parole ou remettre à zéro.
+- **Qui suit le cours** (mode Cours) : l'enseignant voit qui a quitté la page du cours depuis plus de 8 secondes. Les participants en sont informés à l'entrée.
+- **Quiz éclair** : modèles de sondage en un appui (Compris ?, Vrai / Faux, A B C D, note de 1 à 5, rythme du cours).
 
 ## Nouveautés 3.5 — Classe virtuelle (Direct › « Classe virtuelle (caméra / écran) »)
 - **Rôles** : tuteur (créateur), **modérateur** (lien de co-animation `#m=…`), participants (nom demandé à l'entrée, sans compte).

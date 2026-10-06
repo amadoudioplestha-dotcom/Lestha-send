@@ -4,6 +4,7 @@
 import { $, $$, esc, icon, ls, api, bytes, toast, modal, confirmDialog, copyText, shareTo, renderQR, keepAwake, getSocket, isMobile } from './core.js';
 import { navigate } from './router.js';
 import { track } from './ux.js';
+import * as T from './meet-teach.js';
 
 const AUDIO_C = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 let root = null;
@@ -514,7 +515,7 @@ async function renderLobby(id) {
     <form id="lbForm" class="stack" style="width:100%;max-width:360px;margin-top:8px" autocomplete="off">
       <input class="input" id="lbName" maxlength="30" placeholder="Votre prénom" value="${esc(ls.get('tx_meet_name', '') || ls.get('tx_rc_name', ''))}" aria-label="Votre prénom" required>
       <button class="btn primary xl block" type="submit">${icon('call')}${host ? 'Reprendre la réunion' : 'Rejoindre'}</button>
-      <p class="small faint">${m.mode === 'course' ? 'Votre micro reste coupé pendant le cours. Levez la main : l\'enseignant vous donnera la parole.' : 'Votre micro sera coupé à l\'arrivée. Vous l\'activez quand vous voulez parler.'}</p>
+      <p class="small faint">${m.mode === 'course' ? 'Votre micro reste coupé pendant le cours. Levez la main : l\'enseignant vous donnera la parole. Il voit aussi si la page du cours reste ouverte devant vous.' : 'Votre micro sera coupé à l\'arrivée. Vous l\'activez quand vous voulez parler.'}</p>
     </form>
   </div></div></section>`;
   const inp = $('#lbName', root); if (!inp.value) setTimeout(() => inp.focus(), 60);
@@ -563,6 +564,7 @@ async function afterJoin(r) {
   S.h = engineHooks(socket);
   S.engine = r.meeting.engine === 'sfu' ? new Sfu(S.h) : new Mesh(S.h);
   renderRoom();
+  T.teachJoined(r);
   keepAwake(true);
   S.net = null; refreshNet();
   if (S.engine instanceof Sfu) S.engine.start();
@@ -582,18 +584,19 @@ function bindSocket(socket) {
     const p = S.people.get(pid); if (!p) return;
     S.engine && S.engine.removePeer(pid);
     if (p.audioEl) p.audioEl.remove();
-    S.people.delete(pid); drawPeople();
+    S.people.delete(pid); T.inkForget(pid); drawPeople();
     toast(p.name + (why === 'removed' ? ' a été retiré de la réunion' : ' a quitté la réunion'), 'info', { duration: 2500 });
   });
   socket.on('meet-state', (p) => {
     if (!mine()) return;
     if (S.self && p.pid === S.self.pid) { S.self = Object.assign(S.self, p); if (!p.hand && S.hand) S.hand = false; drawBar(); drawPeople(); return; }
     const cur = S.people.get(p.pid); if (!cur) return;
-    const raised = !cur.hand && p.hand, camOn = !cur.cam && p.cam;
+    const raised = !cur.hand && p.hand, camOn = !cur.cam && p.cam, lost = cur.pulse !== 'lost' && p.pulse === 'lost';
     Object.assign(cur, p);
     if (camOn) camWatch(cur.pid);
     if (S.engine && S.engine.sync) S.engine.sync([cur]);
-    if (raised) toast('✋ ' + cur.name + ' lève la main', 'info', { duration: 3500 });
+    if (raised) { toast('✋ ' + cur.name + ' lève la main', 'info', { duration: 3500 }); if (isStaff()) T.alert('hand', '✋ ' + cur.name + ' lève la main', isCourse() ? 'Donnez-lui la parole depuis la fenêtre flottante ou la liste des participants.' : ''); }
+    if (lost && isStaff()) { toast('🤔 ' + cur.name + ' a besoin d\'une explication', 'info', { duration: 4000 }); T.alert('lost', '🤔 ' + cur.name + ' a besoin d\'une explication'); }
     drawPeople();
   });
   socket.on('meet-signal', ({ from, data }) => {
@@ -610,34 +613,39 @@ function bindSocket(socket) {
   });
   socket.on('meet-info', (m) => {
     if (!mine()) return;
-    const wasRec = S.meeting.recording, wasEngine = S.meeting.engine;
+    const wasRec = S.meeting.recording, wasEngine = S.meeting.engine, wasBoard = !!S.meeting.board, wasInk = !!S.meeting.inkAll;
     S.meeting = Object.assign(S.meeting, m);
     if (m.engine && wasEngine && m.engine !== wasEngine) switchEngine(m.engine);
-    drawTop(); drawBar(); if (S.panel) drawPanel();
+    T.onInfo(m);
+    if (wasBoard !== !!S.meeting.board || wasInk !== !!S.meeting.inkAll) {
+      drawPeople(); T.inkOpen(T.inkIsOpen());
+      if (!isStaff() && !wasInk && S.meeting.inkAll) toast('✏️ Vous pouvez maintenant annoter la présentation', 'info', { duration: 4000, action: 'Annoter', onAction: () => T.inkOpen(true) });
+    } else { drawTop(); drawBar(); if (S.panel) drawPanel(); }
     if (m.recording && !wasRec && !(S.self && S.self.host)) toast('🔴 L\'organisateur enregistre la réunion', 'warn', { duration: 6000 });
   });
-  socket.on('meet-react', ({ pid, r, t }) => { if (mine()) showReact(pid, r, t); });
+  socket.on('meet-react', ({ pid, r, t }) => { if (!mine()) return; showReact(pid, r, t); T.feed(pid, r, t); });
+  socket.on('meet-ink', (d) => { if (mine()) T.onInk(d); });
   socket.on('meet-admitted', (r) => { if (S.waitingRoom && !S.ended) { toast('Vous êtes entré dans la réunion', 'success'); afterJoin(r); } });
   socket.on('meet-denied', ({ reason }) => { if (S.waitingRoom && !S.ended) { S.waitingRoom = false; stopLocal(); S.ended = true; renderEnd(reason, true); } });
   socket.on('meet-chat', (msg) => {
     if (!mine() || !S.messages) return;
     S.messages.push(msg); if (S.messages.length > 300) S.messages.shift();
     const open = S.panel && S.tab === 'chat';
-    if (!open && (!S.self || msg.pid !== S.self.pid)) { S.unread = (S.unread || 0) + 1; toast('💬 ' + msg.name + ' : ' + msg.text.slice(0, 80), 'info', { duration: 3500, action: 'Répondre', onAction: () => openPanel('chat') }); }
-    if (open) drawPanel(); drawBar();
+    if (!open && (!S.self || msg.pid !== S.self.pid)) { S.unread = (S.unread || 0) + 1; toast('💬 ' + msg.name + ' : ' + msg.text.slice(0, 80), 'info', { duration: 3500, action: 'Répondre', onAction: () => openPanel('chat') }); T.alert('chat', '💬 ' + msg.name, msg.text.slice(0, 140)); }
+    if (open) drawPanel(); drawBar(); T.floatDraw();
   });
   socket.on('meet-poll', (p) => {
     if (!mine()) return;
     const isNew = p && (!S.poll || S.poll.id !== p.id);
     S.poll = p;
     if (isNew && !isStaff()) toast('📊 Sondage : ' + p.q, 'info', { duration: 8000, action: 'Répondre', onAction: () => openPanel('poll') });
-    if (S.panel && S.tab === 'poll') drawPanel(); drawBar();
+    if (S.panel && S.tab === 'poll') drawPanel(); drawBar(); T.floatDraw();
   });
   socket.on('meet-wait', (list) => {
     if (!mine()) return;
     const more = (list || []).length > (S.wait || []).length;
     S.wait = list || [];
-    if (more && isStaff()) { const w = S.wait[S.wait.length - 1]; toast('🚪 ' + w.name + ' attend pour entrer', 'info', { duration: 8000, action: 'Faire entrer', onAction: () => S.socket.emit('meet-host', { action: 'admit', sid: w.sid }) }); }
+    if (more && isStaff()) { const w = S.wait[S.wait.length - 1]; T.alert('hand', '🚪 ' + w.name + ' attend pour entrer'); toast('🚪 ' + w.name + ' attend pour entrer', 'info', { duration: 8000, action: 'Faire entrer', onAction: () => S.socket.emit('meet-host', { action: 'admit', sid: w.sid }) }); }
     if (S.panel) drawPanel(); drawBar();
   });
   socket.on('meet-ended', ({ reason, keep, expiresAt }) => { if (!mine()) return; leave(false); if (!keep) S.gone = true; renderEnd((reason === 'expired' ? 'La réunion est terminée.' : reason) + (keep ? ' Le même lien resservira jusqu\'au ' + until(expiresAt) + '.' : '')); });
@@ -693,15 +701,20 @@ function setMuted(m, silent) {
 }
 async function toggleScreen() {
   if (S.sharing) { stopScreen(); return; }
+  // Fenêtre flottante ouverte d'abord, pendant que le clic compte encore (Chrome, Edge) :
+  // en passant sur PowerPoint, on garde sous les yeux les mains levées, les réactions et la discussion
+  const opened = await T.beforeShare();
   try { S.screen = (await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 }, width: { max: 1920 }, height: { max: 1080 } }, audio: false })).getVideoTracks()[0]; }
-  catch (e) { return; }
+  catch (e) { if (opened) T.floatClose(); return; }
+  T.askNotify();
+  if (!T.floatOpenNow() && T.floatSupported()) toast('Gardez un œil sur la classe pendant que vous présentez', 'info', { duration: 9000, action: 'Fenêtre flottante', onAction: () => T.floatOpen(false) });
   try { S.screen.contentHint = 'detail'; } catch (e) { /* ignore */ }
   S.screen.onended = stopScreen;
   S.screenBig = null;
   S.sharing = true; S.engine.setTrack('s', S.screen); sendState({ screen: true });
   drawBar(); drawPeople();
 }
-function stopScreen() { if (!S.sharing) return; S.screen && S.screen.stop(); S.screen = null; S.sharing = false; S.engine && S.engine.setTrack('s', null); sendState({ screen: false }); drawBar(); drawPeople(); }
+function stopScreen() { if (!S.sharing) return; S.screen && S.screen.stop(); S.screen = null; S.sharing = false; S.engine && S.engine.setTrack('s', null); sendState({ screen: false }); T.onShareStop(); drawBar(); drawPeople(); }
 function toggleHand() { S.hand = !S.hand; sendState({ hand: S.hand }); drawBar(); }
 
 function removeChrome() { ['mtBar', 'mtPanel', 'mtReact', 'mtMore'].forEach(i => { const e = document.getElementById(i); if (e) e.remove(); }); document.body.classList.remove('in-meet', 'mt-idle', 'mt-panel'); }
@@ -710,6 +723,7 @@ function leave(notify = true) {
   if (!S.id || S.ended) return;
   if (R.on) recStop();
   S.ended = true;
+  T.teachReset();
   if (notify && S.socket) S.socket.emit('meet-leave');
   S.engine && S.engine.close(); S.engine = null;
   stopLocal();
@@ -819,6 +833,7 @@ function renderRoom() {
   $('#mtGrid').addEventListener('click', onPin); $('#mtSpot').addEventListener('click', onPin);
   root.querySelectorAll('[data-fs]').forEach(b => b.onclick = () => { const el = document.getElementById(b.dataset.fs); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); else if (el && el.requestFullscreen) el.requestFullscreen().catch(() => {}); });
   $('#mtStopShare').onclick = stopScreen;
+  T.inkMount();
   pipDrag($('#mtPip'));
   if (S.ro) S.ro.disconnect();
   if (window.ResizeObserver) { S.ro = new ResizeObserver(() => { fitGrid(); placePip(); }); S.ro.observe($('#mtMain')); }
@@ -840,7 +855,7 @@ function drawTop() {
   $('#mtInvite').onclick = () => invite(false);
   $('#mtNet').onclick = openDiag;
   const tap = $('#mtTap'); if (tap) tap.onclick = () => { S.needTap = false; audioCtx(); S.people.forEach(p => p.audioEl && p.audioEl.play().catch(() => {})); drawTop(); };
-  drawNet();
+  drawNet(); T.drawChips();
 }
 
 function counts() {
@@ -862,6 +877,7 @@ function drawBar() {
       ${b('bMic', icon(S.muted ? 'mic-off' : 'mic'), micLabel, (S.muted ? 'off' : 'on') + (!canTalk() ? ' locked' : ''), 0, `aria-pressed="${!S.muted}"`)}
       ${video ? b('bCam', icon(S.camOn ? 'video' : 'video-off'), S.camOn ? 'Couper la caméra' : 'Activer la caméra', S.camOn ? 'on' : 'off', 0, `aria-pressed="${S.camOn}"`) : ''}
       ${canShare && !small ? b('bScr', icon('screen'), S.sharing ? 'Arrêter la présentation' : 'Présenter mon écran', S.sharing ? 'live' : '', 0, `aria-pressed="${S.sharing}"`) : ''}
+      ${S.sharing && T.floatSupported() && !small ? b('bFloat', T.svg('pip'), T.floatOpenNow() ? 'Fermer la fenêtre flottante' : 'Fenêtre flottante : voir la classe en présentant', T.floatOpenNow() ? 'on' : '', 0, `aria-pressed="${T.floatOpenNow()}"`) : ''}
       ${b('bHand', icon('hand'), S.hand ? 'Baisser la main' : 'Lever la main', S.hand ? 'hand' : '', 0, `aria-pressed="${S.hand}"`)}
       ${!small ? b('bReact', icon('smile'), 'Réactions', '', 0, 'aria-haspopup="true"') : ''}
       ${R.on && S.self && S.self.host ? b('bRec', `${icon('rec')}<span class="mb-t">${fmtClock(Date.now() - R.t0)}</span>`, 'Arrêter l\'enregistrement', 'rec wide') : ''}
@@ -875,6 +891,7 @@ function drawBar() {
   $('#bMic').onclick = () => setMuted(!S.muted);
   if ($('#bCam')) $('#bCam').onclick = toggleCam;
   if ($('#bScr')) $('#bScr').onclick = toggleScreen;
+  if ($('#bFloat')) $('#bFloat').onclick = () => T.floatOpen(false).then(drawBar);
   $('#bHand').onclick = toggleHand;
   if ($('#bReact')) $('#bReact').onclick = toggleReactions;
   if ($('#bRec')) $('#bRec').onclick = () => recStop();
@@ -904,6 +921,14 @@ function toggleMore() {
     if (S.meeting.chat || isStaff()) it('bChat', icon('message'), 'Discussion', () => openPanel('chat', true), { badge: c.chat });
   }
   it('bPoll', icon('chart'), 'Sondage', () => openPanel('poll', true), { badge: c.poll });
+  const stageOn = !!$('#mtStage') && !$('#mtStage').classList.contains('hidden');
+  if (stageOn && (isStaff() || S.sharing || S.meeting.inkAll)) it('bInk', T.svg('pen'), T.inkIsOpen() ? 'Arrêter l\'annotation' : 'Annoter', () => T.inkOpen(!T.inkIsOpen()));
+  if (isStaff()) {
+    it('bBoard', T.svg('board'), S.meeting.board ? 'Fermer le tableau blanc' : 'Tableau blanc', () => { S.socket.emit('meet-host', { action: 'board', value: !S.meeting.board }); if (!S.meeting.board) setTimeout(() => T.inkOpen(true), 300); });
+    it('bTimer', T.svg('timer'), 'Minuteur', T.timerDialog);
+    it('bPulse', icon('pulse'), 'Où en est la classe ?', T.pulseDialog);
+  }
+  if (T.floatSupported() && !isMobile) it('bFloat2', T.svg('pip'), T.floatOpenNow() ? 'Fermer la fenêtre flottante' : 'Fenêtre flottante', () => T.floatOpen(false).then(drawBar));
   if (host && !R.on) it('bRec', icon('rec'), 'Enregistrer', recStart, { cls: 'rec' });
   it('bInvite', icon('share'), 'Inviter', () => invite(false));
   if (S.camOn) it('bFlip', icon('flip'), 'Changer de caméra', switchCam);
@@ -1070,9 +1095,12 @@ function drawPeople() {
   if (S.pin && !keep.has(S.pin)) S.pin = null;
   // Disposition : présentation (grand écran + caméra en incrustation), orateur (enseignant ou épinglé), mosaïque
   const sharer = S.sharing ? me : list.find(p => p.screen && p.streams.s);
-  const spotP = !sharer && S.layout !== 'grid' ? (S.pin ? all.find(p => p.pid === S.pin) : isCourse() ? all.find(p => p.host) : null) : null;
-  const pipP = sharer && S.layout !== 'grid' && S.meeting.kind === 'video' && sharer.cam ? sharer : null;
-  const mode = sharer ? 'stage' : spotP ? 'spot' : 'grid';
+  const board = !sharer && !!S.meeting.board;                      // tableau blanc ouvert par l'animateur
+  const lead = sharer || (board ? all.find(p => p.host) : null);
+  const spotP = !sharer && !board && S.layout !== 'grid' ? (S.pin ? all.find(p => p.pid === S.pin) : isCourse() ? all.find(p => p.host) : null) : null;
+  const pipP = lead && S.layout !== 'grid' && S.meeting.kind === 'video' && lead.cam ? lead : null;
+  const mode = sharer || board ? 'stage' : spotP ? 'spot' : 'grid';
+  const watch = isStaff();
   const spot = $('#mtSpot'), pip = $('#mtPip'), stage = $('#mtStage');
   ['grid', 'spot', 'stage'].forEach(k => room.classList.toggle('lay-' + k, k === mode));
   spot.classList.toggle('hidden', mode !== 'spot');
@@ -1094,6 +1122,8 @@ function drawPeople() {
     t.classList.toggle('pinned', S.pin === p.pid);
     const pb = t.querySelector('.mt-pin'); if (pb) { pb.title = S.pin === p.pid ? 'Détacher' : 'Épingler en grand'; pb.setAttribute('aria-label', pb.title); pb.setAttribute('aria-pressed', S.pin === p.pid); }
     t.classList.toggle('has-video', !!video);
+    t.classList.toggle('lost', watch && !self && p.pulse === 'lost');
+    t.classList.toggle('away', watch && !self && isCourse() && !!p.away);
     t.querySelector('.mt-av').textContent = initials(p.name);
     const role = p.host ? (isCourse() ? 'Enseignant' : 'Organisateur') : p.cohost ? 'Co-animateur' : isCourse() && p.floor ? 'A la parole' : '';
     t.querySelector('.mt-name').innerHTML = (p.muted ? `<span class="mt-mute">${icon('mic-off', 'sm')}</span>` : '') + `<span class="mt-nm">${esc(p.name)}${self ? ' (vous)' : ''}</span>` + (role ? `<span class="mt-role">${role}</span>` : '');
@@ -1124,11 +1154,12 @@ function drawPeople() {
   if (v.srcObject && v.paused) v.play().catch(() => {});
   const lbl = $('#mtStageL');
   const other = sharer && sharer !== me;
-  if (!other || !lbl.querySelector('.lat') || (S.latPrev && S.latPrev.pid !== sharer.pid)) lbl.textContent = other ? sharer.name + ' présente' : S.sharing ? 'Vous présentez votre écran' : '';
+  if (!other || !lbl.querySelector('.lat') || (S.latPrev && S.latPrev.pid !== sharer.pid)) lbl.textContent = other ? sharer.name + ' présente' : S.sharing ? 'Vous présentez votre écran' : board ? 'Tableau blanc' : '';
   $('#mtStopShare').classList.toggle('hidden', !S.sharing);
   stage.classList.toggle('self-share', !!S.sharing);
   placePip(); fitGrid();
   drawPanel(); drawTop(); drawBar();
+  T.inkRefresh(); T.floatDraw();
 }
 function drawBarBadge() { drawBar(); }
 
@@ -1293,6 +1324,8 @@ function drawPeoplePane(body) {
       return `<div class="mt-row" data-pid="${esc(p.pid)}"><span class="mt-dot" style="--h:${hue(p.pid)}">${esc(initials(p.name))}</span>
         <span class="mt-rn">${esc(p.name)}${p.me ? ' (vous)' : ''}${role ? ` <small class="muted">${role}</small>` : ''}</span>
         ${n ? `<span class="pill warn" style="flex:none">${emo('hand', p.me ? myTone() : p.tone || 0)} ${n}</span>` : ''}
+        ${staffMe && !p.me && p.pulse ? `<span class="mt-pl" title="${p.pulse === 'lost' ? 'A besoin d\'une explication' : 'A compris'}">${p.pulse === 'lost' ? '🤔' : '👍'}</span>` : ''}
+        ${staffMe && !p.me && course && p.away ? '<span class="mt-pl faint" title="A quitté la page du cours">👀</span>' : ''}
         <span class="mt-ic">${icon(p.muted ? 'mic-off' : 'mic', 'sm')}</span>
         ${acts ? `<span class="mt-act">${acts}</span>` : ''}
       </div>`; }).join('')}</div>
@@ -1326,6 +1359,8 @@ function drawChat(body) {
   const f = $('#chForm'); if (f) f.onsubmit = (e) => { e.preventDefault(); const i = $('#chIn'); const t = i.value.trim(); if (!t) return; S.socket.emit('meet-chat', { text: t }); i.value = ''; i.focus(); };
 }
 
+/* Quiz éclair : modèles de réponses en un appui */
+const POLL_TPL = [['Compris ?', 'Avez-vous compris ?', ['Oui', 'Non', 'Pas sûr']], ['Vrai / Faux', '', ['Vrai', 'Faux']], ['A B C D', '', ['A', 'B', 'C', 'D']], ['Note de 1 à 5', 'Votre niveau de compréhension (1 à 5)', ['1', '2', '3', '4', '5']], ['Rythme', 'Le rythme du cours vous convient ?', ['Trop lent', 'Bien', 'Trop rapide']]];
 function drawPoll(body) {
   const p = S.poll, staffMe = isStaff(), voted = (S.voted || {})[p && p.id];
   const results = p ? p.opts.map((o, i) => { const n = p.counts[i], pc = p.total ? Math.round(n / p.total * 100) : 0; return `<div class="mp-res ${voted === i ? 'mine' : ''}"><div class="row" style="justify-content:space-between"><span>${esc(o)}</span><b>${pc} % <small class="faint">(${n})</small></b></div><div class="pf-bar"><i style="width:${pc}%"></i></div></div>`; }).join('') : '';
@@ -1336,11 +1371,13 @@ function drawPoll(body) {
       ${staffMe && p.open ? `<button type="button" class="btn sm" id="pollClose">${icon('check', 'sm')}Clore et montrer les résultats</button>` : ''}</div>` : `<p class="small faint">${staffMe ? 'Aucun sondage pour l\'instant.' : 'Aucun sondage en cours. L\'animateur peut en lancer un à tout moment.'}</p>`}
     ${staffMe ? `<form id="pollForm" class="stack mp-pollform" style="gap:8px;margin-top:14px" autocomplete="off">
       <b>${p ? 'Nouveau sondage' : 'Lancer un sondage'}</b>
+      <div class="chips poll-tpl">${POLL_TPL.map(([l], i) => `<button type="button" class="chip" data-tpl="${i}">${esc(l)}</button>`).join('')}</div>
       <input class="input" id="pQ" maxlength="200" placeholder="Question (ex. : Avez-vous compris ?)" required>
       <textarea class="input" id="pO" rows="4" placeholder="Une réponse par ligne (2 à 6)">Oui\nNon\nPas sûr</textarea>
       <button type="submit" class="btn primary">${icon('chart', 'sm')}Lancer</button></form>` : ''}`;
   body.querySelectorAll('[data-vote]').forEach(b => b.onclick = () => { S.voted = Object.assign(S.voted || {}, { [p.id]: +b.dataset.vote }); S.socket.emit('meet-vote', { id: p.id, i: +b.dataset.vote }); drawPanel(); drawBar(); });
   const c = $('#pollClose'); if (c) c.onclick = () => S.socket.emit('meet-poll-close');
+  body.querySelectorAll('[data-tpl]').forEach(b => b.onclick = () => { const [, q, o] = POLL_TPL[+b.dataset.tpl]; const qi = $('#pQ'); if (q && !qi.value.trim()) qi.value = q; $('#pO').value = o.join('\n'); qi.focus(); });
   const f = $('#pollForm'); if (f) f.onsubmit = (e) => {
     e.preventDefault();
     const q = $('#pQ').value.trim(), opts = $('#pO').value.split('\n').map(x => x.trim()).filter(Boolean).slice(0, 6);
@@ -1395,10 +1432,12 @@ function toggleReactions() {
   el = document.createElement('div'); el.id = 'mtReact'; el.className = 'meet-react card'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Réactions');
   const draw = () => {
     const t = myTone();
-    el.innerHTML = `<div class="mr-tones" role="radiogroup" aria-label="Couleur de peau">${TONES.map((x, i) => `<button type="button" class="${i === t ? 'on' : ''}" data-tone="${i}" role="radio" aria-checked="${i === t}" title="Couleur ${i + 1}">✋${x}</button>`).join('')}</div>
+    const pl = S.self && S.self.pulse;
+    el.innerHTML = `${!isStaff() ? `<div class="mr-pulse"><button type="button" data-pulse="ok" class="${pl === 'ok' ? 'on ok' : ''}">👍 J'ai compris</button><button type="button" data-pulse="lost" class="${pl === 'lost' ? 'on lost' : ''}">🤔 Je suis perdu</button></div>` : ''}<div class="mr-tones" role="radiogroup" aria-label="Couleur de peau">${TONES.map((x, i) => `<button type="button" class="${i === t ? 'on' : ''}" data-tone="${i}" role="radio" aria-checked="${i === t}" title="Couleur ${i + 1}">✋${x}</button>`).join('')}</div>
       <div class="mr-grid">${REACTS.map(([k, , , l]) => `<button type="button" data-r="${k}" title="${esc(l)}"><b>${emo(k, t)}</b><small>${esc(l)}</small></button>`).join('')}</div>`;
     el.querySelectorAll('[data-tone]').forEach(b => b.onclick = (e) => { e.stopPropagation(); ls.set('tx_meet_tone', +b.dataset.tone); S.socket.emit('meet-state', { tone: +b.dataset.tone }); draw(); drawBar(); drawPeople(); });
     el.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { S.socket.emit('meet-react', { r: b.dataset.r, t: myTone() }); el.remove(); });
+    el.querySelectorAll('[data-pulse]').forEach(b => b.onclick = () => { T.setPulse(b.dataset.pulse); el.remove(); });
   };
   draw();
   document.body.appendChild(el);
@@ -1518,10 +1557,18 @@ function recDraw() {
   const c = R.cx, W = 1280, H = 720;
   c.fillStyle = '#070b16'; c.fillRect(0, 0, W, H);
   const sv = $('#mtStageV'), st = $('#mtStage');
-  const stageOn = sv && st && !st.classList.contains('hidden') && sv.videoWidth;
+  const visible = st && !st.classList.contains('hidden'), board = visible && T.boardOn();
+  const stageOn = visible && (board || (sv && sv.videoWidth));
   const tiles = [...document.querySelectorAll('#mtRoom .mt-tile:not(#mtPip .mt-tile)')];
   let area = { x: 0, y: 48, w: W, h: H - 48 };
-  if (stageOn) { drawCover(c, sv, 0, 48, 980, H - 48, true); area = { x: 980, y: 48, w: 300, h: H - 48 }; }
+  if (stageOn) {
+    // Image présentée (ou tableau blanc) puis annotations, à la même place que sur l'écran
+    const vw = board ? 16 : sv.videoWidth, vh = board ? 9 : sv.videoHeight, k = Math.min(980 / vw, (H - 48) / vh);
+    const r = { w: vw * k, h: vh * k }; r.x = (980 - r.w) / 2; r.y = 48 + (H - 48 - r.h) / 2;
+    if (board) { c.fillStyle = '#fbfbf8'; c.fillRect(r.x, r.y, r.w, r.h); } else drawCover(c, sv, 0, 48, 980, H - 48, true);
+    T.inkPaint(c, r);
+    area = { x: 980, y: 48, w: 300, h: H - 48 };
+  }
   const n = Math.min(tiles.length, stageOn ? 5 : 16);
   const cols = stageOn ? 1 : Math.max(1, Math.ceil(Math.sqrt(n))), rows = Math.max(1, Math.ceil(n / cols));
   const tw = area.w / cols, th = area.h / rows;
@@ -1575,6 +1622,7 @@ async function measure() {
 }
 
 function tick() {
+  T.tick();
   const c = $('#mtClock'); if (c && S.meeting) c.textContent = fmtClock(Date.now() - S.meeting.startedAt);
   const grid = $('#mtGrid'); if (!grid) return;
   const self = grid.querySelector('.mt-tile.self');
@@ -1587,6 +1635,12 @@ function tick() {
     if (t) t.classList.toggle('speaking', !p.muted && now - (p.loud || 0) < 600);
   });
 }
+
+/* Outils de l'enseignant : accès à l'état de la réunion */
+T.teachInit({
+  get S() { return S; }, isStaff, isCourse, emo, myTone, setMuted, toggleHand, stopScreen, sendState, handOrder, hue, initials, fmtClock, audioCtx,
+  drawPeople
+});
 
 export default {
   async render(r, { match }) {
