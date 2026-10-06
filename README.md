@@ -31,6 +31,12 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.17.1 — Console admin : les inscrits
+
+- Nouvel onglet **Inscrits** dans `/admin` : nombre total de comptes, actifs sur 7 et 30 jours, nouveaux de la semaine.
+- Liste des adresses e-mail avec date d'inscription, dernière visite, nombre de visites et contenu (transferts, espaces Smart Drop, réunions, directs). Recherche par adresse et export CSV (s'ouvre dans Excel).
+- L'annuaire est chiffré sur le serveur comme les coffres. Une personne y apparaît dès qu'elle se connecte avec la version 3.17 ou plus récente.
+
 ## Nouveautés 3.17 — Compte enseignant (e-mail + code, sans mot de passe)
 - Bouton **Connexion** en haut de l'écran : on tape son e-mail, on reçoit un code à 6 chiffres. Rien à retenir.
 - Transferts, espaces Smart Drop, réunions et directs sont gardés dans le compte et **retrouvés sur tout nouvel appareil** (téléphone perdu ou changé, ordinateur de l'école). Synchronisation automatique ; un élément supprimé sur un appareil disparaît aussi des autres.

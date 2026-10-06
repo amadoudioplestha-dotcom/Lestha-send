@@ -52,7 +52,7 @@ function renderLogin(err = '') {
 }
 
 /* ---------------- Coque ---------------- */
-const TABS = [['overview', 'chart', 'Vue d\'ensemble'], ['insights', 'message', 'Retours & usage'], ['transfers', 'folder', 'Transferts'], ['activity', 'bolt', 'Activité'], ['security', 'shield', 'Sécurité'], ['system', 'settings', 'Système']];
+const TABS = [['overview', 'chart', 'Vue d\'ensemble'], ['insights', 'message', 'Retours & usage'], ['accounts', 'users', 'Inscrits'], ['transfers', 'folder', 'Transferts'], ['activity', 'bolt', 'Activité'], ['security', 'shield', 'Sécurité'], ['system', 'settings', 'Système']];
 function start() {
   // Le jeton porte sa propre date d'expiration : on la reprend pour l'accès administrateur des pages publiques
   try { const exp = JSON.parse(atob(A.token.split('.')[0].replace(/-/g, '+').replace(/_/g, '/'))).exp; if (exp > Date.now()) adminPass.set(A.token, exp - Date.now() - 60e3); } catch (e) { /* ignore */ }
@@ -81,7 +81,7 @@ async function loadOverview(fresh) {
 
 function renderTab() {
   const body = $('#admBody'); if (!body || !A.ov) return;
-  ({ overview: renderOverview, insights: renderInsights, transfers: renderTransfers, activity: renderActivity, security: renderSecurity, system: renderSystem })[A.tab](body);
+  ({ overview: renderOverview, accounts: renderAccounts, insights: renderInsights, transfers: renderTransfers, activity: renderActivity, security: renderSecurity, system: renderSystem })[A.tab](body);
 }
 
 /* ---------------- Vue d'ensemble ---------------- */
@@ -453,6 +453,40 @@ function renderActivity(body) {
 }
 
 /* ---------------- Sécurité ---------------- */
+/* ---------------- Inscrits (comptes enseignants, 3.17) ---------------- */
+async function renderAccounts(body) {
+  body.innerHTML = '<div class="card"><p class="small faint">Chargement…</p></div>';
+  let r;
+  try { r = await aapi('/accounts'); } catch (e) { body.innerHTML = `<div class="card"><p class="small">${esc(e.message)}</p></div>`; return; }
+  let q = '';
+  const kpi = (c, l, v, f) => `<div class="kpi" style="--kc:${c}"><div class="kpi-top">${l}<span class="kpi-icon">${icon('users')}</span></div><div class="kpi-value">${num(v)}</div><div class="kpi-foot">${f}</div></div>`;
+  const what = (c) => [[c.t, 'transfert'], [c.r, 'Smart Drop'], [c.m, 'réunion'], [c.l, 'direct']].filter(([n]) => n).map(([n, w]) => n + ' ' + w + (n > 1 && w !== 'Smart Drop' ? 's' : '')).join(' · ') || '—';
+  body.innerHTML = `
+    <div class="kpis">
+      ${kpi('#00b4d8', 'Inscrits', r.total, 'comptes par e-mail')}
+      ${kpi('#06d6a0', 'Actifs (7 jours)', r.active7, num(r.active30) + ' sur 30 jours')}
+      ${kpi('#8b7bff', 'Nouveaux (7 jours)', r.new7, 'premières connexions')}
+    </div>
+    <div class="card">
+      <div class="card-title"><h3>${icon('users')}Liste des inscrits</h3><button type="button" class="btn sm" id="accCsv">${icon('download', 'sm')}Exporter (Excel)</button></div>
+      <input class="input" id="accQ" placeholder="Rechercher une adresse…" style="margin-bottom:10px">
+      <div id="accList"></div>
+      <p class="tiny faint" style="margin-top:10px">Une personne apparaît ici dès qu'elle se connecte avec son e-mail (bouton Connexion). Les élèves et les déposants, sans compte, n'y figurent pas.</p>
+    </div>`;
+  const draw = () => {
+    const list = r.items.filter(x => !q || x.email.includes(q));
+    $('#accList').innerHTML = list.length ? `<div class="table-wrap"><table class="adm-table"><thead><tr><th>E-mail</th><th>Inscrit</th><th>Dernière visite</th><th>Visites</th><th>Contenu</th></tr></thead><tbody>${list.map(x => `<tr><td><b>${esc(x.email)}</b></td><td>${esc(fmtDate(x.first))}</td><td>${esc(relTime(x.last))}</td><td>${num(x.visits)}</td><td class="small">${esc(what(x.counts))}</td></tr>`).join('')}</tbody></table></div>` : `<p class="small faint">${r.items.length ? 'Aucune adresse ne correspond.' : 'Personne ne s\'est encore connecté.'}</p>`;
+  };
+  draw();
+  $('#accQ').oninput = (e) => { q = e.target.value.trim().toLowerCase(); draw(); };
+  $('#accCsv').onclick = () => {
+    const rows = [['E-mail', 'Inscrit le', 'Dernière visite', 'Visites', 'Transferts', 'Smart Drop', 'Réunions', 'Directs']].concat(r.items.map(x => [x.email, new Date(x.first).toISOString().slice(0, 10), new Date(x.last).toISOString().slice(0, 10), x.visits, x.counts.t, x.counts.r, x.counts.m, x.counts.l]));
+    const csv = '\ufeff' + rows.map(row => row.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(';')).join('\r\n');
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = 'lestha-send-inscrits-' + new Date().toISOString().slice(0, 10) + '.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+}
+
 async function renderSecurity(body) {
   let blocks = [];
   try { blocks = (await aapi('/blocks')).items; } catch (e) { toast(e.message, 'error'); }

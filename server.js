@@ -128,7 +128,7 @@ async function main() {
   app.use(express.json({ limit: '5mb' }));
   ctx.verifiedEmail = mountVerify(app, { mailer, signer, captcha });
   // Compte enseignant (e-mail confirmé) : coffre chiffré de ses espaces, retrouvés sur tout appareil
-  mountAccount(app, { storage, secret, verifiedEmail: ctx.verifiedEmail });
+  ctx.accounts = mountAccount(app, { storage, secret, verifiedEmail: ctx.verifiedEmail });
 
   // Fichiers statiques : le service worker et le HTML ne doivent jamais être figés en cache
   const pub = path.join(__dirname, 'public');
@@ -245,7 +245,7 @@ async function main() {
     console.log(`🔄 TURN : ${ice.provider === 'cloudflare' ? 'relais Cloudflare (identifiants éphémères)' : ice.provider ? 'serveur personnalisé' : 'STUN uniquement'}`);
   });
 
-  const shutdown = async () => { try { await db.flushAll(); if (ctx.stats) await ctx.stats.flush(); if (ctx.insights) await ctx.insights.flush(); } catch (e) { /* ignore */ } process.exit(0); };
+  const shutdown = async () => { try { await db.flushAll(); if (ctx.stats) await ctx.stats.flush(); if (ctx.insights) await ctx.insights.flush(); if (ctx.accounts) await ctx.accounts.flush(); } catch (e) { /* ignore */ } process.exit(0); };
   process.on('unhandledRejection', (e) => console.warn('⚠️ Erreur asynchrone ignorée :', e && e.message));
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
