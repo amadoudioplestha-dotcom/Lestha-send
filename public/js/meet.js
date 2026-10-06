@@ -6,6 +6,7 @@ import { navigate } from './router.js';
 import { track } from './ux.js';
 import * as T from './meet-teach.js';
 import * as D from './meet-doc.js';
+import * as RP from './meet-replay.js';
 
 const AUDIO_C = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 let root = null;
@@ -784,10 +785,12 @@ function renderEnd(msg, bad) {
   if (!root) return;
   const id = S.id;
   root.innerHTML = `<section class="narrow"><div class="card"><div class="state-screen"><div class="state-icon ${bad ? 'bad' : 'info'}">${icon(bad ? 'x' : 'call')}</div><h2>${bad ? 'Impossible de rejoindre' : 'Vous avez quitté la réunion'}</h2><p class="muted">${esc(msg || '')}</p>
-    ${R.url ? `<button type="button" class="btn primary block" id="recAgain" style="margin-bottom:8px">${icon('download')}Télécharger l'enregistrement (${bytes(R.size)})</button>` : ''}
+    ${R.url ? `<button type="button" class="btn primary block" id="recAgain" style="margin-bottom:8px">${icon('download')}Télécharger ${/html$/.test(R.name) ? 'le replay du cours' : 'l\'enregistrement'} (${bytes(R.size)})</button>` : ''}
+    ${R.url && canShareRec() ? `<button type="button" class="btn block" id="recShare" style="margin-bottom:8px">${icon('share')}Envoyer (WhatsApp, e-mail…)</button>` : ''}
     <div class="row wrap" style="justify-content:center">${id && !bad && !S.gone ? `<button type="button" class="btn" id="mtAgain">${icon('refresh')}Rejoindre à nouveau</button>` : ''}<a class="btn primary" href="/reunion" data-link>${icon('call')}Nouvelle réunion</a></div></div></div></section>`;
   document.title = 'Réunion · Lestha Send';
   const ra = $('#recAgain'); if (ra) ra.onclick = saveRec;
+  const rs = $('#recShare'); if (rs) rs.onclick = shareRec;
   // Même adresse : on force le réaffichage (un simple lien serait ignoré)
   const again = $('#mtAgain'); if (again) again.onclick = () => navigate('/reunion/' + id, { replace: true });
 }
@@ -1511,13 +1514,14 @@ function recAdd(key, trackObj) {
 /** Choix du format avant d'enregistrer : MP3 (cours, podcasts) ou vidéo */
 async function recOptions() {
   const canVideo = !!(window.MediaRecorder && HTMLCanvasElement.prototype.captureStream) && (S.meeting.kind === 'video' || S.sharing || [...S.people.values()].some(p => p.screen));
-  const last = ls.get('tx_rec_fmt', 'mp3-128');
+  const last = ls.get('tx_rec_fmt', 'replay');
   const opt = (v, t, d) => `<label class="rec-opt"><input type="radio" name="recf" value="${v}" ${last === v ? 'checked' : ''}><span><b>${t}</b><small>${d}</small></span></label>`;
   const r = await modal({
     title: 'Enregistrer la réunion',
     body: `<p class="muted small">Tous les participants verront qu'un enregistrement est en cours. Le fichier est créé sur votre appareil, rien n'est gardé sur nos serveurs.</p>
       <div class="stack" style="gap:8px;margin-top:10px">
-        ${opt('mp3-128', 'Audio MP3 · 128 kbit/s', 'Recommandé pour un cours : lisible partout, environ 1 Mo par minute')}
+        ${opt('replay', 'Replay du cours <em class="rec-new">Nouveau</em>', 'La voix, les pages et les annotations rejouées ensemble. Un seul fichier très léger (≈ 15 Mo par heure) qui se lit sur téléphone, même sans connexion. Idéal pour WhatsApp.')}
+        ${opt('mp3-128', 'Audio MP3 · 128 kbit/s', 'Lisible partout, environ 1 Mo par minute')}
         ${opt('mp3-64', 'Audio MP3 · 64 kbit/s', 'Voix seule, fichier deux fois plus léger (WhatsApp)')}
         ${opt('mp3-192', 'Audio MP3 · 192 kbit/s', 'Meilleure qualité, fichier plus lourd')}
         ${canVideo ? opt('video', 'Vidéo (WebM)', 'Vignettes, noms et présentation à l’écran ; plus lourd') : ''}
@@ -1534,15 +1538,16 @@ async function recStart() {
   // Limiteur : plusieurs voix en même temps ne saturent pas l'enregistrement
   const comp = ac.createDynamicsCompressor(); comp.threshold.value = -12; comp.knee.value = 6; comp.ratio.value = 10; comp.attack.value = 0.003; comp.release.value = 0.2;
   mix.connect(comp);
-  Object.assign(R, { ac, mix, dest: ac.createMediaStreamDestination(), srcs: new Map(), on: true, chunks: [], t0: Date.now(), fmt, video: fmt === 'video', mp3: fmt.startsWith('mp3') });
+  Object.assign(R, { ac, mix, dest: ac.createMediaStreamDestination(), srcs: new Map(), on: true, chunks: [], t0: Date.now(), fmt, video: fmt === 'video', replay: fmt === 'replay', mp3: fmt.startsWith('mp3') || fmt === 'replay' });
   comp.connect(R.dest);
   recAdd('self', S.mic);
   S.people.forEach(p => p.streams.a && recAdd(p.pid, p.streams.a.getAudioTracks()[0]));
   if (R.mp3) {
     // MP3 encodé pendant la réunion (pas d'attente à la fin, mémoire réduite)
     try { R.worker = new Worker('/js/mp3-worker.js'); } catch (e) { R.on = false; return toast('Enregistrement MP3 impossible sur cet appareil.', 'error'); }
-    R.worker.postMessage({ cmd: 'init', sampleRate: ac.sampleRate, kbps: +fmt.split('-')[1] || 128 });
-    R.worker.onmessage = (e) => { if (e.data && e.data.blob) recDone(e.data.blob); };
+    // Replay : voix seule en 24 kHz / 24 kbit/s (≈ 11 Mo par heure)
+    R.worker.postMessage(R.replay ? { cmd: 'init', sampleRate: ac.sampleRate, rate: 24000, kbps: 24 } : { cmd: 'init', sampleRate: ac.sampleRate, kbps: +fmt.split('-')[1] || 128 });
+    R.worker.onmessage = (e) => { if (e.data && e.data.blob) (R.replay ? replayDone : recDone)(e.data.blob); };
     R.node = ac.createScriptProcessor(4096, 1, 1);
     R.node.onaudioprocess = (e) => { if (R.on) R.worker.postMessage({ cmd: 'pcm', d: new Float32Array(e.inputBuffer.getChannelData(0)) }); };
     R.mute = ac.createGain(); R.mute.gain.value = 0;
@@ -1563,6 +1568,7 @@ async function recStart() {
     R.mr.onstop = () => recDone(new Blob(R.chunks, { type: R.mime || (R.video ? 'video/webm' : 'audio/webm') }));
     R.mr.start(2000);
   }
+  if (R.replay) RP.replayBegin({ get S() { return S; } });
   S.socket.emit('meet-host', { action: 'rec' });
   R.tick = setInterval(() => { const b = $('#bRec .mb-t'); if (b && R.on) b.textContent = fmtClock(Date.now() - R.t0); }, 1000);
   drawBar();
@@ -1576,22 +1582,42 @@ function recStop() {
   if (S.socket) S.socket.emit('meet-host', { action: 'unrec' });
   drawBar();
 }
+/** Replay : le MP3 de la voix est prêt, on assemble le fichier .html à lire hors ligne */
+async function replayDone(audio) {
+  if (!audio || !audio.size) { RP.replayCancel(); return recDone(audio); }
+  const tt = toast('Préparation du replay…', 'info', { duration: 60000 });
+  let html = null;
+  try { html = await RP.replayEnd(audio, { title: (S.meeting && S.meeting.title) || 'Cours', host: (S.self && S.self.name) || '' }); }
+  catch (e) { html = null; }
+  if (typeof tt === 'function') tt();
+  if (!html) { toast('Le replay n\'a pas pu être créé : voici la voix du cours en MP3.', 'warn'); R.replay = false; return recDone(audio); }
+  recDone(html);
+}
 function recDone(blob) {
   R.chunks = [];
   if (R.worker) { R.worker.terminate(); R.worker = null; }
   if (!blob || !blob.size) return toast('L\'enregistrement est vide.', 'warn');
   const type = blob.type || '';
-  const ext = /mpeg/.test(type) ? 'mp3' : /mp4/.test(type) ? (R.video ? 'mp4' : 'm4a') : /ogg/.test(type) ? 'ogg' : 'webm';
+  const ext = /html/.test(type) ? 'html' : /mpeg/.test(type) ? 'mp3' : /mp4/.test(type) ? (R.video ? 'mp4' : 'm4a') : /ogg/.test(type) ? 'ogg' : 'webm';
   const title = String((S.meeting && S.meeting.title) || 'Lestha').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'Lestha';
   if (R.url) URL.revokeObjectURL(R.url);
-  Object.assign(R, { url: URL.createObjectURL(blob), name: 'Reunion-' + title + '-' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.' + ext, size: blob.size });
+  Object.assign(R, { blob, url: URL.createObjectURL(blob), name: (R.replay ? 'Replay-' : 'Reunion-') + title + '-' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.' + ext, size: blob.size });
   saveRec();
   if (S.ended && root && !$('#recAgain')) renderEnd('Merci d\'avoir participé.');
 }
 function saveRec() {
   if (!R.url) return;
   const a = document.createElement('a'); a.href = R.url; a.download = R.name; a.rel = 'noopener'; a.style.display = 'none'; document.body.appendChild(a); a.click(); setTimeout(() => a.remove(), 1500);
-  toast('Enregistrement prêt : ' + R.name.split('.').pop().toUpperCase() + ' · ' + bytes(R.size), 'success', { action: 'Télécharger encore', onAction: saveRec, duration: 12000 });
+  const replay = /html$/.test(R.name);
+  toast((replay ? 'Replay du cours prêt · ' : 'Enregistrement prêt : ' + R.name.split('.').pop().toUpperCase() + ' · ') + bytes(R.size), 'success',
+    canShareRec() ? { action: 'Envoyer', onAction: shareRec, duration: 15000 } : { action: 'Télécharger encore', onAction: saveRec, duration: 12000 });
+}
+/** Partage du fichier par le téléphone (WhatsApp, e-mail…), là où le navigateur le permet */
+const recFile = () => R.blob && new File([R.blob], R.name, { type: R.blob.type || 'application/octet-stream' });
+function canShareRec() { try { return !!(R.blob && navigator.canShare && navigator.canShare({ files: [recFile()] })); } catch (e) { return false; } }
+async function shareRec() {
+  try { await navigator.share({ files: [recFile()], title: R.name, text: /html$/.test(R.name) ? 'Replay du cours : ouvrez le fichier pour revoir les pages, les annotations et la voix, même sans connexion.' : '' }); }
+  catch (e) { if (e && e.name !== 'AbortError') saveRec(); }
 }
 function drawCover(c, v, x, y, w, h, contain) {
   const vw = v.videoWidth, vh = v.videoHeight; if (!vw) return;

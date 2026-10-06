@@ -31,6 +31,18 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.16 — Replay du cours
+- **Enregistrer → « Replay du cours »** : au lieu de filmer l'écran, l'application note ce qui se passe. La voix (MP3 léger), chaque page présentée (une seule image par page), les annotations, le pointeur laser, qui parle et la discussion, avec leur moment exact.
+- À la fin, **un seul fichier .html** (environ 15 Mo par heure de cours) qui se lit **sans connexion**, sur téléphone comme sur ordinateur. Pages et annotations sont rejouées en même temps que la voix, nettes à toutes les tailles.
+- Lecteur : plan du cours automatique (une entrée par page, cliquable), repères sur la barre de lecture, ±10 s (double appui à gauche ou à droite), vitesse 0,75× à 2×, plein écran, reprise là où on s'était arrêté, commandes sur l'écran verrouillé du téléphone, discussion du cours alignée sur le temps.
+- Bouton « Envoyer » (WhatsApp, e-mail…) sur téléphone. La page **/replay** ouvre aussi un replay reçu, utile sur iPhone. Le fichier est lu sur l'appareil, rien n'est envoyé.
+- Partage d'écran pendant un replay : une image seulement quand l'écran change vraiment.
+
+## 3.15.1 — Vérification de sécurité
+- Dépendances mises à jour : plus aucune faille connue (`npm audit` : 0). nodemailer passe en version 10, express, socket.io (engine.io), qs et proxy-addr corrigés.
+- L'application ne peut plus être affichée dans un cadre d'un autre site (protection contre le vol de clics) ; HTTPS imposé aux visites suivantes.
+- Présentation de fichiers : taille refusée dès l'en-tête, limites par adresse IP (nouveaux fichiers, conversions PowerPoint), support envoyé en flux (toute une classe peut le télécharger sans saturer la mémoire), plafond mémoire abaissé pour le petit serveur Render.
+
 ## Nouveautés 3.15 — « Présenter » en réunion
 - **Partager l'écran avec le son** : case « Partager aussi le son » (mémorisée) avant de choisir l'écran. Son d'un onglet (Chrome, Edge) ou de tout l'ordinateur (Windows). Le son de la réunion elle-même n'est pas renvoyé. « Couper le son de la présentation » dans le menu Plus, sans arrêter le partage.
 - **Présenter un fichier sans quitter la réunion** : PDF, PowerPoint, Word ou images. Le navigateur de l'enseignant transforme chaque page en image nette, la page affichée part en premier. Chacun reçoit des images légères, au lieu d'une vidéo : texte net, même sur téléphone et petit réseau. L'enseignant peut présenter depuis son téléphone.

@@ -31,7 +31,7 @@ function fakeApp() {
   const app = { post: add('POST'), put: add('PUT'), get: add('GET') };
   app.call = (method, url, { headers = {}, body, raw } = {}) => new Promise((resolve) => {
     const r = routes.find(x => x.method === method && x.re.test(url));
-    const req = Object.assign(new EventEmitter(), { params: r ? url.match(r.re).groups : {}, body, get: (h) => headers[h.toLowerCase()] });
+    const req = Object.assign(new EventEmitter(), { params: r ? url.match(r.re).groups : {}, body, headers, ip: '10.0.0.9', socket: { remoteAddress: '10.0.0.9' }, get: (h) => headers[h.toLowerCase()] });
     const res = { statusCode: 200, headers: {}, status(c) { this.statusCode = c; return this; }, set(h) { Object.assign(this.headers, h); return this; }, type(t) { this.headers['Content-Type'] = t; return this; },
       json(o) { this.headersSent = true; resolve({ status: this.statusCode, json: o }); }, end(b) { this.headersSent = true; resolve({ status: this.statusCode, body: b, headers: this.headers }); } };
     if (!r) return resolve({ status: 404 });

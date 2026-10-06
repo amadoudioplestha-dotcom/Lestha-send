@@ -1,6 +1,6 @@
 {
   "name": "transferx",
-  "version": "3.15.0",
+  "version": "3.16.0",
   "description": "TransferX — transfert de fichiers sans limites : mode Cloud (Cloudflare R2, lien persistant, reprise) + mode Direct P2P (WebRTC, zéro stockage)",
   "main": "server.js",
   "engines": {
@@ -18,7 +18,7 @@
     "archiver": "^7.0.1",
     "dotenv": "^16.4.5",
     "express": "^4.18.2",
-    "nodemailer": "^6.9.13",
+    "nodemailer": "^10.0.15",
     "socket.io": "^4.7.2"
   },
   "devDependencies": {

@@ -117,6 +117,10 @@ async function main() {
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.set('Permissions-Policy', 'camera=(self), microphone=(self), display-capture=(self)');
+    // Personne ne peut afficher l'application dans un cadre d'un autre site (vol de clics sur une réunion ou une console)
+    if (!res.get('X-Frame-Options')) res.set('X-Frame-Options', 'SAMEORIGIN');
+    // HTTPS obligatoire pour les visites suivantes (seulement quand le site est servi en HTTPS)
+    if (req.secure) res.set('Strict-Transport-Security', 'max-age=15552000');
     next();
   });
 
@@ -145,6 +149,8 @@ async function main() {
     }
   }));
 
+  // Lecteur de replay de cours (fichier choisi sur l'appareil, rien n'est envoyé)
+  app.get('/replay', (req, res) => { res.set('Cache-Control', 'no-cache'); res.sendFile(path.join(pub, 'replay.html')); });
   app.get('/favicon.ico', (req, res) => res.redirect(301, '/icon-192.png'));
   app.all('/cdn-cgi/*', (req, res) => res.status(204).end());
 
