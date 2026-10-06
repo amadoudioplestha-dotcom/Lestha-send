@@ -31,6 +31,16 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.15 — « Présenter » en réunion
+- **Partager l'écran avec le son** : case « Partager aussi le son » (mémorisée) avant de choisir l'écran. Son d'un onglet (Chrome, Edge) ou de tout l'ordinateur (Windows). Le son de la réunion elle-même n'est pas renvoyé. « Couper le son de la présentation » dans le menu Plus, sans arrêter le partage.
+- **Présenter un fichier sans quitter la réunion** : PDF, PowerPoint, Word ou images. Le navigateur de l'enseignant transforme chaque page en image nette, la page affichée part en premier. Chacun reçoit des images légères, au lieu d'une vidéo : texte net, même sur téléphone et petit réseau. L'enseignant peut présenter depuis son téléphone.
+- Pages tournées par l'enseignant (flèches, clavier, balayage, vignettes de toutes les pages). Annotations gardées page par page : en revenant sur une page, on retrouve ses traits.
+- **Navigation libre** : l'enseignant peut laisser les élèves feuilleter le fichier ; un bouton « Revenir à la page de l'enseignant » les ramène.
+- **Support téléchargeable** : l'enseignant autorise d'un clic le téléchargement du fichier d'origine.
+- Les pages restent en mémoire le temps de la présentation (200 pages, 60 Mo d'images au maximum) ; le support est effacé à la fin.
+- PowerPoint et Word sont convertis en PDF par le serveur s'il dispose de LibreOffice (voir le `Dockerfile` facultatif) ; sinon l'application explique comment enregistrer le fichier en PDF.
+- pdf.js (Apache-2.0) est inclus dans `public/vendor/pdfjs` et chargé seulement quand on présente un PDF.
+
 ## Nouveautés 3.14.1 — Nouvelle page « Direct »
 - Salle du direct façon plateforme vidéo : grand lecteur avec halo, badge EN DIRECT et compteur de spectateurs sur l'image, réactions des spectateurs qui s'envolent sur la vidéo, partage WhatsApp / lien / QR en pastilles, fiche de l'animateur avec avatar et « À propos ».
 - Discussion en direct repensée : avatars colorés, heure, badge « Animateur », nom mémorisé (« Vous écrivez en tant que… »), zone de saisie fixe en bas.

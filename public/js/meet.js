@@ -5,6 +5,7 @@ import { $, $$, esc, icon, ls, api, bytes, toast, modal, confirmDialog, copyText
 import { navigate } from './router.js';
 import { track } from './ux.js';
 import * as T from './meet-teach.js';
+import * as D from './meet-doc.js';
 
 const AUDIO_C = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 let root = null;
@@ -49,6 +50,7 @@ const clampN = (v, a, b) => Math.max(a, Math.min(b, v));
 function encFor(kind, n) {
   n = Math.max(1, n || 1);
   if (kind === 'a') return { priority: 'high', networkPriority: 'high' };
+  if (kind === 'x') return { maxBitrate: 96e3, priority: 'high', networkPriority: 'high' };   // son de la présentation (vidéo, musique)
   if (kind === 's') return { maxBitrate: Math.round(clampN(3200e3 / n, 300e3, 2500e3)), maxFramerate: 15, priority: 'high', networkPriority: 'high' };
   const teacher = isCourse() && S.self && S.self.host;
   const cap = S.sharing ? clampN(400e3 / n, 80e3, 200e3) : teacher ? clampN(2000e3 / n, 200e3, 1200e3) : clampN(1500e3 / n, 150e3, 900e3);
@@ -73,10 +75,10 @@ function fitScreen(n) {
 }
 
 /* ======================================================================
-   MOTEUR « MESH » : une connexion par participant, 3 pistes fixes
-   (0 = micro, 1 = caméra, 2 = écran) : couper / rallumer = replaceTrack, sans renégociation
+   MOTEUR « MESH » : une connexion par participant, 4 pistes fixes
+   (0 = micro, 1 = caméra, 2 = écran, 3 = son de l'écran) : couper / rallumer = replaceTrack, sans renégociation
    ====================================================================== */
-const KIND_AT = ['a', 'c', 's'];
+const KIND_AT = ['a', 'c', 's', 'x'];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 /** replaceTrack peut lever une erreur immédiate si la connexion vient d'être fermée */
 function safeReplace(sender, track) { try { return sender.replaceTrack(track).catch(() => {}); } catch (e) { return Promise.resolve(); } }
@@ -96,7 +98,7 @@ class Mesh {
     x = { pc, initiator, pending: [], restarts: 0, timer: null };
     this.pcs.set(pid, x);
     pc.onicecandidate = (e) => { if (e.candidate) this.h.signal(pid, { cand: e.candidate }); };
-    pc.ontrack = (e) => { const i = pc.getTransceivers().indexOf(e.transceiver); if (i >= 0 && i < 3) this.h.onTrack(pid, KIND_AT[i], e.track, e.receiver); };
+    pc.ontrack = (e) => { const i = pc.getTransceivers().indexOf(e.transceiver); if (i >= 0 && i < 4) this.h.onTrack(pid, KIND_AT[i], e.track, e.receiver); };
     pc.onconnectionstatechange = () => {
       if (this.pcs.get(pid) !== x) return;
       const st = pc.connectionState;
@@ -106,7 +108,7 @@ class Mesh {
       this.h.onLink(pid, st);
     };
     if (initiator) {
-      ['audio', 'video', 'video'].forEach((k, i) => { const t = pc.addTransceiver(k, { direction: 'sendrecv' }); safeReplace(t.sender, this.h.local(KIND_AT[i])); });
+      ['audio', 'video', 'video', 'audio'].forEach((k, i) => { const t = pc.addTransceiver(k, { direction: 'sendrecv' }); safeReplace(t.sender, this.h.local(KIND_AT[i])); });
     }
     return x;
   }
@@ -151,7 +153,7 @@ class Mesh {
       x = x || await this.pcFor(from, false);
       try {
         await x.pc.setRemoteDescription(data.sdp);
-        x.pc.getTransceivers().forEach((t, i) => { try { t.direction = 'sendrecv'; } catch (e) { /* ignore */ } if (i < 3) safeReplace(t.sender, this.h.local(KIND_AT[i])); });
+        x.pc.getTransceivers().forEach((t, i) => { try { t.direction = 'sendrecv'; } catch (e) { /* ignore */ } if (i < 4) safeReplace(t.sender, this.h.local(KIND_AT[i])); });
         await x.pc.setLocalDescription(await x.pc.createAnswer());
         this.h.signal(from, { sdp: x.pc.localDescription });
       } catch (e) { this.h.diag('mesh-offer', e.name); this.h.signal(from, { rebuildReq: 1 }); return; }
@@ -175,7 +177,7 @@ class Mesh {
   /** Débit de chaque envoi selon le nombre de participants (l'envoi total reste sous ~3 Mbit/s) */
   tune() {
     const n = this.pcs.size;
-    this.pcs.forEach(x => x.pc.getTransceivers().slice(0, 3).forEach((t, i) => tuneSender(t.sender, KIND_AT[i], n)));
+    this.pcs.forEach(x => x.pc.getTransceivers().slice(0, 4).forEach((t, i) => tuneSender(t.sender, KIND_AT[i], n)));
     fitScreen(n);
   }
   conns() { return [...this.pcs.values()].map(x => x.pc); }
@@ -232,7 +234,7 @@ class Sfu {
       await this.connected(pc, 15000);
       await this.run(() => this.callRetry({ op: 'ready' }));
       this.ready = true; this.errs = 0;
-      for (const k of ['c', 's']) { const t = this.h.local(k); if (t) await this.run(() => this.push(k, t)); }
+      for (const k of ['c', 's', 'x']) { const t = this.h.local(k); if (t) await this.run(() => this.push(k, t)); }
       this.sync([...S.people.values()]);
       clearTimeout(this.okT); this.okT = setTimeout(() => { this.attempts = 0; }, 60e3);
       this.h.status();
@@ -262,7 +264,7 @@ class Sfu {
   /* Caméra ou écran coupé : Cloudflare supprime une piste qui ne reçoit plus rien pendant 30 s, et elle reste
      ensuite noire chez tout le monde. On envoie donc une image minuscule (1 image/s) à la place, jusqu'au retour. */
   setTrack(kind, trackObj) {
-    if (this.local[kind]) safeReplace(this.local[kind].sender, trackObj || (kind === 'a' ? null : keepAliveTrack()));
+    if (this.local[kind]) safeReplace(this.local[kind].sender, trackObj || (kind === 'a' || kind === 'x' ? null : keepAliveTrack()));
     else if (trackObj && this.ready) this.run(() => this.push(kind, trackObj)).catch(e => { this.onErr(e, 'push'); this.pushLater(kind, 0); });
     this.tune();
   }
@@ -291,7 +293,7 @@ class Sfu {
       if ((p.gen || 0) !== (this.gens.get(p.pid) || 0)) { this.dropPeer(p.pid); this.gens.set(p.pid, p.gen || 0); }
       if (!p.ready) return;
       (p.tracks || []).forEach(k => {
-        const on = k === 'a' || (k === 'c' && p.cam) || (k === 's' && p.screen);
+        const on = k === 'a' || (k === 'c' && p.cam) || ((k === 's' || k === 'x') && p.screen);
         const key = p.pid + '-' + k, rt = this.retries.get(key);
         if (on && !this.pulled.has(key) && !(rt && rt.timer)) { this.pulled.set(key, null); want.push({ pid: p.pid, kind: k }); }
       });
@@ -583,7 +585,7 @@ function bindSocket(socket) {
     if (!mine()) return;
     const p = S.people.get(pid); if (!p) return;
     S.engine && S.engine.removePeer(pid);
-    if (p.audioEl) p.audioEl.remove();
+    if (p.audioEl) p.audioEl.remove(); if (p.audioX) p.audioX.remove();
     S.people.delete(pid); T.inkForget(pid); drawPeople();
     toast(p.name + (why === 'removed' ? ' a été retiré de la réunion' : ' a quitté la réunion'), 'info', { duration: 2500 });
   });
@@ -613,11 +615,12 @@ function bindSocket(socket) {
   });
   socket.on('meet-info', (m) => {
     if (!mine()) return;
-    const wasRec = S.meeting.recording, wasEngine = S.meeting.engine, wasBoard = !!S.meeting.board, wasInk = !!S.meeting.inkAll;
+    const wasRec = S.meeting.recording, wasEngine = S.meeting.engine, wasBoard = !!S.meeting.board, wasInk = !!S.meeting.inkAll, prev = { doc: S.meeting.doc && Object.assign({}, S.meeting.doc) };
     S.meeting = Object.assign(S.meeting, m);
+    const docChanged = D.onInfo(prev, S.meeting);
     if (m.engine && wasEngine && m.engine !== wasEngine) switchEngine(m.engine);
     T.onInfo(m);
-    if (wasBoard !== !!S.meeting.board || wasInk !== !!S.meeting.inkAll) {
+    if (wasBoard !== !!S.meeting.board || wasInk !== !!S.meeting.inkAll || docChanged) {
       drawPeople(); T.inkOpen(T.inkIsOpen());
       if (!isStaff() && !wasInk && S.meeting.inkAll) toast('✏️ Vous pouvez maintenant annoter la présentation', 'info', { duration: 4000, action: 'Annoter', onAction: () => T.inkOpen(true) });
     } else { drawTop(); drawBar(); if (S.panel) drawPanel(); }
@@ -625,6 +628,7 @@ function bindSocket(socket) {
   });
   socket.on('meet-react', ({ pid, r, t }) => { if (!mine()) return; showReact(pid, r, t); T.feed(pid, r, t); });
   socket.on('meet-ink', (d) => { if (mine()) T.onInk(d); });
+  socket.on('meet-doc', (d) => { if (mine() && d) D.onReady(d); });
   socket.on('meet-admitted', (r) => { if (S.waitingRoom && !S.ended) { toast('Vous êtes entré dans la réunion', 'success'); afterJoin(r); } });
   socket.on('meet-denied', ({ reason }) => { if (S.waitingRoom && !S.ended) { S.waitingRoom = false; stopLocal(); S.ended = true; renderEnd(reason, true); } });
   socket.on('meet-chat', (msg) => {
@@ -655,7 +659,7 @@ function bindSocket(socket) {
     if (S.waitingRoom && !S.ended) { connect(); return; }
     if (!mine() || !S.engine) return;
     S.engine.close(); S.engine = null;
-    S.people.forEach(p => p.audioEl && p.audioEl.remove());
+    S.people.forEach(p => { if (p.audioEl) p.audioEl.remove(); if (p.audioX) { p.audioX.remove(); p.audioX = null; } });
     toast('Connexion rétablie, reprise de la réunion…', 'info', { duration: 2500 });
     S.engine = null; setNet('reco');
     connect().then(() => {
@@ -663,6 +667,7 @@ function bindSocket(socket) {
       sendState({ muted: S.muted, cam: S.camOn, screen: S.sharing, hand: S.hand });
       if (S.cam) S.engine.setTrack('c', S.cam);
       if (S.screen) S.engine.setTrack('s', S.screen);
+      if (S.screenAudio && S.screenAudioOn) S.engine.setTrack('x', S.screenAudio);
       refreshNet();
     });
   });
@@ -674,6 +679,12 @@ function onTrack(pid, kind, trackObj, receiver) {
   if (receiver) { p.recv = p.recv || {}; p.recv[kind] = receiver; }
   // Présentation : chaque image est affichée dès qu'elle arrive (pas de mise en mémoire tampon)
   if (kind === 's' && receiver) { try { receiver.playoutDelayHint = 0; } catch (e) { /* ignore */ } try { if ('jitterBufferTarget' in receiver) receiver.jitterBufferTarget = 0; } catch (e) { /* ignore */ } }
+  if (kind === 'x') {
+    // Son de la présentation (vidéo YouTube, musique…) : lu à part, sans toucher au niveau de la voix
+    if (!p.audioX) { p.audioX = document.createElement('audio'); p.audioX.autoplay = true; p.audioX.setAttribute('playsinline', ''); $('#mtAudios').appendChild(p.audioX); }
+    p.audioX.srcObject = p.streams.x; p.audioX.play().catch(() => { S.needTap = true; drawTop(); });
+    recAdd(pid + '-x', trackObj);
+  }
   if (kind === 'a') {
     if (!p.audioEl) { p.audioEl = document.createElement('audio'); p.audioEl.autoplay = true; p.audioEl.setAttribute('playsinline', ''); $('#mtAudios').appendChild(p.audioEl); }
     p.audioEl.srcObject = p.streams.a; p.audioEl.play().catch(() => { S.needTap = true; drawTop(); });
@@ -699,35 +710,67 @@ function setMuted(m, silent) {
   if (!m && S.mic && !S.selfLevel) S.selfLevel = meter(S.mic);
   drawBar(); drawPeople();
 }
-async function toggleScreen() {
+/* Bouton « Présenter » : partager l'écran (avec ou sans le son) ou présenter un fichier */
+function toggleScreen() {
   if (S.sharing) { stopScreen(); return; }
+  D.presentSheet({ canShare: canShareScreen(), share: (withSound) => shareScreen(withSound) });
+}
+const canShareScreen = () => !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) && !isMobile;
+async function shareScreen(withSound) {
+  if (S.sharing) return;
   // Fenêtre flottante ouverte d'abord, pendant que le clic compte encore (Chrome, Edge) :
   // en passant sur PowerPoint, on garde sous les yeux les mains levées, les réactions et la discussion
   const opened = await T.beforeShare();
-  try { S.screen = (await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 }, width: { max: 1920 }, height: { max: 1080 } }, audio: false })).getVideoTracks()[0]; }
-  catch (e) { if (opened) T.floatClose(); return; }
+  let st;
+  // Son : celui de l'onglet (Chrome, Edge) ou de tout l'ordinateur (Windows) ; jamais celui de la réunion elle-même
+  const audio = withSound ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false, suppressLocalAudioPlayback: false } : false;
+  const opts = { video: { frameRate: { ideal: 15, max: 30 }, width: { max: 1920 }, height: { max: 1080 } }, audio };
+  if (withSound) Object.assign(opts, { systemAudio: 'include', windowAudio: 'window', restrictOwnAudio: true, selfBrowserSurface: 'exclude', surfaceSwitching: 'include' });
+  try { st = await navigator.mediaDevices.getDisplayMedia(opts); }
+  catch (e) {
+    if (withSound && e && e.name === 'TypeError') { try { st = await navigator.mediaDevices.getDisplayMedia({ video: opts.video, audio: true }); } catch (x) { st = null; } }
+    if (!st) { if (opened) T.floatClose(); return; }
+  }
+  S.screen = st.getVideoTracks()[0];
+  S.screenAudio = st.getAudioTracks()[0] || null; S.screenAudioOn = !!S.screenAudio;
+  if (withSound && !S.screenAudio) toast('Le son n\'est pas partagé : choisissez un onglet Chrome (ou l\'écran entier sous Windows) et laissez « Partager l\'audio » coché.', 'warn', { duration: 9000 });
+  else if (S.screenAudio) { try { S.screenAudio.contentHint = 'music'; } catch (e) { /* ignore */ } S.screenAudio.onended = () => { S.screenAudio = null; S.screenAudioOn = false; S.engine && S.engine.setTrack('x', null); drawBar(); }; }
   T.askNotify();
   if (!T.floatOpenNow() && T.floatSupported()) toast('Gardez un œil sur la classe pendant que vous présentez', 'info', { duration: 9000, action: 'Fenêtre flottante', onAction: () => T.floatOpen(false) });
   try { S.screen.contentHint = 'detail'; } catch (e) { /* ignore */ }
   S.screen.onended = stopScreen;
   S.screenBig = null;
-  S.sharing = true; S.engine.setTrack('s', S.screen); sendState({ screen: true });
+  S.sharing = true; S.engine.setTrack('s', S.screen); if (S.screenAudio) S.engine.setTrack('x', S.screenAudio); sendState({ screen: true });
   drawBar(); drawPeople();
 }
-function stopScreen() { if (!S.sharing) return; S.screen && S.screen.stop(); S.screen = null; S.sharing = false; S.engine && S.engine.setTrack('s', null); sendState({ screen: false }); T.onShareStop(); drawBar(); drawPeople(); }
+function stopScreen() {
+  if (!S.sharing) return;
+  S.screen && S.screen.stop(); S.screen = null; S.sharing = false;
+  if (S.screenAudio) { S.screenAudio.stop(); S.screenAudio = null; S.screenAudioOn = false; }
+  S.engine && S.engine.setTrack('s', null); S.engine && S.engine.setTrack('x', null);
+  sendState({ screen: false }); T.onShareStop(); drawBar(); drawPeople();
+}
+/** Couper / remettre le son de la présentation sans arrêter le partage */
+function toggleScreenAudio() {
+  if (!S.screenAudio) return;
+  S.screenAudioOn = !S.screenAudioOn;
+  S.engine && S.engine.setTrack('x', S.screenAudioOn ? S.screenAudio : null);
+  toast(S.screenAudioOn ? '🔊 Le son de la présentation est partagé' : '🔇 Son de la présentation coupé', 'info', { duration: 2500 });
+  drawPeople();
+}
 function toggleHand() { S.hand = !S.hand; sendState({ hand: S.hand }); drawBar(); }
 
 function removeChrome() { ['mtBar', 'mtPanel', 'mtReact', 'mtMore'].forEach(i => { const e = document.getElementById(i); if (e) e.remove(); }); document.body.classList.remove('in-meet', 'mt-idle', 'mt-panel'); }
-function stopLocal() { [S.mic, S.cam, S.screen, S.placeholder].forEach(t => { try { t && t.stop(); } catch (e) { /* ignore */ } }); }
+function stopLocal() { [S.mic, S.cam, S.screen, S.screenAudio, S.placeholder].forEach(t => { try { t && t.stop(); } catch (e) { /* ignore */ } }); }
 function leave(notify = true) {
   if (!S.id || S.ended) return;
   if (R.on) recStop();
   S.ended = true;
-  T.teachReset();
+  T.teachReset(); D.docReset();
   if (notify && S.socket) S.socket.emit('meet-leave');
   S.engine && S.engine.close(); S.engine = null;
   stopLocal();
-  S.people && S.people.forEach(p => p.audioEl && p.audioEl.remove());
+  S.people && S.people.forEach(p => { if (p.audioEl) p.audioEl.remove(); if (p.audioX) p.audioX.remove(); });
   clearInterval(S.ticker); S.ticker = null;
   clearInterval(S.qTimer); S.qTimer = null; S.lat = null; S.latPrev = null;
   keepAwake(false);
@@ -756,7 +799,7 @@ const NET = { wait: ['wait', 'Connexion…'], ok: ['ok', 'Connecté'], reco: ['r
 function diag(ev, code) { try { S.socket && S.socket.emit('meet-diag', { ev, code: String(code || '') }); } catch (e) { /* ignore */ } }
 function engineHooks(socket) {
   return {
-    local: (k) => (k === 'a' ? (S.mic || S.placeholder) : k === 'c' ? S.cam : S.screen),
+    local: (k) => (k === 'a' ? (S.mic || S.placeholder) : k === 'c' ? S.cam : k === 'x' ? (S.screenAudio && S.screenAudioOn ? S.screenAudio : null) : S.screen),
     signal: (to, data) => socket.emit('meet-signal', { to, data }),
     onTrack, onLink, diag,
     status: (st) => (st === 'err' ? setNet('err') : refreshNet()),
@@ -793,7 +836,7 @@ function drawNet() {
 function switchEngine(kind) {
   if (!S.engine || S.ended) return;
   S.engine.close();
-  S.people.forEach(p => { p.streams = {}; p.recv = {}; p.level = null; if (p.audioEl) { p.audioEl.remove(); p.audioEl = null; } });
+  S.people.forEach(p => { p.streams = {}; p.recv = {}; p.level = null; if (p.audioEl) { p.audioEl.remove(); p.audioEl = null; } if (p.audioX) { p.audioX.remove(); p.audioX = null; } });
   S.engine = kind === 'sfu' ? new Sfu(S.h) : new Mesh(S.h);
   if (S.engine instanceof Sfu) S.engine.start();
   else S.people.forEach((p, pid) => { if (S.self && S.self.pid < pid) S.engine.addPeer(pid).catch(() => {}); });
@@ -854,7 +897,7 @@ function drawTop() {
     <button type="button" class="mt-topbtn" id="mtInvite" aria-label="Inviter">${icon('share', 'sm')}<span>Inviter</span></button>`;
   $('#mtInvite').onclick = () => invite(false);
   $('#mtNet').onclick = openDiag;
-  const tap = $('#mtTap'); if (tap) tap.onclick = () => { S.needTap = false; audioCtx(); S.people.forEach(p => p.audioEl && p.audioEl.play().catch(() => {})); drawTop(); };
+  const tap = $('#mtTap'); if (tap) tap.onclick = () => { S.needTap = false; audioCtx(); S.people.forEach(p => { if (p.audioEl) p.audioEl.play().catch(() => {}); if (p.audioX) p.audioX.play().catch(() => {}); }); drawTop(); };
   drawNet(); T.drawChips();
 }
 
@@ -876,7 +919,7 @@ function drawBar() {
     <div class="mb-group">
       ${b('bMic', icon(S.muted ? 'mic-off' : 'mic'), micLabel, (S.muted ? 'off' : 'on') + (!canTalk() ? ' locked' : ''), 0, `aria-pressed="${!S.muted}"`)}
       ${video ? b('bCam', icon(S.camOn ? 'video' : 'video-off'), S.camOn ? 'Couper la caméra' : 'Activer la caméra', S.camOn ? 'on' : 'off', 0, `aria-pressed="${S.camOn}"`) : ''}
-      ${canShare && !small ? b('bScr', icon('screen'), S.sharing ? 'Arrêter la présentation' : 'Présenter mon écran', S.sharing ? 'live' : '', 0, `aria-pressed="${S.sharing}"`) : ''}
+      ${(canShare || isStaff()) && !small ? b('bScr', icon('screen'), S.sharing ? 'Arrêter la présentation' : 'Présenter : écran (avec ou sans le son) ou fichier', S.sharing ? 'live' : '', 0, `aria-pressed="${S.sharing}"`) : ''}
       ${S.sharing && T.floatSupported() && !small ? b('bFloat', T.svg('pip'), T.floatOpenNow() ? 'Fermer la fenêtre flottante' : 'Fenêtre flottante : voir la classe en présentant', T.floatOpenNow() ? 'on' : '', 0, `aria-pressed="${T.floatOpenNow()}"`) : ''}
       ${b('bHand', icon('hand'), S.hand ? 'Baisser la main' : 'Lever la main', S.hand ? 'hand' : '', 0, `aria-pressed="${S.hand}"`)}
       ${!small ? b('bReact', icon('smile'), 'Réactions', '', 0, 'aria-haspopup="true"') : ''}
@@ -923,6 +966,8 @@ function toggleMore() {
   it('bPoll', icon('chart'), 'Sondage', () => openPanel('poll', true), { badge: c.poll });
   const stageOn = !!$('#mtStage') && !$('#mtStage').classList.contains('hidden');
   if (stageOn && (isStaff() || S.sharing || S.meeting.inkAll)) it('bInk', T.svg('pen'), T.inkIsOpen() ? 'Arrêter l\'annotation' : 'Annoter', () => T.inkOpen(!T.inkIsOpen()));
+  if (isStaff()) it('bDoc', icon('doc'), 'Présenter un fichier', () => D.presentSheet({ canShare: canShareScreen() && !S.sharing, share: shareScreen }), { cls: 'new' });
+  if (S.screenAudio) it('bSnd', icon(S.screenAudioOn ? 'music' : 'mic-off'), S.screenAudioOn ? 'Couper le son de la présentation' : 'Remettre le son de la présentation', toggleScreenAudio);
   if (isStaff()) {
     it('bBoard', T.svg('board'), S.meeting.board ? 'Fermer le tableau blanc' : 'Tableau blanc', () => { S.socket.emit('meet-host', { action: 'board', value: !S.meeting.board }); if (!S.meeting.board) setTimeout(() => T.inkOpen(true), 300); });
     it('bTimer', T.svg('timer'), 'Minuteur', T.timerDialog);
@@ -1095,7 +1140,7 @@ function drawPeople() {
   if (S.pin && !keep.has(S.pin)) S.pin = null;
   // Disposition : présentation (grand écran + caméra en incrustation), orateur (enseignant ou épinglé), mosaïque
   const sharer = S.sharing ? me : list.find(p => p.screen && p.streams.s);
-  const board = !sharer && !!S.meeting.board;                      // tableau blanc ouvert par l'animateur
+  const board = !sharer && (!!S.meeting.board || D.docOn());        // tableau blanc ou fichier présenté par l'animateur
   const lead = sharer || (board ? all.find(p => p.host) : null);
   const spotP = !sharer && !board && S.layout !== 'grid' ? (S.pin ? all.find(p => p.pid === S.pin) : isCourse() ? all.find(p => p.host) : null) : null;
   const pipP = lead && S.layout !== 'grid' && S.meeting.kind === 'video' && lead.cam ? lead : null;
@@ -1154,12 +1199,12 @@ function drawPeople() {
   if (v.srcObject && v.paused) v.play().catch(() => {});
   const lbl = $('#mtStageL');
   const other = sharer && sharer !== me;
-  if (!other || !lbl.querySelector('.lat') || (S.latPrev && S.latPrev.pid !== sharer.pid)) lbl.textContent = other ? sharer.name + ' présente' : S.sharing ? 'Vous présentez votre écran' : board ? 'Tableau blanc' : '';
+  if (!other || !lbl.querySelector('.lat') || (S.latPrev && S.latPrev.pid !== sharer.pid)) lbl.textContent = other ? sharer.name + ' présente' : S.sharing ? 'Vous présentez votre écran' + (S.screenAudio && S.screenAudioOn ? ' · avec le son 🔊' : '') : board ? 'Tableau blanc' : '';
   $('#mtStopShare').classList.toggle('hidden', !S.sharing);
   stage.classList.toggle('self-share', !!S.sharing);
   placePip(); fitGrid();
   drawPanel(); drawTop(); drawBar();
-  T.inkRefresh(); T.floatDraw();
+  T.inkRefresh(); D.docDraw(); T.floatDraw();
 }
 function drawBarBadge() { drawBar(); }
 
@@ -1563,9 +1608,10 @@ function recDraw() {
   let area = { x: 0, y: 48, w: W, h: H - 48 };
   if (stageOn) {
     // Image présentée (ou tableau blanc) puis annotations, à la même place que sur l'écran
-    const vw = board ? 16 : sv.videoWidth, vh = board ? 9 : sv.videoHeight, k = Math.min(980 / vw, (H - 48) / vh);
+    const asp = board && D.docOn() ? D.docAspect() : [16, 9];
+    const vw = board ? asp[0] : sv.videoWidth, vh = board ? asp[1] : sv.videoHeight, k = Math.min(980 / vw, (H - 48) / vh);
     const r = { w: vw * k, h: vh * k }; r.x = (980 - r.w) / 2; r.y = 48 + (H - 48 - r.h) / 2;
-    if (board) { c.fillStyle = '#fbfbf8'; c.fillRect(r.x, r.y, r.w, r.h); } else drawCover(c, sv, 0, 48, 980, H - 48, true);
+    if (board) { c.fillStyle = '#fbfbf8'; c.fillRect(r.x, r.y, r.w, r.h); const im = D.docOn() && D.docImage(); if (im) c.drawImage(im, r.x, r.y, r.w, r.h); } else drawCover(c, sv, 0, 48, 980, H - 48, true);
     T.inkPaint(c, r);
     area = { x: 980, y: 48, w: 300, h: H - 48 };
   }
@@ -1641,6 +1687,7 @@ T.teachInit({
   get S() { return S; }, isStaff, isCourse, emo, myTone, setMuted, toggleHand, stopScreen, sendState, handOrder, hue, initials, fmtClock, audioCtx,
   drawPeople
 });
+D.docInit({ get S() { return S; }, isStaff, track });
 
 export default {
   async render(r, { match }) {

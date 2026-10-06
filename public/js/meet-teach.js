@@ -10,10 +10,11 @@
    3. Minuteur commun, « J'ai compris / Je suis perdu », qui suit le cours (page ouverte ou non). */
 import { $, esc, ls, toast, modal } from './core.js';
 
+import { docOn, docAspect, onLivePage } from './meet-doc.js';
 let X = null;                                      // accès à la réunion (fourni par meet.js)
 export function teachInit(ctx) { X = ctx; }
 const S = () => X.S;
-const can = () => { const s = S(); return !!(s.self && (X.isStaff() || s.sharing || (s.meeting && s.meeting.inkAll))); };
+const can = () => { const s = S(); return !!(s.self && (X.isStaff() || s.sharing || (s.meeting && s.meeting.inkAll))) && onLivePage(); };
 const mayAll = () => { const s = S(); return !!(s.self && (X.isStaff() || s.sharing)); };
 const rid = () => Math.random().toString(36).slice(2, 10).padEnd(8, '0');
 
@@ -44,7 +45,8 @@ const P = {
   stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
   back: '<path d="M10 6 4 12l6 6M4 12h16"/>',
   bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
-  send: '<path d="M4 12 20 4l-6 16-3-7z"/>'
+  send: '<path d="M4 12 20 4l-6 16-3-7z"/>',
+  free: '<path d="M12 6.5C10 5 7 4.5 3 5v13c4-.5 7 0 9 1.5 2-1.5 5-2 9-1.5V5c-4-.5-7 0-9 1.5z"/><path d="M12 6.5v13"/>'
 };
 export const svg = (k, cls = '') => `<svg class="ti ${cls}" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${P[k] || ''}</svg>`;
 
@@ -134,13 +136,15 @@ function contentRect() {
   const v = $('#mtStageV');
   let vw = 16, vh = 9;
   if (!boardOn() && v && v.videoWidth) { vw = v.videoWidth; vh = v.videoHeight; }
+  else if (boardOn() && docOn()) [vw, vh] = docAspect();      // fichier présenté : format de la page
   const k = Math.min(W / vw, H / vh), w = vw * k, h = vh * k;
   return { x: (W - w) / 2, y: (H - h) / 2, w, h };
 }
-export const boardOn = () => { const s = S(); return !!(s.meeting && s.meeting.board && !s.sharing && ![...s.people.values()].some(p => p.screen && p.streams && p.streams.s)); };
+export const boardOn = () => { const s = S(); return !!(s.meeting && (s.meeting.board || docOn()) && !s.sharing && ![...s.people.values()].some(p => p.screen && p.streams && p.streams.s)); };
 
 /** Dessine tous les traits dans un rectangle donné (scène, ou image de l'enregistrement) */
 export function inkPaint(c, r, now = performance.now()) {
+  if (!onLivePage()) return;                         // élève qui feuillette une autre page : pas d'annotations
   const all = I.strokes.concat([...I.live.values()]);
   if (I.cur) all.push(I.cur);
   for (const s of all) drawStroke(c, s, r, now);
@@ -251,6 +255,7 @@ export function onInk(d) {
   }
   else if (d.op === 'del') { I.strokes = I.strokes.filter(x => !d.ids.includes(x.id)); }
   else if (d.op === 'clear') { I.strokes = []; I.live.clear(); I.mine = []; }
+  else if (d.op === 'load') { I.strokes = Array.isArray(d.ink) ? d.ink.slice() : []; I.live.clear(); I.mine = []; }   // page suivante du fichier
   else if (d.op === 'laser') { const l = I.lasers.get(d.pid) || { trail: [] }; if (l.x != null) l.trail.push({ x: l.x, y: l.y, at: now }); Object.assign(l, { x: d.x, y: d.y, c: d.c, at: now, off: d.off }); I.lasers.set(d.pid, l); }
   // Trait en cours abandonné (connexion coupée) : on l'oublie au bout de 10 s
   I.live.forEach((s, id) => { if (now - s.seen > 10e3) I.live.delete(id); });
