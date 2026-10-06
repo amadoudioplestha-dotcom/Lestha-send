@@ -14,6 +14,10 @@ const mine = {
   add: (x) => ls.set('tx_lives', [x].concat(mine.all().filter(y => y.id !== x.id)).slice(0, 50)),
   remove: (id) => ls.set('tx_lives', mine.all().filter(y => y.id !== id))
 };
+const hue = (t) => { let h = 0; for (const c of String(t || '')) h = (h * 31 + c.codePointAt(0)) % 360; return h; };
+const initials = (t) => String(t || '?').trim().split(/\s+/).slice(0, 2).map(w => [...w][0] || '').join('').toUpperCase() || '?';
+const longDate = (t) => new Date(t).toLocaleString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }).replace(/^./, c => c.toUpperCase());
+const hhmm = (t) => new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 const PROVIDERS = { youtube: 'YouTube', facebook: 'Facebook', vimeo: 'Vimeo', twitch: 'Twitch', instagram: 'Instagram', tiktok: 'TikTok' };
 const linkOf = (id) => location.origin + '/live/' + id;
 const loadScript = (src) => new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
@@ -31,38 +35,85 @@ export const studioView = (() => {
     render(r) { root = r; draw(); },
     destroy() { root = null; }
   };
+  function detect(url) {
+    let h = ''; try { h = new URL(url).hostname.replace(/^(www|m|web)\./, ''); } catch (e) { return null; }
+    if (/\.m3u8(\?|$)/i.test(url)) return 'hls';
+    if (/(^|\.)youtube\.com$|^youtu\.be$/.test(h)) return 'youtube';
+    if (/(^|\.)facebook\.com$|^fb\.watch$/.test(h)) return 'facebook';
+    if (/(^|\.)vimeo\.com$/.test(h)) return 'vimeo';
+    if (/(^|\.)twitch\.tv$/.test(h)) return 'twitch';
+    if (/(^|\.)instagram\.com$/.test(h)) return 'instagram';
+    if (/(^|\.)tiktok\.com$/.test(h)) return 'tiktok';
+    return 'unknown';
+  }
   function draw() {
-    const list = mine.all();
+    const list = mine.all().filter(x => x.kind !== 'camera');
+    const kinds = [
+      ['embed', icon('link'), 'Lien d\'une plateforme', 'YouTube, Facebook, Vimeo, Twitch, Instagram, TikTok'],
+      ['hls', icon('film'), 'Flux professionnel', 'OBS, régie, encodeur : adresse .m3u8']
+    ];
     root.innerHTML = `
-    <section class="narrow stack">
-      <div class="hero-mini"><span class="eyebrow"><span class="pulse-dot"></span>Direct</span><h1 style="font-size:clamp(26px,5vw,38px)">Diffusez en direct, partagez un lien</h1>
-        <p class="muted">Événements, cours, cérémonies : une page de direct à votre nom, avec discussion en direct et QR code à projeter.</p></div>
-      <div class="card glow stack">
-        <div class="chips" id="kinds">${[['embed', 'Lien YouTube, Facebook…'], ['hls', 'Flux pro .m3u8']].map(([k, l]) => `<button type="button" class="chip ${kind === k ? 'active' : ''}" data-k="${k}">${l}</button>`).join('')}</div>
-        <p class="small muted" id="kindHelp"></p>
-        <div class="tip">${icon('call')}<span>Pour un cours ou une réunion où chacun peut parler, lever la main, discuter et répondre à des sondages, utilisez <a href="/reunion" data-link><b>Réunion</b></a> (mode Cours).</span></div>
-        <label class="field ${kind === 'camera' ? 'hidden' : ''}" id="urlField"><span id="urlLabel">Lien</span><input class="input" id="lUrl" placeholder="https://" inputmode="url"></label>
-        <div class="grid-2" style="gap:12px">
-          <label class="field"><span>Titre *</span><input class="input" id="lTitle" maxlength="120" placeholder="Ex. Cérémonie de remise des diplômes"></label>
-          <label class="field"><span>Présenté par</span><input class="input" id="lHost" maxlength="60" value="${esc(ls.get('tx_sender_name', ''))}" placeholder="Lestha TV"></label>
-        </div>
-        <label class="field"><span>Description</span><textarea class="input" id="lDesc" maxlength="1000" placeholder="Programme, intervenants…" style="min-height:70px"></textarea></label>
-        <div class="grid-2" style="gap:12px">
-          <label class="field"><span>Début prévu (facultatif)</span><input class="input" type="datetime-local" id="lStart"></label>
-          <label class="control" style="padding:0;border:0"><div class="control-text"><b>Discussion en direct</b><span>Les spectateurs peuvent écrire</span></div><span class="switch"><input type="checkbox" id="lChat" checked><span class="track"></span></span></label>
-        </div>
-        ${kind === 'camera' ? `<label class="control" style="padding:0;border:0"><div class="control-text"><b>Salle d'attente</b><span>Vous admettez chaque participant avant qu'il n'entre</span></div><span class="switch"><input type="checkbox" id="lWait"><span class="track"></span></span></label>` : ''}
-        <button type="button" class="btn primary xl block" id="lGo">${icon('video')}Créer la salle de direct</button>
+    <section class="lv-studio">
+      <div class="lv-hero">
+        <span class="lv-hero-badge"><span class="lv-dot"></span>Direct</span>
+        <h1>Votre direct, <span class="grad-text">votre page</span></h1>
+        <p class="muted">Cérémonies, cours, conférences, matchs : une belle page de direct à votre nom, avec discussion, réactions et QR code à projeter.</p>
+        <div class="lv-perks"><span>${icon('message', 'sm')}Discussion en direct</span><span>${icon('smile', 'sm')}Réactions</span><span>${icon('qr', 'sm')}QR code</span><span>${icon('whatsapp', 'sm')}Partage WhatsApp</span></div>
       </div>
-      ${list.length ? `<div class="card"><div class="card-title"><h3>${icon('video')}Mes directs</h3><span class="small faint">${list.length}</span></div><div class="stack" style="gap:6px">${list.map(x => `<div class="dl-row"><div class="ficon" style="--c:#f43f5e;width:36px;height:36px">${icon('video', 'sm')}</div><div class="fmeta"><div class="fname">${esc(x.title)}</div><div class="fsub">${x.kind === 'camera' ? 'Caméra / écran' : x.kind === 'hls' ? 'Flux .m3u8' : 'Lien ' + (PROVIDERS[x.provider] || '')} · ${new Date(x.createdAt).toLocaleDateString('fr-FR')}</div></div><a class="btn sm" href="/live/${x.id}" data-link>Ouvrir</a></div>`).join('')}</div></div>` : ''}
+      <div class="lv-studio-grid">
+        <div class="card glow lv-form-card">
+          <div class="lv-step"><span>1</span>Source de la vidéo</div>
+          <div class="lv-kinds" id="kinds" role="radiogroup" aria-label="Source de la vidéo">${kinds.map(([k, ic, t, d]) => `<button type="button" role="radio" aria-checked="${kind === k}" class="lv-kind ${kind === k ? 'active' : ''}" data-k="${k}"><span class="lv-kind-ico">${ic}</span><b>${t}</b><span>${d}</span></button>`).join('')}</div>
+          <label class="field" id="urlField"><span id="urlLabel">Lien</span>
+            <div class="lv-url"><input class="input" id="lUrl" placeholder="https://" inputmode="url" autocomplete="off"><span class="lv-detect hidden" id="lDetect"></span></div>
+            <span class="small faint" id="kindHelp"></span></label>
+          <div class="lv-step"><span>2</span>Présentation</div>
+          <div class="grid-2" style="gap:12px">
+            <label class="field"><span>Titre *</span><input class="input" id="lTitle" maxlength="120" placeholder="Ex. Cérémonie de remise des diplômes"></label>
+            <label class="field"><span>Présenté par</span><input class="input" id="lHost" maxlength="60" value="${esc(ls.get('tx_sender_name', ''))}" placeholder="Lestha TV"></label>
+          </div>
+          <label class="field"><span>Description</span><textarea class="input" id="lDesc" maxlength="1000" placeholder="Programme, intervenants, lieu…" style="min-height:76px"></textarea></label>
+          <div class="lv-step"><span>3</span>Options</div>
+          <div class="grid-2" style="gap:12px;align-items:end">
+            <label class="field"><span>Début prévu (facultatif)</span><input class="input" type="datetime-local" id="lStart"></label>
+            <label class="control lv-switch"><div class="control-text"><b>Discussion en direct</b><span>Les spectateurs peuvent écrire</span></div><span class="switch"><input type="checkbox" id="lChat" checked><span class="track"></span></span></label>
+          </div>
+          <button type="button" class="btn primary xl block lv-go" id="lGo">${icon('video')}Créer ma page de direct</button>
+          <div class="tip">${icon('call')}<span>Un cours où chacun peut parler, lever la main et répondre à des sondages ? Utilisez <a href="/reunion" data-link><b>Réunion</b></a> en mode Cours.</span></div>
+        </div>
+        <aside class="lv-preview" aria-hidden="true">
+          <span class="lv-label">Aperçu de votre page</span>
+          <div class="lv-mock">
+            <div class="lv-mock-stage"><span class="live-badge on">● EN DIRECT</span><span class="lv-glass">${icon('eye', 'sm')}<b>128</b></span><div class="lv-mock-play">${icon('play', 'lg')}</div><span class="lv-mock-prov" id="pvProv"></span>
+              <div class="lv-mock-reacts"><i>❤️</i><i>👏</i><i>👍</i></div></div>
+            <div class="lv-mock-info"><div class="lv-avatar sm" id="pvAv">LT</div><div><b id="pvTitle">Titre de votre direct</b><span id="pvHost">Présenté par…</span></div></div>
+            <div class="lv-mock-chat"><div><i style="--h:200">AW</i><span><b>Awa</b> Bonjour depuis Dakar 👋</span></div><div><i style="--h:30">MD</i><span><b>Moussa</b> Félicitations à tous !</span></div><div><i style="--h:140">FS</i><span><b>Fatou</b> Le son est parfait 👌</span></div></div>
+          </div>
+        </aside>
+      </div>
+      ${list.length ? `<div class="lv-mine"><div class="lv-mine-head"><h2>${icon('video')}Mes directs</h2><span class="pill">${list.length}</span></div><div class="lv-mine-grid">${list.map(x => `<a class="lv-mine-card" href="/live/${x.id}" data-link><span class="lv-mine-thumb" style="--h:${hue(x.title)}">${x.kind === 'hls' ? icon('film') : icon('play')}<em>${x.kind === 'hls' ? 'Flux HD' : (PROVIDERS[x.provider] || 'Lien')}</em></span><span class="lv-mine-txt"><b>${esc(x.title)}</b><span>Créé le ${new Date(x.createdAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}</span></span><span class="lv-mine-go">Ouvrir ${icon('arrow-right', 'sm')}</span></a>`).join('')}</div></div>` : ''}
     </section>`;
     const help = {
-      embed: 'Collez le lien d\'une vidéo ou d\'un direct YouTube, Facebook, Vimeo ou Twitch, ou d\'une publication Instagram / TikTok. La vidéo reste chez la plateforme : aucun coût de stockage.',
+      embed: 'La vidéo reste chez la plateforme : aucun coût de stockage, qualité d\'origine.',
       hls: 'Pour OBS ou une régie : collez l\'adresse https de votre flux HLS (se termine par .m3u8).'
     };
     $('#kindHelp', root).textContent = help[kind];
-    $('#urlLabel', root).textContent = kind === 'hls' ? 'Adresse du flux .m3u8' : 'Lien YouTube, Facebook, Vimeo, Twitch, Instagram ou TikTok';
-    $('#kinds', root).onclick = (e) => { const b = e.target.closest('[data-k]'); if (!b) return; kind = b.dataset.k; draw(); };
+    $('#urlLabel', root).textContent = kind === 'hls' ? 'Adresse du flux .m3u8' : 'Lien de la vidéo ou du direct';
+    $('#lUrl', root).placeholder = kind === 'hls' ? 'https://…/live.m3u8' : 'https://youtube.com/live/…';
+    $('#kinds', root).onclick = (e) => { const b = e.target.closest('[data-k]'); if (!b || b.dataset.k === kind) return; kind = b.dataset.k; draw(); };
+    const preview = () => {
+      const t = $('#lTitle', root).value.trim(), h = $('#lHost', root).value.trim(), d = detect($('#lUrl', root).value.trim());
+      $('#pvTitle', root).textContent = t || 'Titre de votre direct';
+      $('#pvHost', root).textContent = h ? 'Présenté par ' + h : 'Présenté par…';
+      const av = $('#pvAv', root); av.textContent = initials(h || t || 'Lestha TV'); av.style.setProperty('--h', hue(h || t));
+      const name = d === 'hls' ? 'Flux HD' : PROVIDERS[d];
+      const det = $('#lDetect', root);
+      det.className = 'lv-detect ' + (d ? (d === 'unknown' ? 'bad' : 'p-' + d) : 'hidden');
+      det.textContent = d === 'unknown' ? 'Lien non reconnu' : name ? '✓ ' + name : '';
+      const pv = $('#pvProv', root); pv.textContent = name || ''; pv.className = 'lv-mock-prov ' + (d && d !== 'unknown' ? 'p-' + d : 'hidden');
+    };
+    ['#lTitle', '#lHost', '#lUrl'].forEach(s => { $(s, root).oninput = preview; });
+    preview();
     $('#lGo', root).onclick = async () => {
       const title = $('#lTitle', root).value.trim(); if (!title) { toast('Donnez un titre au direct', 'error'); $('#lTitle', root).focus(); return; }
       const hostName = $('#lHost', root).value.trim(); ls.set('tx_sender_name', hostName);
@@ -90,7 +141,7 @@ export const roomView = (() => {
   let st = { participants: [], locked: false, waitingRoom: false, poll: null, viewers: 0 }, waitList = [];
   const out = { stream: null, pcs: new Map(), source: null, mic: true, cam: true };   // flux que J'ENVOIE (tuteur, ou apprenant qui a la parole)
   const inc = new Map();                                                               // flux que je REÇOIS : peer -> { pc, q, stream }
-  let speaking = false, hand = false, myVote = null;
+  let speaking = false, hand = false, myVote = null, nMsg = 0, lastReact = 0;
   const rec = { mr: null, chunks: [], parts: [], ctx: null, dest: null, srcs: new Set() };
 
   const staff = () => role === 'host' || role === 'mod';
@@ -134,41 +185,64 @@ export const roomView = (() => {
   /* ---------------- mise en page ---------------- */
   function draw() {
     const host = role === 'host';
+    const name = ls.get('tx_comment_name', host ? (L.hostName || '') : '');
+    const when = L.startsAt && L.status !== 'live' ? longDate(L.startsAt) : '';
     root.innerHTML = `
-    <section class="watch-wrap ${isClass() ? 'class-room' : ''}">
-      <div class="watch-main">
-        <div class="player-box live-box ${L.vertical ? 'vertical' : ''}" id="stage"></div>
-        ${isClass() ? `<div class="tiles" id="tiles"></div><div class="class-bar" id="bar"></div>` : ''}
-        <div class="watch-head">
-          <div style="min-width:0">
-            <div class="row" style="gap:8px;flex-wrap:wrap"><span class="live-badge ${L.status === 'live' ? 'on' : ''}" id="lBadge">${badgeText()}</span><span class="pill" id="lViewers">${icon('eye', 'sm')}<b>${L.viewers || 0}</b></span>${L.provider ? `<span class="pill">${PROVIDERS[L.provider]}</span>` : ''}${isClass() ? `<span class="pill violet">${ROLE_LABEL[role]}</span>` : ''}</div>
-            <h2 style="font-size:clamp(20px,3.6vw,28px);margin-top:8px">${esc(L.title)}</h2>
-            ${L.hostName ? `<div class="small muted">Présenté par ${esc(L.hostName)}</div>` : ''}
+    <div class="lv-page">
+      <div class="lv-top" data-back-slot></div>
+      <section class="watch-wrap lv ${isClass() ? 'class-room' : ''} ${L.status === 'live' ? 'is-live' : ''}" id="lvWrap">
+        <div class="watch-main">
+          <div class="lv-stage-wrap">
+            <div class="player-box live-box ${L.vertical ? 'vertical' : ''}" id="stage"></div>
+            <div class="lv-hud">
+              <span class="live-badge ${L.status === 'live' ? 'on' : ''}" id="lBadge">${badgeText()}</span>
+              <span class="lv-glass" id="lViewers" title="Spectateurs en ce moment">${icon('eye', 'sm')}<b>${L.viewers || 0}</b></span>
+            </div>
+            <div class="react-layer" id="reacts"></div>
           </div>
-          <div class="row" style="gap:6px;flex-wrap:wrap">
-            <button type="button" class="btn sm" id="shWa">${icon('whatsapp', 'sm')}WhatsApp</button>
-            <button type="button" class="btn sm" id="shCopy">${icon('copy', 'sm')}Copier le lien</button>
-            <button type="button" class="btn sm icon ghost" id="shQr" title="QR code à projeter">${icon('qr', 'sm')}</button>
+          ${isClass() ? `<div class="tiles" id="tiles"></div><div class="class-bar" id="bar"></div>` : ''}
+          <div class="lv-actions">
+            <div class="lv-reacts" id="lvReacts" role="group" aria-label="Réagir en direct">${REACTIONS.map(e => `<button type="button" class="lv-react" data-e="${e}" aria-label="Réagir ${e}">${e}</button>`).join('')}</div>
+            <div class="lv-share">
+              <button type="button" class="lv-pill wa" id="shWa">${icon('whatsapp', 'sm')}<span>WhatsApp</span></button>
+              <button type="button" class="lv-pill" id="shCopy">${icon('link', 'sm')}<span>Copier le lien</span></button>
+              <button type="button" class="lv-pill icon" id="shQr" title="QR code à projeter" aria-label="QR code à projeter">${icon('qr', 'sm')}</button>
+            </div>
           </div>
+          <div class="lv-info card">
+            <div class="lv-host">
+              <div class="lv-avatar" style="--h:${hue(L.hostName || L.title)}">${esc(initials(L.hostName || L.title))}</div>
+              <div class="lv-meta">
+                <h1 class="lv-title">${esc(L.title)}</h1>
+                <div class="lv-sub">
+                  ${L.hostName ? `<b>${esc(L.hostName)}</b>` : ''}
+                  ${L.provider ? `<span class="lv-prov p-${L.provider}">${PROVIDERS[L.provider]}</span>` : L.kind === 'hls' ? '<span class="lv-prov">Flux HD</span>' : ''}
+                  ${when ? `<span class="lv-when">${icon('clock', 'sm')}${esc(when)}</span>` : ''}
+                  ${isClass() ? `<span class="pill violet">${ROLE_LABEL[role]}</span>` : ''}
+                </div>
+              </div>
+            </div>
+            ${L.description ? `<div class="lv-about"><span class="lv-label">À propos</span><p>${esc(L.description)}</p></div>` : ''}
+          </div>
+          ${staff() ? `<div class="card lv-regie"><div class="lv-regie-head"><div><span class="lv-label">Régie</span><b>Vous êtes l'animateur de ce direct</b></div><span class="small faint">Visible par vous seul</span></div><div class="lv-regie-row" id="regie"></div></div>` : ''}
         </div>
-        ${L.description ? `<div class="message-bubble">${esc(L.description)}</div>` : ''}
-        ${staff() ? `<div class="card"><div class="card-title"><h3>${icon('settings')}Régie</h3></div><div class="row" style="gap:6px;flex-wrap:wrap" id="regie"></div></div>` : ''}
-      </div>
-      <aside class="watch-side stack">
-        <div class="card live-chat">
-          ${isClass() ? `          <div class="chips side-tabs" id="tabs" role="tablist" aria-label="Outils de la classe">
-            <button type="button" class="chip" id="tab-chat" role="tab" aria-controls="pane-chat" data-tab="chat">${icon('message', 'sm')}Discussion</button>
-            <button type="button" class="chip" id="tab-people" role="tab" aria-controls="pane-people" data-tab="people">${icon('users', 'sm')}Participants <b id="pCount"></b><em class="nav-badge hidden" id="wBadge"></em></button>
-            <button type="button" class="chip" id="tab-poll" role="tab" aria-controls="pane-poll" data-tab="poll">${icon('chart', 'sm')}Sondage</button></div>` : `<div class="card-title"><h3 id="discussion-title">${icon('message')}Discussion</h3></div>`}
-          <div id="pane-chat" role="${isClass() ? 'tabpanel' : 'region'}" aria-labelledby="${isClass() ? 'tab-chat' : 'discussion-title'}"><div class="chat-list" id="chat" role="log" aria-live="polite" aria-relevant="additions" aria-label="Discussion du direct"></div>
-          ${L.chat || staff() ? `<form id="chatForm" class="stack" style="gap:6px;margin-top:10px">
-            ${isClass() ? '' : `<input class="input" id="chName" maxlength="40" placeholder="Votre nom" value="${esc(ls.get('tx_comment_name', host ? (L.hostName || '') : ''))}">`}
-            <div style="display:flex;gap:6px"><input class="input" id="chText" maxlength="300" placeholder="Écrire un message…" aria-label="Votre message" autocomplete="off"><button class="btn primary" type="submit" aria-label="Envoyer">${icon('arrow-right')}</button></div>
-          </form>` : '<p class="small faint">La discussion est fermée.</p>'}</div>
-          ${isClass() ? '<div id="pane-people" class="hidden" role="tabpanel" aria-labelledby="tab-people"></div><div id="pane-poll" class="hidden" role="tabpanel" aria-labelledby="tab-poll"></div>' : ''}
-        </div>
-      </aside>
-    </section>`;
+        <aside class="watch-side">
+          <div class="card live-chat lv-chat">
+            ${isClass() ? `          <div class="chips side-tabs" id="tabs" role="tablist" aria-label="Outils de la classe">
+              <button type="button" class="chip" id="tab-chat" role="tab" aria-controls="pane-chat" data-tab="chat">${icon('message', 'sm')}Discussion</button>
+              <button type="button" class="chip" id="tab-people" role="tab" aria-controls="pane-people" data-tab="people">${icon('users', 'sm')}Participants <b id="pCount"></b><em class="nav-badge hidden" id="wBadge"></em></button>
+              <button type="button" class="chip" id="tab-poll" role="tab" aria-controls="pane-poll" data-tab="poll">${icon('chart', 'sm')}Sondage</button></div>` : `<div class="lv-chat-head"><h2 id="discussion-title"><span class="lv-dot"></span>Discussion en direct</h2><span class="lv-count" id="chCount"></span></div>`}
+            <div id="pane-chat" class="lv-pane" role="${isClass() ? 'tabpanel' : 'region'}" aria-labelledby="${isClass() ? 'tab-chat' : 'discussion-title'}"><div class="chat-list" id="chat" role="log" aria-live="polite" aria-relevant="additions" aria-label="Discussion du direct"></div>
+            ${L.chat || staff() ? `<form id="chatForm" class="lv-form">
+              ${isClass() ? '' : `<div class="lv-as ${name ? '' : 'hidden'}" id="chAs">${icon('edit', 'sm')}<span>Vous écrivez en tant que <b id="chAsName">${esc(name)}</b></span><button type="button" id="chAsEdit">Modifier</button></div>
+              <input class="input ${name ? 'hidden' : ''}" id="chName" maxlength="40" placeholder="Votre nom (affiché dans la discussion)" value="${esc(name)}">`}
+              <div class="lv-send"><input class="input" id="chText" maxlength="300" placeholder="Écrire un message…" aria-label="Votre message" autocomplete="off"><button class="lv-send-btn" type="submit" aria-label="Envoyer">${icon('arrow-right')}</button></div>
+            </form>` : '<p class="lv-closed">' + icon('lock', 'sm') + 'La discussion est fermée.</p>'}</div>
+            ${isClass() ? '<div id="pane-people" class="hidden" role="tabpanel" aria-labelledby="tab-people"></div><div id="pane-poll" class="hidden" role="tabpanel" aria-labelledby="tab-poll"></div>' : ''}
+          </div>
+        </aside>
+      </section>
+    </div>`;
     renderStage(); renderChat(L.messages || []); bindCommon();
     if (isClass()) { renderBar(); renderTiles(); renderPeople(); renderPoll(); setTab(tab); }
     if (staff()) renderRegie();
@@ -191,11 +265,11 @@ export const roomView = (() => {
     clearInterval(timer);
     if (hlsInst) { hlsInst.destroy(); hlsInst = null; }
     const early = L.startsAt && L.startsAt > Date.now() && L.status !== 'live';
-    if (L.status === 'ended' && !staff()) { stg.innerHTML = overlay('Ce direct est terminé', 'Merci de l\'avoir suivi !'); return; }
+    if (L.status === 'ended' && !staff()) { stg.innerHTML = `<div class="live-empty lv-soon"><div class="lv-soon-in"><span class="lv-end-ico">🎬</span><b class="lv-soon-t">Ce direct est terminé</b><span class="small">Merci de l'avoir suivi ! Partagez le lien pour la prochaine fois.</span></div></div>`; return; }
     if (waiting) { stg.innerHTML = overlay('Salle d\'attente', 'L\'animateur va vous faire entrer dans un instant…'); return; }
     if (early && !staff()) {
-      stg.innerHTML = overlay('Le direct commence bientôt', '<b class="live-countdown" id="cd"></b>');
-      const tick = () => { const s = Math.max(0, Math.round((L.startsAt - Date.now()) / 1000)); const e = $('#cd', root); if (e) e.textContent = (s >= 86400 ? Math.floor(s / 86400) + ' j ' : '') + [Math.floor(s % 86400 / 3600), Math.floor(s % 3600 / 60), s % 60].map(n => String(n).padStart(2, '0')).join(':'); if (!s) { L.status = 'live'; renderStage(); } };
+      stg.innerHTML = `<div class="live-empty lv-soon"><div class="lv-soon-in"><span class="lv-label">Le direct commence dans</span><b class="live-countdown" id="cd"></b><span class="lv-soon-t">${esc(L.title)}</span><span class="small">${longDate(L.startsAt)}</span></div></div>`;
+      const tick = () => { const s = Math.max(0, Math.round((L.startsAt - Date.now()) / 1000)); const e = $('#cd', root); if (e) e.textContent = (s >= 86400 ? Math.floor(s / 86400) + ' j ' : '') + [Math.floor(s % 86400 / 3600), Math.floor(s % 3600 / 60), s % 60].map(n => String(n).padStart(2, '0')).join(':'); if (!s) { L.status = 'live'; const b = $('#lBadge', root); if (b) { b.className = 'live-badge on'; b.textContent = badgeText(); } $('#lvWrap', root)?.classList.add('is-live'); renderStage(); } };
       tick(); timer = setInterval(tick, 1000); return;
     }
     if (L.kind === 'embed') {
@@ -217,7 +291,7 @@ export const roomView = (() => {
       bindUnmute(v); return;
     }
     // classe virtuelle
-    stg.innerHTML = `<video id="lv" class="player" autoplay playsinline ${role === 'host' ? 'muted' : ''}></video><div class="react-layer" id="reacts"></div>
+    stg.innerHTML = `<video id="lv" class="player" autoplay playsinline ${role === 'host' ? 'muted' : ''}></video>
       ${role !== 'host' ? '<button type="button" class="unmute hidden" id="unmute">🔊 Activer le son</button>' : ''}
       <div class="live-wait" id="wait">${overlayInner(role === 'host' ? 'Prêt à diffuser' : 'En attente du tuteur', role === 'host' ? 'Choisissez Caméra, Écran ou Micro seul dans la barre ci-dessous.' : 'Le cours démarre dès que le tuteur lance sa caméra ou son écran.')}</div>
       ${role === 'host' && out.source === 'audio' ? `<div class="audio-art" style="position:absolute;inset:0">${icon('music', 'xl')}</div>` : ''}`;
@@ -400,15 +474,19 @@ export const roomView = (() => {
   /* ---------------- discussion ---------------- */
   function renderChat(list) {
     const box = $('#chat', root); if (!box) return;
-    box.innerHTML = list.length ? list.map(msgHtml).join('') : '<p class="small faint" id="chEmpty">Soyez le premier à écrire 👋</p>';
+    nMsg = list.length; setCount();
+    box.innerHTML = list.length ? list.map(msgHtml).join('') : `<div class="lv-empty-chat" id="chEmpty"><span>💬</span><b>Aucun message pour l'instant</b><span class="small">Dites bonjour et lancez la discussion !</span></div>`;
     box.scrollTop = box.scrollHeight;
   }
-  function msgHtml(m) { return `<div class="chat-msg ${m.h ? 'host' : ''}"><b>${esc(m.n)}${m.h ? ' · animateur' : ''}</b> ${esc(m.t)}</div>`; }
+  function setCount() { const c = $('#chCount', root); if (c) c.textContent = nMsg ? nMsg + ' message' + (nMsg > 1 ? 's' : '') : ''; }
+  function msgHtml(m) {
+    return `<div class="chat-msg ${m.h ? 'host' : ''}"><span class="lv-av" style="--h:${hue(m.n)}">${esc(initials(m.n))}</span><div class="lv-msg"><div class="lv-msg-head"><b>${esc(m.n)}</b>${m.h ? '<em>Animateur</em>' : ''}${m.at ? `<time>${hhmm(m.at)}</time>` : ''}</div><p>${esc(m.t)}</p></div></div>`;
+  }
   function addMsg(m) {
     const box = $('#chat', root); if (!box) return;
     const e = $('#chEmpty', root); if (e) e.remove();
     const near = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-    box.insertAdjacentHTML('beforeend', msgHtml(m));
+    box.insertAdjacentHTML('beforeend', msgHtml(m)); nMsg++; setCount();
     if (near) box.scrollTop = box.scrollHeight;
     if (isClass() && tab !== 'chat') { const b = root.querySelector('#tabs [data-tab="chat"]'); if (b) b.classList.add('pulse'); }
   }
@@ -435,12 +513,24 @@ export const roomView = (() => {
         buttons[next].focus();
       };
     }
+    const ed = $('#chAsEdit', root);
+    if (ed) ed.onclick = () => { $('#chAs', root).classList.add('hidden'); const ni = $('#chName', root); ni.classList.remove('hidden'); ni.focus(); ni.select(); };
+    $('#lvReacts', root).onclick = (e) => {
+      const b = e.target.closest('[data-e]'); if (!b || !sock) return;
+      const now = Date.now(); if (now - lastReact < 850) return; lastReact = now;
+      sock.emit('live-react', { e: b.dataset.e });
+      b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop');
+    };
     const f = $('#chatForm', root);
     if (f) f.onsubmit = (e) => {
       e.preventDefault();
       const t = $('#chText', root).value.trim(); if (!t || !sock) return;
       const ni = $('#chName', root);
-      if (ni) { const n = ni.value.trim(); if (!n) { toast('Indiquez votre nom', 'error'); ni.focus(); return; } ls.set('tx_comment_name', n); sock.emit('live-name', { name: n }); }
+      if (ni) {
+        const n = ni.value.trim(); if (!n) { toast('Indiquez votre nom', 'error'); ni.classList.remove('hidden'); ni.focus(); return; }
+        if (n !== ls.get('tx_comment_name', '') || !ni.classList.contains('hidden')) { ls.set('tx_comment_name', n); sock.emit('live-name', { name: n }); }
+        ni.classList.add('hidden'); const as = $('#chAs', root); if (as) { as.classList.remove('hidden'); $('#chAsName', root).textContent = n; }
+      }
       sock.emit('live-chat', { text: t }); $('#chText', root).value = '';
     };
   }
@@ -462,11 +552,12 @@ export const roomView = (() => {
       if (out.stream) sock.emit('live-peers', null, (list) => list.forEach(offerTo));   // reconnexion pendant une diffusion
     });
     on('live-chat', (m) => addMsg(m));
+    on('live-react', ({ e }) => floatReaction(e));
     on('live-viewers', (d) => { if (d.id === id) setViewers(d.n); });
     on('live-update', (u) => {
       if (u.deleted) { toast('Ce direct a été supprimé', 'info'); L.status = 'ended'; renderStage(); return; }
       const reStage = u.status !== L.status; L = Object.assign(L, u);
-      if (staff()) draw(); else if (reStage) { const b = $('#lBadge', root); if (b) { b.className = 'live-badge ' + (L.status === 'live' ? 'on' : ''); b.textContent = badgeText(); } renderStage(); }
+      if (staff()) draw(); else if (reStage) { const b = $('#lBadge', root); if (b) { b.className = 'live-badge ' + (L.status === 'live' ? 'on' : ''); b.textContent = badgeText(); } const w = $('#lvWrap', root); if (w) w.classList.toggle('is-live', L.status === 'live'); renderStage(); }
     });
     if (!isClass()) return;
     on('live-state', (s) => {
@@ -479,7 +570,6 @@ export const roomView = (() => {
     on('live-waiting', (w) => { waitList = w; renderPeople(); });
     on('live-knock', ({ name }) => toast(`🚪 ${name} attend dans la salle d'attente`, 'info', { action: 'Voir', onAction: () => setTab('people') }));
     on('live-hand-up', ({ name }) => toast(`✋ ${name} lève la main`, 'info', { action: 'Voir', onAction: () => setTab('people') }));
-    on('live-react', ({ e }) => floatReaction(e));
     on('live-host', ({ online, peer }) => {
       if (online) hostPeer = peer;
       else { const x = hostPeer && inc.get(hostPeer); if (x) { x.pc.close(); inc.delete(hostPeer); } hostPeer = null; if (role !== 'host') renderStage(); }
@@ -671,7 +761,10 @@ export const roomView = (() => {
   function floatReaction(e) {
     const layer = $('#reacts', root); if (!layer) return;
     const el = document.createElement('span'); el.className = 'react-float'; el.textContent = e;
-    el.style.left = (10 + Math.random() * 75) + '%';
+    el.style.left = (6 + Math.random() * 22) + '%';
+    el.style.setProperty('--dx', (Math.random() * 60 - 30).toFixed(0) + 'px');
+    el.style.fontSize = (28 + Math.random() * 14).toFixed(0) + 'px';
+    while (layer.children.length > 24) layer.firstChild.remove();
     layer.appendChild(el); setTimeout(() => el.remove(), 2600);
   }
 

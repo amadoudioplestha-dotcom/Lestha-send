@@ -31,6 +31,13 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.14.1 — Nouvelle page « Direct »
+- Salle du direct façon plateforme vidéo : grand lecteur avec halo, badge EN DIRECT et compteur de spectateurs sur l'image, réactions des spectateurs qui s'envolent sur la vidéo, partage WhatsApp / lien / QR en pastilles, fiche de l'animateur avec avatar et « À propos ».
+- Discussion en direct repensée : avatars colorés, heure, badge « Animateur », nom mémorisé (« Vous écrivez en tant que… »), zone de saisie fixe en bas.
+- Studio de création : choix de la source en cartes, détection automatique de la plateforme dans le lien, aperçu en direct de la page, « Mes directs » en vignettes.
+- Début prévu respecté : compte à rebours plein écran jusqu'à l'heure dite, puis passage automatique en direct.
+- Correctif : le bouton Retour ne casse plus la mise en page du direct. Téléphone : lecteur bord à bord.
+
 ## Nouveautés 3.14 — Outils de l'enseignant pendant une réunion ou un cours
 
 - **Fenêtre flottante** (Chrome, Edge) : elle s'ouvre en cliquant « Présenter » et reste au-dessus de PowerPoint ou d'un autre onglet. On y voit les mains levées dans l'ordre (bouton « Donner la parole »), les réactions, la discussion (on peut répondre), « compris / perdu », qui suit le cours, le minuteur, et on y coupe son micro ou arrête la présentation. Bouton dédié dans la barre pendant une présentation. Safari : version image en lecture seule. Ailleurs : notification du système, titre de l'onglet qui clignote, petit son.
