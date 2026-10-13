@@ -138,11 +138,14 @@ test('galerie : le serveur compresse lui-même une photo arrivée sans aperçu',
   assert.equal(th.headers.get('content-type'), 'image/jpeg');
   const tb = Buffer.from(await th.arrayBuffer());
   const m = await sharp(tb).metadata();
-  assert.equal(Math.min(m.width, m.height), 360);
+  assert.equal(Math.min(m.width, m.height), 300);
   const view = await fetch(`${srv.base}/api/public/t/${id}/pv/${f.id}/view?v=visiteur`);
   const vm = await sharp(Buffer.from(await view.arrayBuffer())).metadata();
   assert.equal(Math.max(vm.width, vm.height), 1400);
   const again = await call(srv.base, `/api/public/t/${id}?v=visiteur`);
   assert.ok(again.data.files[0].th && again.data.files[0].pv && !again.data.files[0].spv);
   assert.equal(again.data.files[0].iw, 3000);
+  // 3.21 : aperçu flou minuscule directement dans la réponse
+  assert.match(again.data.files[0].lq, /^data:image\/jpeg;base64,/);
+  assert.ok(again.data.files[0].lq.length < 2800);
 });

@@ -25,6 +25,13 @@ export function mountGallery(box, o) {
   const thumbOf = (f) => f.thu || (f.th ? o.url(f.th, true) : null) || (f.spv && o.pvUrl ? o.pvUrl(f.id, 'thumb') : null)
     || f.pvu || (f.pv ? o.url(f.pv, true) : null)
     || (kindOf(f) === 'image' && f.size < 25e6 && (safari || !/heic|heif/i.test((f.type || '') + f.name)) ? o.url(f.id, true) : null);
+  const fullOf = (f) => f.pvu || (f.pv ? o.url(f.pv, true) : f.spv && o.pvUrl ? o.pvUrl(f.id, 'view') : o.url(f.id, true));
+  // Met en cache la version écran d'une photo avant qu'on l'ouvre (au toucher, ou pour les voisines dans la visionneuse)
+  const warmed = new Set();
+  const warm = (i) => {
+    const f = files[i]; if (!f || warmed.has(i) || kindOf(f) !== 'image') return;
+    warmed.add(i); const im = new Image(); im.decoding = 'async'; im.src = fullOf(f);
+  };
   const nPhotos = files.filter(f => kindOf(f) === 'image').length, nVideos = files.length - nPhotos;
   const label = [nPhotos ? `${nPhotos} photo${nPhotos > 1 ? 's' : ''}` : '', nVideos ? `${nVideos} vidéo${nVideos > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
 
@@ -36,9 +43,11 @@ export function mountGallery(box, o) {
     <div class="gal-grid">
       ${files.map((f, i) => {
         const th = thumbOf(f), video = kindOf(f) === 'video';
-        return `<div class="gal-tile ${video ? 'is-video' : ''}" data-gi="${i}">
+        // 3.21 : l'aperçu flou (dans la page) s'affiche tout de suite ; le premier écran de vignettes part en priorité
+        const lq = typeof f.lq === 'string' && f.lq.startsWith('data:image/jpeg;base64,') ? f.lq : '';
+        return `<div class="gal-tile ${video ? 'is-video' : ''}${lq ? ' has-lq' : ''}" data-gi="${i}"${lq ? ` style="background-image:url('${lq}')"` : ''}>
           <button type="button" class="gal-open" data-open="${i}" aria-label="Agrandir ${esc(f.name)}">
-            ${th ? `<img src="${th}" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : ''}
+            ${th ? `<img src="${th}" alt="" ${i < 15 ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async" onload="this.classList.add('in')" onerror="this.remove()">` : ''}
             <span class="gal-ph">${icon(video ? 'video' : 'image')}<small>${esc(f.name)}</small></span>
             ${video ? `<span class="gal-play">${icon('play', 'sm')}</span>` : ''}
           </button>
@@ -74,6 +83,8 @@ export function mountGallery(box, o) {
   const toggle = (i) => { if (sel.has(i)) sel.delete(i); else sel.add(i); paintSel(i); };
 
   let viewer = null;
+  // Dès que le doigt touche une photo, sa version écran commence à arriver (≈ 100 ms gagnées avant l'ouverture)
+  box.addEventListener('pointerdown', (e) => { const op = e.target.closest('[data-open]'); if (op) warm(+op.dataset.open); }, { passive: true });
   box.onclick = (e) => {
     const pk = e.target.closest('[data-pick]'); if (pk) { toggle(+pk.dataset.pick); return; }
     const op = e.target.closest('[data-open]'); if (op) { viewer = openViewer(+op.dataset.open); return; }
@@ -172,12 +183,12 @@ export function mountGallery(box, o) {
         const src = q.length ? o.url(q[q.length - 1].id, true) : o.url(f.id, true);   // qualité légère si l'expéditeur l'a préparée
         s.innerHTML = `<video class="gv-video" controls playsinline preload="metadata" ${f.th ? `poster="${f.thu || o.url(f.th, true)}"` : ''} src="${src}"></video>`;
       } else {
-        const full = f.pvu || (f.pv ? o.url(f.pv, true) : f.spv && o.pvUrl ? o.pvUrl(f.id, 'view') : o.url(f.id, true));
+        const full = fullOf(f);
         s.innerHTML = `<div class="gv-zoom"><img class="gv-img" alt="${esc(f.name)}" decoding="async" src="${full}"></div><div class="gv-spin"><span class="spinner"></span></div>`;
         const img = $('img', s);
         // La vignette déjà en cache s'affiche tout de suite, floutée, pendant que la version écran arrive
         const th = f.thu || (f.th ? o.url(f.th, true) : null) || (f.spv && o.pvUrl ? o.pvUrl(f.id, 'thumb') : null);
-        if (th) s.style.backgroundImage = `url("${th}")`;
+        if (th || f.lq) s.style.backgroundImage = [th && `url("${th}")`, f.lq && `url("${f.lq}")`].filter(Boolean).join(',');
         img.onload = () => { s.classList.add('loaded'); s.style.backgroundImage = ''; };
         img.onerror = () => { s.classList.add('loaded'); s.innerHTML = `<div class="gv-fail">${icon('image')}<p>Aperçu indisponible sur cet appareil${/heic|heif/i.test(f.type + f.name) ? ' (format HEIC)' : ''}.</p>${o.canDownload ? `<button type="button" class="btn primary sm" data-gv="dl">${icon('download', 'sm')}Télécharger l'original</button>` : ''}</div>`; };
         bindZoom(s);
@@ -190,6 +201,7 @@ export function mountGallery(box, o) {
       const prev = cur; cur = i;
       if (prev >= 0) { const pv = track.children[prev] && $('video', track.children[prev]); if (pv) pv.pause(); resetZoom(track.children[prev]); }
       for (let k = 0; k < files.length; k++) { if (Math.abs(k - i) <= 1) fill(k); else if (Math.abs(k - i) > 3) unfill(k); }
+      warm(i + 2); warm(i - 2);   // la photo d'après est déjà là quand on glisse
       paint();
     };
     const go = (i, smooth = true) => {

@@ -31,6 +31,14 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.21 — galerie qui s'affiche tout de suite
+
+- Chaque photo arrive avec un minuscule aperçu flou (≈ 500 octets) inclus dans la page : la grille est colorée dès l'ouverture, même en 4G faible.
+- Les 15 premières vignettes partent en priorité ; vignettes plus légères (300 px).
+- Sur le serveur, toutes les vignettes sont fabriquées avant les versions écran, 15 s après l'envoi (au lieu de 90 s).
+- Visionneuse : la photo commence à charger dès que le doigt la touche, et les photos voisines sont préchargées pendant qu'on regarde.
+- La sélection reste instantanée (rien n'a changé de ce côté).
+
 ## Nouveautés 3.20 — Photos légères pour tout le monde
 
 - **Le serveur compresse lui-même les photos** qui n'ont pas encore d'aperçu (anciens liens, navigateur qui n'a pas pu le faire) : vignette ≈ 360 px (≈ 10 Ko) et version écran 1400 px (≈ 50-200 Ko), faites une seule fois puis gardées. Une photo à la fois pour ménager le serveur ; celle qu'un élève regarde passe devant. L'original n'est jamais modifié et reste celui qu'on télécharge. Route : `/api/public/t/:id/pv/:fid/thumb|view`.

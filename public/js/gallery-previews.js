@@ -3,7 +3,7 @@
    Les destinataires parcourent la galerie en 4G sans télécharger les originaux, qui restent intacts. */
 import { api } from './core.js';
 
-const THUMB = 360;          // plus petit côté de la vignette (grille 3 colonnes, écran x3)
+const THUMB = 300;          // plus petit côté de la vignette (grille 3 colonnes ≈ 130 px, écran x2-x3)
 const THUMB_MAX = 720;      // plus grand côté, borné
 const VIEW = 1400;          // plus grand côté de la version écran (net sur téléphone, léger en 4G)
 const MAX_PIXELS = 60e6;    // au-delà, on laisse tomber (mémoire des petits téléphones)
@@ -61,7 +61,7 @@ export async function makePreviews(file) {
     const sw = video ? src.videoWidth : src.naturalWidth, sh = video ? src.videoHeight : src.naturalHeight;
     if (!sw || !sh || sw * sh > MAX_PIXELS) return null;
     const ts = Math.min(1, THUMB / Math.min(sw, sh), THUMB_MAX / Math.max(sw, sh));
-    const thumb = await toJpeg(src, sw, sh, Math.round(sw * ts), Math.round(sh * ts), 0.72);
+    const thumb = await toJpeg(src, sw, sh, Math.round(sw * ts), Math.round(sh * ts), 0.66);
     let view = null;
     // Version écran seulement si elle allège vraiment (grande photo ou format non affichable partout, comme HEIC)
     const heavy = file.size > 700e3 || Math.max(sw, sh) > 2000 || /heic|heif/i.test((file.type || '') + file.name);
