@@ -11,14 +11,14 @@ const net = require('node:net');
 const ROOT = path.join(__dirname, '..');
 const freePort = () => new Promise((resolve) => { const s = net.createServer(); s.listen(0, () => { const p = s.address().port; s.close(() => resolve(p)); }); });
 
-async function startServer() {
+async function startServer(extra = {}) {
   const port = await freePort();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lestha-gal-'));
   const env = Object.assign({}, process.env, {
     PORT: String(port), STORAGE_DRIVER: 'local', DATA_DIR: dir, PUBLIC_URL: `http://127.0.0.1:${port}`,
     RENDER: '', RENDER_SERVICE_ID: '', SENDGRID_API_KEY: '', SMTP_HOST: '', UPLOAD_CODE: '', ORIGIN_SECRET: '',
     TURNSTILE_SECRET: '', TURNSTILE_SITE_KEY: '', ADMIN_PASSWORD: '', NODE_ENV: 'test'
-  });
+  }, extra);
   const child = spawn(process.execPath, ['server.js'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = ''; child.stdout.on('data', d => { log += d; }); child.stderr.on('data', d => { log += d; });
   const base = `http://127.0.0.1:${port}`;
@@ -167,4 +167,36 @@ test('galerie : une photo illisible par le serveur ne bloque rien (deux essais, 
   }
   const pub = await call(srv.base, `/api/public/t/${id}?v=visiteur`);
   assert.ok(!pub.data.files[0].spv);   // abandon après deux essais : plus de file d'attente pour rien
+});
+
+test('vidéo : le serveur fabrique lui-même 480p et 720p quand l\'expéditeur ne l\'a pas fait', { timeout: 120e3 }, async (t) => {
+  const { execFileSync } = require('child_process');
+  let ff; try { ff = require('ffmpeg-static'); execFileSync(ff, ['-version'], { stdio: 'ignore' }); } catch (e) { t.skip('ffmpeg absent'); return; }
+  const srv = await startServer({ TRANSCODE_DELAY_MS: '0' });
+  t.after(srv.stop);
+  const src = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'lestha-vid-')), 'cours.mp4');
+  execFileSync(ff, ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=1920x1080:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '4', '-c:v', 'libx264', '-preset', 'ultrafast', '-b:v', '12M', '-c:a', 'aac', '-shortest', src]);
+  const big = fs.readFileSync(src);
+  const c = await call(srv.base, '/api/transfers', { method: 'POST', body: { files: [{ name: 'cours.mp4', size: big.length, type: 'video/mp4' }] } });
+  const { id, ownerKey: key } = c.data; const f = c.data.files[0];
+  const u = await call(srv.base, `/api/transfers/${id}/files/${f.id}/urls`, { method: 'POST', key, body: { parts: [1] } });
+  await fetch(u.data.urls[1], { method: 'PUT', body: big });
+  await call(srv.base, `/api/transfers/${id}/files/${f.id}/complete`, { method: 'POST', key });
+  await call(srv.base, `/api/transfers/${id}/finalize`, { method: 'POST', key, body: {} });
+  let pub;
+  for (let i = 0; i < 120; i++) {
+    pub = await call(srv.base, `/api/public/t/${id}?v=visiteur`);
+    if ((pub.data.files[0].q || []).length >= 2) break;
+    await new Promise(r => setTimeout(r, 500));
+  }
+  const q = pub.data.files[0].q || [];
+  assert.deepEqual(q.map(x => x.h), [480, 720]);
+  assert.match(q[0].mime, /avc1/);
+  assert.ok(!pub.data.files[0].sq);
+  const r = await fetch(`${srv.base}/api/public/t/${id}/f/${q[0].id}?v=visiteur&inline=1`);
+  assert.equal(r.status, 200);
+  const out = path.join(path.dirname(src), 'q.mp4');
+  fs.writeFileSync(out, Buffer.from(await r.arrayBuffer()));
+  const info = (() => { try { execFileSync(ff, ['-hide_banner', '-i', out], { stdio: 'pipe' }); } catch (e) { return String(e.stderr); } })();
+  assert.match(info, /854x480/);
 });

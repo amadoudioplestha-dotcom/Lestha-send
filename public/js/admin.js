@@ -207,6 +207,17 @@ function meetCard(R) {
   </div>`;
 }
 
+/** Problèmes en cours en haut ; ceux pas revus depuis la dernière mise à jour à part, repliés */
+function problemsHtml(R) {
+  const P = R.problems || (R.errors || []).map(([k, n]) => ({ k, n }));
+  const cur = P.filter(p => !p.old), old = P.filter(p => p.old);
+  const row = (p) => `<div class="row" style="justify-content:space-between;gap:10px;align-items:center"><span class="small" style="min-width:0">${esc(p.k)}${p.last ? `<span class="faint"> · ${relTime(p.last)}</span>` : ''}</span><span class="row" style="gap:6px;flex:none"><span class="pill ${p.old ? '' : 'bad'}">${num(p.n)}</span><button type="button" class="btn sm ghost" data-pfix='${esc(JSON.stringify([p.k]))}' title="Le problème a été corrigé : le retirer de la liste">${icon('check', 'sm')}Réglé</button></span></div>`;
+  return (cur.length ? `<div class="stack" style="gap:6px">${cur.map(row).join('')}</div>` : '<p class="small faint">Aucun problème en cours 🎉</p>')
+    + (old.length ? `<details style="margin-top:12px"><summary class="small muted" style="cursor:pointer">${old.length} problème(s) pas revu(s) depuis la mise à jour v${esc((R.version && R.version.v) || '')} : probablement réglés</summary>
+        <div class="stack" style="gap:6px;margin-top:8px">${old.map(row).join('')}</div>
+        <button type="button" class="btn sm" style="margin-top:8px" data-pfix='${esc(JSON.stringify(old.map(p => p.k)))}'>${icon('check', 'sm')}Tout marquer comme réglé</button></details>` : '');
+}
+
 async function renderInsights(body) {
   body.innerHTML = `<div class="card"><p class="muted"><span class="spinner"></span> Chargement des retours…</p></div>`;
   let R, F, I;
@@ -254,8 +265,7 @@ async function renderInsights(body) {
           <div class="control"><div class="control-text"><b>Vitesse moyenne ${R.p2pAvgSpeed ? bytes(R.p2pAvgSpeed) + '/s' : '—'}</b><span>Meilleure : ${X.best ? bytes(X.best) + '/s' : '—'} · ${bytes(X.bytes)} transférés en Direct</span></div></div>
           <div class="control"><div class="control-text"><b>${R.relayShare == null ? '—' : Math.round(R.relayShare * 100) + ' %'} via le relais</b><span>${num(X.direct)} connexion(s) directe(s) · ${num(X.relay)} par relais TURN</span></div></div>
         </div></div>
-      <div class="card"><div class="card-title"><h3>${icon('flag')}Problèmes rencontrés</h3><span class="small faint">messages d'erreur vus à l'écran</span></div>
-        ${R.errors.length ? `<div class="stack" style="gap:6px">${R.errors.map(([k, v]) => `<div class="row" style="justify-content:space-between;gap:10px"><span class="small">${esc(k)}</span><span class="pill bad" style="flex:none">${num(v)}</span></div>`).join('')}</div>` : '<p class="small faint">Aucun problème signalé 🎉</p>'}</div>
+      <div class="card"><div class="card-title"><h3>${icon('flag')}Problèmes rencontrés</h3><span class="small faint">messages d'erreur vus à l'écran</span></div>${problemsHtml(R)}</div>
     </div>
     <div class="grid-2 adm-grid" style="margin-bottom:18px">
       <div class="card"><div class="card-title"><h3>${icon('users')}Comment ils vous ont connu</h3><span class="small faint">questionnaire</span></div>${hbars(relabel(T.heard, HEARD_L))}</div>
@@ -298,6 +308,12 @@ async function renderInsights(body) {
   barChart($('#meetChart'), mb, ['Réunions créées', 'Participations']);
   $('#insDays').onclick = (e) => { const b = e.target.closest('[data-d]'); if (!b) return; A.ins.days = +b.dataset.d; renderInsights(body); };
   $('#fbFilter').onclick = (e) => { const b = e.target.closest('[data-f]'); if (!b) return; A.ins.fbFilter = b.dataset.f; renderInsights(body); };
+  // 3.23 : « Réglé » fait disparaître un problème (il ne revient que s'il se reproduit)
+  body.querySelectorAll('[data-pfix]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { await aapi('/problems/resolve', { method: 'POST', body: { keys: JSON.parse(b.dataset.pfix) } }); toast('Marqué comme réglé', 'success'); renderInsights(body); }
+    catch (err) { toast(err.message, 'error'); b.disabled = false; }
+  });
   $('#insWeekly').onclick = async (e) => { const b = e.currentTarget; b.disabled = true; try { const r = await aapi('/weekly', { method: 'POST', body: {} }); toast('Bilan envoyé à ' + r.to, 'success'); } catch (err) { toast(err.message, 'error'); } b.disabled = false; };
   body.querySelectorAll('[data-fb]').forEach(row => {
     const id = row.dataset.fb;

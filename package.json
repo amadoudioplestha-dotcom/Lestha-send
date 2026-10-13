@@ -1,7 +1,7 @@
 {
   "name": "transferx",
-  "version": "3.22.1",
-  "description": "TransferX \u2014 transfert de fichiers sans limites : mode Cloud (Cloudflare R2, lien persistant, reprise) + mode Direct P2P (WebRTC, z\u00e9ro stockage)",
+  "version": "3.23.0",
+  "description": "TransferX — transfert de fichiers sans limites : mode Cloud (Cloudflare R2, lien persistant, reprise) + mode Direct P2P (WebRTC, zéro stockage)",
   "main": "server.js",
   "engines": {
     "node": ">=20.0.0"
@@ -18,8 +18,9 @@
     "archiver": "^7.0.1",
     "dotenv": "^16.4.5",
     "express": "^4.18.2",
+    "ffmpeg-static": "^5.3.0",
     "nodemailer": "^10.0.15",
-    "socket.io": "^4.7.2",
-    "sharp": "^0.35.4"
+    "sharp": "^0.35.4",
+    "socket.io": "^4.7.2"
   }
 }

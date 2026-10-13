@@ -267,8 +267,10 @@ function paintQ() {
     const on = (v) => (v === 'auto' ? pref === 'auto' : pref !== 'auto' && srcSel && srcSel.id === v);
     menu.innerHTML = `<div class="q-head">Qualité</div>`
       + (list.length > 1 ? `<button type="button" role="menuitemradio" data-qv="auto" class="${on('auto') ? 'on' : ''}">${icon('check', 'sm')}<span>Auto${srcSel && srcSel.auto ? ' <small>' + esc(short(srcSel)) + '</small>' : ''}</span></button>` : '')
-      + list.slice().reverse().map(x => `<button type="button" role="menuitemradio" data-qv="${x.original ? 'orig' : x.h}" class="${on(x.id) || (list.length === 1) ? 'on' : ''}">${icon('check', 'sm')}<span>${x.original ? 'Original <small>' + esc(short(x)) + '</small>' : x.h + 'p'}</span></button>`).join('')
-      + (list.length === 1 ? `<p class="q-note">Seule la version d'origine existe pour cette vidéo. Les qualités 480p et 720p se préparent depuis la page de l'envoi ou la page de gestion (« Créer les qualités »).</p>` : '');
+      + list.slice().reverse().map(x => `<button type="button" role="menuitemradio" data-qv="${x.original ? 'orig' : x.h}" class="${on(x.id) || (list.length === 1) ? 'on' : ''}">${icon('check', 'sm')}<span>${x.original ? 'Original' + (short(x) !== x.label ? ' <small>' + esc(short(x)) + '</small>' : '') : x.h + 'p'}</span></button>`).join('')
+      + (list.length === 1 ? (cur.sq
+        ? `<p class="q-note">Qualités 480p et 720p en préparation sur le serveur${cur.sq.p ? ' : <b>' + cur.sq.p + ' %</b>' : '…'}. Elles apparaîtront ici toutes seules.</p>`
+        : `<p class="q-note">Seule la version d'origine existe pour cette vidéo pour le moment.</p>`) : '');
   }
 }
 function switchSource(next, why) {
@@ -302,6 +304,24 @@ function onWaiting() {
 /** Auto, comme YouTube : on démarre sur une qualité sûre, puis on monte d'un cran quand la connexion le permet.
     Preuve de connexion rapide : pendant la lecture, la vidéo se charge au moins 2 fois plus vite qu'elle ne se regarde. */
 let upTimer = null;
+/** Qualités en préparation sur le serveur : on regarde de temps en temps, et le menu se met à jour tout seul */
+let sqTimer = null;
+function watchServerQualities() {
+  clearTimeout(sqTimer);
+  if (!cur || !cur.sq) return;
+  const fid = cur.id;
+  sqTimer = setTimeout(async () => {
+    try {
+      const d = await api(`/api/public/t/${id}?${q()}`);
+      const nf = (d.files || []).find(x => x.id === fid);
+      if (!nf || !cur || cur.id !== fid) return;
+      cur.sq = nf.sq; if (nf.q) cur.q = nf.q; if (nf.vw) { cur.vw = nf.vw; cur.vh = nf.vh; }
+      if (nf.q && nf.q.length && srcSel && srcSel.auto && player && (player.paused || player.currentTime < 1)) switchSource(chooseSource('auto'));
+      else paintQ();
+    } catch (e) { /* on réessaiera */ }
+    watchServerQualities();
+  }, 15000);
+}
 function bindStepUp() {
   clearInterval(upTimer);
   let played = 0, lastTick = 0, lastUp = Date.now();
@@ -332,14 +352,25 @@ function bindPro(review, chain) {
   paintQ();
   const qBtn = $('#qBtn'), qMenu = $('#qMenu');
   if (qBtn && qMenu) {
+    // Le menu vit dans la page (pas dans le cadre de la vidéo, qui le couperait ou le décalerait)
+    document.querySelectorAll('body > .q-menu').forEach(m => { if (m !== qMenu) m.remove(); });
+    document.body.appendChild(qMenu);
     const close = () => { qMenu.classList.add('hidden'); qBtn.setAttribute('aria-expanded', 'false'); };
-    qBtn.onclick = (e) => { e.stopPropagation(); const open = qMenu.classList.toggle('hidden') === false; qBtn.setAttribute('aria-expanded', open ? 'true' : 'false'); };
+    qBtn.onclick = (e) => {
+      e.stopPropagation(); const open = qMenu.classList.toggle('hidden') === false; qBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (!open) return;
+      // Menu posé au-dessus du bouton, sans être coupé par le cadre de la vidéo
+      const r = qBtn.getBoundingClientRect();
+      qMenu.style.left = Math.max(8, Math.min(r.left, innerWidth - qMenu.offsetWidth - 8)) + 'px';
+      qMenu.style.top = Math.max(8, r.top - qMenu.offsetHeight - 8) + 'px';
+    };
+    addEventListener('scroll', close, { passive: true });
     qMenu.onclick = (e) => {
       const b = e.target.closest('[data-qv]'); if (!b) return;
       const v = b.dataset.qv; ls.set('tx_q', v === 'orig' ? '99999' : v);
       switchSource(chooseSource(v === 'orig' ? 99999 : v)); close();
     };
-    document.addEventListener('click', (e) => { if (!e.target.closest('.q-wrap')) close(); });
+    document.addEventListener('click', (e) => { if (!e.target.closest('.q-wrap, .q-menu')) close(); });
   }
   $('#selQ').onchange = (e) => {
     const v = e.target.value; ls.set('tx_q', v === 'orig' ? '99999' : v);
@@ -347,7 +378,7 @@ function bindPro(review, chain) {
   };
   player.addEventListener('waiting', onWaiting);
   player.addEventListener('seeking', () => { lastSeek = Date.now(); });
-  bindStepUp();
+  bindStepUp(); watchServerQualities();
   // Qualité illisible par ce navigateur (codec) : retour automatique à l'original
   player.addEventListener('error', () => { if (srcSel && !srcSel.original) { const o = PRO.sourcesOf(cur).pop(); switchSource(Object.assign({ auto: srcSel.auto }, o), 'Cette qualité ne se lit pas ici : lecture de l\'original'); } });
   PRO.bindHoverPreview(X);

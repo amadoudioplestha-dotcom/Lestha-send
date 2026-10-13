@@ -1881,7 +1881,7 @@ html.gal-locked, html.gal-locked body { overflow: hidden; }
 .q-btn:hover, .q-btn[aria-expanded="true"] { background: rgba(255,255,255,.16); }
 .q-btn #qBadge { padding: 3px 7px; border-radius: 6px; color: #04121f; background: linear-gradient(135deg, #00b4d8, #06d6a0); letter-spacing: .03em; }
 .q-btn #qBadge:empty { display: none; }
-.q-menu { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 20; min-width: 210px; max-width: min(300px, 86vw); padding: 6px; border-radius: 12px; background: rgba(12, 18, 32, .97); border: 1px solid rgba(255,255,255,.14); box-shadow: 0 14px 40px rgba(0,0,0,.45); color: #fff; }
+.q-menu { position: fixed; z-index: 60; max-height: 70vh; overflow-y: auto; min-width: 210px; max-width: min(300px, 86vw); padding: 6px; border-radius: 12px; background: rgba(12, 18, 32, .97); border: 1px solid rgba(255,255,255,.14); box-shadow: 0 14px 40px rgba(0,0,0,.45); color: #fff; }
 .q-menu.hidden { display: none; }
 .q-head { padding: 6px 10px 8px; font: 700 11px/1 Inter, sans-serif; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.6); }
 .q-menu button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 8px 10px; border: 0; border-radius: 8px; background: none; color: inherit; font: 600 14px/1.2 Inter, sans-serif; text-align: left; cursor: pointer; }

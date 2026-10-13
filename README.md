@@ -31,6 +31,12 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.23 — qualités vidéo automatiques, problèmes réglés
+
+- Le serveur fabrique lui-même les qualités 480p et 720p (1080p au-dessus) de toute vidéo qui n'en a pas : 2 min après l'envoi si l'appareil de l'expéditeur ne l'a pas fait, ou à la première visite pour les anciennes vidéos. H.264 + AAC, lisible partout, démarrage immédiat (faststart). Une vidéo à la fois, en priorité basse. Nouvelle dépendance : ffmpeg-static. Désactivable avec TRANSCODE=0.
+- Lecteur : pendant la préparation, le menu Qualité affiche l'avancement ; les qualités apparaissent toutes seules, sans recharger.
+- Admin, « Problèmes rencontrés » : bouton « Réglé » (le problème disparaît, et ne revient que s'il se reproduit, en ne comptant que les nouvelles fois). Les problèmes pas revus depuis la dernière mise à jour sont rangés à part, avec « Tout marquer comme réglé ».
+
 ## Nouveautés 3.22.1 — bouton réglages de qualité
 
 - Sous la vidéo, un bouton réglages toujours visible affiche la qualité en cours (« Auto · 720p », « 480p », « Original · 1080p ») et ouvre le menu Auto · Original · 1080p · 720p · 480p, comme YouTube.

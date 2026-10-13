@@ -130,3 +130,32 @@ test('compteurs serveur des réunions : sommes, maximum et rapport', async () =>
   assert.match(JSON.stringify(w.paragraphs), /Réunions : <strong>2<\/strong> créées \(dont 1 cours\)/);
   await ins.flush();
 });
+
+test('problèmes : « Réglé » les retire, ils ne reviennent que s\'ils se reproduisent', async () => {
+  let now = Date.UTC(2026, 9, 13, 10);
+  const ins = createInsights({ storage: memStorage(), secret: 's'.repeat(32), mailer: { enabled: false }, env: {}, ctx: {}, now: () => now });
+  await ins.ready;
+  const h = {};
+  ins.mountAdmin({ get: (p, f) => { h['GET ' + p] = f; }, post: (p, f) => { h['POST ' + p] = f; }, patch() {}, delete() {} });
+  const call = (p, body) => new Promise((resolve) => h['POST ' + p]({ body }, { json: resolve, status() { return this; } }));
+  const r = req({});
+  const msg = 'Le serveur audio ne répond pas. Réessayez dans un instant.';
+  for (let i = 0; i < 3; i++) await ins.record({ e: 'err', aid: AID, msg }, r);
+  now += 1000;
+  let rep = await ins.report(7);
+  const k = rep.problems[0].k;
+  assert.equal(rep.problems[0].n, 3);
+  await call('/problems/resolve', { keys: [k] });
+  rep = await ins.report(7);
+  assert.equal(rep.problems.length, 0);
+  assert.equal(rep.errors.length, 0);
+  now += 1000;
+  await ins.record({ e: 'err', aid: AID, msg }, r);   // il revient : seule la nouvelle occurrence compte
+  rep = await ins.report(7);
+  assert.equal(rep.problems.length, 1);
+  assert.equal(rep.problems[0].n, 1);
+  now += 86400e3;
+  await ins.record({ e: 'err', aid: AID, msg }, r);
+  rep = await ins.report(7);
+  assert.equal(rep.problems[0].n, 2);
+});
