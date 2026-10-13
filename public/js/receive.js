@@ -2,8 +2,9 @@
 import { $, $$, esc, icon, bytes, fileKind, relTime, ls, ss, api, visitorId, toast, modal, copyText, isMobile } from './core.js';
 import { brandHeader } from './profile.js';
 import { track } from './ux.js';
+import { mountGallery, isGalleryFile } from './gallery.js';
 
-let root = null, id = null, data = null, timer = null, poll = null;
+let root = null, id = null, data = null, timer = null, poll = null, gallery = null;
 
 export default {
   async render(r, { match, params }) {
@@ -12,7 +13,7 @@ export default {
     await load();
     if (params && params.get('signaler') === '1') { history.replaceState(history.state, '', '/t/' + id); reportDialog(); }
   },
-  destroy() { clearInterval(timer); clearTimeout(poll); root = null; }
+  destroy() { clearInterval(timer); clearTimeout(poll); if (gallery) gallery.destroy(); gallery = null; root = null; }
 };
 
 const token = () => ss.get('tx_tk_' + id) || ls.get('tx_tk_' + id, null);
@@ -97,6 +98,9 @@ function renderReady() {
   const watchable = (f) => d.playback !== 'off' && ['video', 'audio'].includes(fileKind(f.name, f.type, f.size).kind);
   const isLatest = (f) => !files.some(x => x.versionOf && x.versionOf === (f.versionOf || f.id) && (x.v || 1) > (f.v || 1));
   const playable = files.filter(watchable).filter(isLatest);
+  // Galerie (3.18) : les photos et vidéos se parcourent en grand ; la liste « Contenu » garde le reste
+  const media = files.filter(f => isGalleryFile(f) && isLatest(f));
+  const listed = media.length ? files.filter(f => !media.includes(f)) : files;
   root.innerHTML = `
   <section class="receive-card stack">
     <div class="card glow stack ${d.brand && d.brand.color ? 'branded' : ''}" style="${d.brand && d.brand.color ? '--bc:' + esc(d.brand.color) : ''}">
@@ -129,10 +133,11 @@ function renderReady() {
       ${only ? '' : `<div class="tip">${icon('refresh')}<span>${files.length > 1 ? `Le ZIP ${hasFolders ? 'conserve l\'arborescence des dossiers' : 'regroupe tout'} ; « Un par un » télécharge chaque fichier séparément <b>avec reprise possible</b>. ` : ''}Téléchargement interrompu ? Ouvrez les téléchargements du navigateur et touchez <b>Reprendre</b> : il repart là où il s'était arrêté.</span></div>`}
     </div>
 
-    <div class="card">
-      <div class="card-title"><h3>${icon('folder')}Contenu</h3><span class="small faint">${bytes(d.totalSize)}</span></div>
+    ${media.length ? '<div class="card gal-card" id="gallery"></div>' : ''}
+    ${listed.length ? `<div class="card">
+      <div class="card-title"><h3>${icon('folder')}${media.length ? 'Autres fichiers' : 'Contenu'}</h3><span class="small faint">${bytes(listed.reduce((a, f) => a + (f.size || 0), 0))}</span></div>
       <div class="stack" style="gap:8px" id="dlList">
-        ${files.map(f => {
+        ${listed.map(f => {
           const k = fileKind(f.name, f.type);
           const thumb = k.kind === 'image' && f.size < 12e6 && files.length <= 80;
           const canPreview = ['image', 'video', 'audio'].includes(k.kind) || k.kind === 'pdf';
@@ -145,7 +150,7 @@ function renderReady() {
           </div>`;
         }).join('')}
       </div>
-    </div>
+    </div>` : ''}
     <div class="card invite-card">
       <div class="stack" style="gap:4px;min-width:0">
         <b>Envoyé avec Lestha Send</b>
@@ -156,6 +161,12 @@ function renderReady() {
     <p class="center"><button type="button" class="report-link" id="btnReport">${icon('flag', 'sm')} Signaler un contenu abusif</button></p>
   </section>`;
   bindReady(files);
+  if (gallery) gallery.destroy();
+  gallery = media.length ? mountGallery($('#gallery', root), {
+    files: media, canDownload: !only, onGot: markGot,
+    url: (fid, inline) => fileUrl(fid, inline),
+    zipUrl: (ids) => `/api/public/t/${id}/zip?${q('&only=' + encodeURIComponent(ids.join(',')))}`
+  }) : null;
   tickCountdown();
   clearInterval(timer);
   timer = setInterval(tickCountdown, 1000);
@@ -192,8 +203,10 @@ function bindReady(files) {
   if (seq) seq.onclick = async () => {
     seq.disabled = true;
     toast('Les téléchargements démarrent un par un. Autorisez les téléchargements multiples si le navigateur le demande.', 'info', { duration: 7000 });
-    const links = $$('.dl-btn[data-dl]', root);
-    for (const a of links) { a.click(); await new Promise(r => setTimeout(r, 1400)); }
+    for (const f of files) {
+      const a = document.createElement('a'); a.href = fileUrl(f.id); document.body.appendChild(a); a.click(); a.remove(); markGot(f.id);
+      await new Promise(r => setTimeout(r, 1400));
+    }
     seq.disabled = false;
   };
 }

@@ -19,7 +19,18 @@ export function goBack(fallback) { if (canGoBack()) history.back(); else navigat
 
 export function navigate(path, { replace = false } = {}) {
   if (path === location.pathname + location.search + location.hash && !replace) return;
+  overlayClose = null;
   history[replace ? 'replaceState' : 'pushState']({ idx: replace ? idx() : idx() + 1 }, '', path);
+  render();
+}
+
+/* Calque plein écran (galerie…) : le bouton Retour du téléphone le ferme au lieu de quitter la page */
+let overlayClose = null, skipPop = false;
+export function pushOverlay(close) { history.pushState({ idx: idx() + 1, overlay: 1 }, '', location.href); overlayClose = close; }
+export function popOverlay() { if (!overlayClose) return; overlayClose = null; skipPop = true; history.back(); }
+function onPop() {
+  if (skipPop) { skipPop = false; return; }
+  if (overlayClose) { const f = overlayClose; overlayClose = null; f(); return; }
   render();
 }
 
@@ -74,7 +85,7 @@ export async function render() {
 
 export function startRouter() {
   if (!history.state || history.state.idx == null) history.replaceState(Object.assign({}, history.state, { idx: 0 }), '');
-  window.addEventListener('popstate', render);
+  window.addEventListener('popstate', onPop);
   document.addEventListener('click', (e) => {
     const bk = e.target.closest('[data-back]');
     if (bk && !(e.ctrlKey || e.metaKey || e.shiftKey)) { e.preventDefault(); goBack(bk.getAttribute('href')); return; }

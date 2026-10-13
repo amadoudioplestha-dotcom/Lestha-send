@@ -31,6 +31,15 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.18 — Galerie photos et vidéos
+
+- Sur la page de réception, les photos et vidéos s'affichent en **galerie** : grille de vignettes, puis visionneuse plein écran où l'on fait défiler au doigt (flèches et clavier sur ordinateur).
+- Zoom des photos par double-toucher ou en pinçant ; les vidéos se lisent directement dans la visionneuse.
+- On **coche** les photos voulues (dans la grille ou la visionneuse) puis « Télécharger » : un par un, en un .zip (seulement les fichiers choisis), ou sur téléphone **directement dans la galerie** (feuille de partage du système).
+- Légèreté en 4G : à l'envoi, le navigateur de l'expéditeur fabrique une vignette (≈ 10-30 Ko) et une version écran 1600 px (≈ 100-400 Ko) de chaque photo, plus une image d'aperçu pour chaque vidéo. Les élèves parcourent la galerie sans télécharger les originaux, qui restent intacts. Les anciens envois s'affichent aussi (avec les originaux).
+- Le bouton Retour du téléphone ferme la visionneuse sans quitter la page. Le « visionnage seul » reste respecté (pas de téléchargement).
+- Serveur : `POST /api/transfers/:id/files/:fid/previews` (JPEG seulement, tailles bornées) et `?only=id1,id2` sur le ZIP.
+
 ## Nouveautés 3.17.1 — Console admin : les inscrits
 
 - Nouvel onglet **Inscrits** dans `/admin` : nombre total de comptes, actifs sur 7 et 30 jours, nouveaux de la semaine.

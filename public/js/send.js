@@ -8,6 +8,7 @@ import { track, afterSuccess } from './ux.js';
 import { MAX_DIRECT_BYTES, validateDirectFiles } from './direct-limits.mjs';
 import { openProfile, openHandle } from './profile.js';
 import { buildProxies, proxySupported, isVideoFile } from './proxies.js';
+import { sendPreviews, wantsPreview } from './gallery-previews.js';
 
 /* Compteurs publics de la page d'accueil (vrais chiffres, affichés seulement à partir d'un certain volume) */
 let statsCache = null;
@@ -463,7 +464,7 @@ export function runUpload(ctx) {
   const up = ctx.uploader;
   up.addEventListener('progress', (e) => updateUploading(e.detail));
   up.addEventListener('state', () => updateUploadingState());
-  up.addEventListener('filecomplete', () => refreshFileBars());
+  up.addEventListener('filecomplete', (e) => { refreshFileBars(); queuePreview(ctx, e.detail.id); });
   up.addEventListener('stalled', (e) => {
     const ban = rootEl && $('#upBanner', rootEl);
     const msg = e.detail.kind === 'cors'
@@ -476,6 +477,13 @@ export function runUpload(ctx) {
   keepAwake(true);
   if (location.pathname !== '/') navigate('/'); else if (rootEl) renderUploading();
   up.start();
+}
+
+/** Galerie (3.18) : dès qu'une photo ou une vidéo est envoyée, sa vignette légère part derrière elle */
+function queuePreview(ctx, fid) {
+  const it = ((ctx.uploader && ctx.uploader.items) || []).find(x => x.meta && x.meta.id === fid);
+  if (!it || !wantsPreview(it.file)) return;
+  ctx.pvChain = (ctx.pvChain || Promise.resolve()).then(() => sendPreviews({ id: ctx.id, key: ctx.key, items: [it] })).catch(() => {});
 }
 
 function renderUploading() {
