@@ -149,3 +149,22 @@ test('galerie : le serveur compresse lui-même une photo arrivée sans aperçu',
   assert.match(again.data.files[0].lq, /^data:image\/jpeg;base64,/);
   assert.ok(again.data.files[0].lq.length < 2800);
 });
+
+test('galerie : une photo illisible par le serveur ne bloque rien (deux essais, puis l\'original)', async (t) => {
+  const srv = await startServer();
+  t.after(srv.stop);
+  const bad = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(5000, 7)]);
+  const c = await call(srv.base, '/api/transfers', { method: 'POST', body: { files: [{ name: 'abimee.jpg', size: bad.length, type: 'image/jpeg' }] } });
+  const { id, ownerKey: key } = c.data; const f = c.data.files[0];
+  const u = await call(srv.base, `/api/transfers/${id}/files/${f.id}/urls`, { method: 'POST', key, body: { parts: [1] } });
+  await fetch(u.data.urls[1], { method: 'PUT', body: bad });
+  await call(srv.base, `/api/transfers/${id}/files/${f.id}/complete`, { method: 'POST', key });
+  await call(srv.base, `/api/transfers/${id}/finalize`, { method: 'POST', key, body: {} });
+  for (let i = 0; i < 3; i++) {
+    const r = await fetch(`${srv.base}/api/public/t/${id}/pv/${f.id}/thumb?v=visiteur&r=${i}`);
+    assert.equal(r.status, 200);
+    assert.equal(Buffer.from(await r.arrayBuffer()).length, bad.length);   // l'original, faute de mieux
+  }
+  const pub = await call(srv.base, `/api/public/t/${id}?v=visiteur`);
+  assert.ok(!pub.data.files[0].spv);   // abandon après deux essais : plus de file d'attente pour rien
+});

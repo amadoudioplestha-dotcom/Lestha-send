@@ -31,6 +31,14 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.21.1 — toutes les vignettes finissent par s'afficher
+
+- Une vignette qui échoue (serveur occupé, réseau qui coupe, lien expiré) est redemandée 3 fois, puis remplacée par l'original : plus de case vide.
+- Le serveur accepte les très grandes photos (jusqu'à 200 Mpx et 60 Mo) en les décodant directement en petit.
+- Un échec passager ne condamne plus une photo : deux essais avant d'abandonner (en 3.20, un seul échec renvoyait l'original lourd dans la grille).
+- Vignette manquante : la version écran (≈ 100 Ko) est servie à la place de l'original.
+- Versions écran fabriquées 2 fois plus vite ; le serveur ne fait plus attendre un téléphone plus de 25 s.
+
 ## Nouveautés 3.21 — galerie qui s'affiche tout de suite
 
 - Chaque photo arrive avec un minuscule aperçu flou (≈ 500 octets) inclus dans la page : la grille est colorée dès l'ouverture, même en 4G faible.

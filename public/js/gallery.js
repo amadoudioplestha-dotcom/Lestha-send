@@ -47,7 +47,7 @@ export function mountGallery(box, o) {
         const lq = typeof f.lq === 'string' && f.lq.startsWith('data:image/jpeg;base64,') ? f.lq : '';
         return `<div class="gal-tile ${video ? 'is-video' : ''}${lq ? ' has-lq' : ''}" data-gi="${i}"${lq ? ` style="background-image:url('${lq}')"` : ''}>
           <button type="button" class="gal-open" data-open="${i}" aria-label="Agrandir ${esc(f.name)}">
-            ${th ? `<img src="${th}" alt="" ${i < 15 ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async" onload="this.classList.add('in')" onerror="this.remove()">` : ''}
+            ${th ? `<img src="${th}" alt="" ${i < 15 ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async" onload="this.classList.add('in')">` : ''}
             <span class="gal-ph">${icon(video ? 'video' : 'image')}<small>${esc(f.name)}</small></span>
             ${video ? `<span class="gal-play">${icon('play', 'sm')}</span>` : ''}
           </button>
@@ -81,6 +81,20 @@ export function mountGallery(box, o) {
     if (viewer) viewer.paint();
   };
   const toggle = (i) => { if (sel.has(i)) sel.delete(i); else sel.add(i); paintSel(i); };
+
+  // Une vignette qui échoue (serveur occupé, lien expiré, réseau qui coupe) est redemandée,
+  // puis remplacée par l'original si rien ne marche : chaque case finit par afficher sa photo.
+  const original = (f) => kindOf(f) === 'image' && f.size < 25e6 && (safari || !/heic|heif/i.test((f.type || '') + f.name)) ? o.url(f.id, true) : null;
+  box.addEventListener('error', (e) => {
+    const img = e.target; if (!(img instanceof HTMLImageElement) || !img.closest('.gal-tile')) return;
+    const i = +img.closest('.gal-tile').dataset.gi, f = files[i];
+    const n = +(img.dataset.retry || 0); img.dataset.retry = n + 1;
+    const steps = [1500, 4000, 9000];
+    if (o.pvUrl && n < steps.length) { setTimeout(() => { if (img.isConnected) img.src = o.pvUrl(f.id, 'thumb') + '&r=' + (n + 1); }, steps[n]); return; }
+    const orig = original(f);
+    if (orig && img.src.indexOf(orig) < 0 && n === steps.length) { img.src = orig; return; }
+    img.remove();
+  }, true);
 
   let viewer = null;
   // Dès que le doigt touche une photo, sa version écran commence à arriver (≈ 100 ms gagnées avant l'ouverture)
@@ -190,7 +204,12 @@ export function mountGallery(box, o) {
         const th = f.thu || (f.th ? o.url(f.th, true) : null) || (f.spv && o.pvUrl ? o.pvUrl(f.id, 'thumb') : null);
         if (th || f.lq) s.style.backgroundImage = [th && `url("${th}")`, f.lq && `url("${f.lq}")`].filter(Boolean).join(',');
         img.onload = () => { s.classList.add('loaded'); s.style.backgroundImage = ''; };
-        img.onerror = () => { s.classList.add('loaded'); s.innerHTML = `<div class="gv-fail">${icon('image')}<p>Aperçu indisponible sur cet appareil${/heic|heif/i.test(f.type + f.name) ? ' (format HEIC)' : ''}.</p>${o.canDownload ? `<button type="button" class="btn primary sm" data-gv="dl">${icon('download', 'sm')}Télécharger l'original</button>` : ''}</div>`; };
+        let tries = 0;
+        img.onerror = () => {
+          // Version écran indisponible un instant : on la redemande, puis on essaie l'original
+          if (o.pvUrl && tries < 2) { tries++; setTimeout(() => { if (img.isConnected) img.src = o.pvUrl(f.id, 'view') + '&r=' + tries; }, tries * 2500); return; }
+          if (tries === 2) { tries++; const orig = original(f); if (orig) { img.src = orig; return; } }
+          s.classList.add('loaded'); s.innerHTML = `<div class="gv-fail">${icon('image')}<p>Aperçu indisponible sur cet appareil${/heic|heif/i.test(f.type + f.name) ? ' (format HEIC)' : ''}.</p>${o.canDownload ? `<button type="button" class="btn primary sm" data-gv="dl">${icon('download', 'sm')}Télécharger l'original</button>` : ''}</div>`; };
         bindZoom(s);
       }
     };
