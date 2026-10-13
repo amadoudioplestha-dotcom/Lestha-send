@@ -31,6 +31,10 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.18.1 — Vignettes toujours visibles
+
+- Les liens envoyés avant la 3.18 (sans vignettes légères) affichent maintenant leurs photos dans la grille, même au-delà de 80 photos ou jusqu'à 25 Mo par photo ; les photos d'iPhone (HEIC) s'affichent sur iPhone. Le nom du fichier apparaît si une case ne peut pas s'afficher.
+
 ## Nouveautés 3.18 — Galerie photos et vidéos
 
 - Sur la page de réception, les photos et vidéos s'affichent en **galerie** : grille de vignettes, puis visionneuse plein écran où l'on fait défiler au doigt (flèches et clavier sur ordinateur).

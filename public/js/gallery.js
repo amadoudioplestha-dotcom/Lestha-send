@@ -19,7 +19,11 @@ export function mountGallery(box, o) {
   const files = o.files;
   const sel = new Set();
   const kindOf = (f) => fileKind(f.name, f.type, f.size).kind;
-  const thumbOf = (f) => f.th ? o.url(f.th, true) : (kindOf(f) === 'image' && f.size < 12e6 && files.length <= 80 && !/heic|heif/i.test(f.type + f.name) ? o.url(f.id, true) : null);
+  // Vignette légère si l'expéditeur l'a préparée ; sinon version écran, sinon l'original (chargé seulement quand la case devient visible).
+  // HEIC (photos d'iPhone) : seul Safari sait l'afficher.
+  const safari = /Safari/.test(navigator.userAgent) && !/Chrome|CriOS|Chromium|Android|FxiOS|EdgiOS/.test(navigator.userAgent);
+  const thumbOf = (f) => f.th ? o.url(f.th, true) : f.pv ? o.url(f.pv, true)
+    : (kindOf(f) === 'image' && f.size < 25e6 && (safari || !/heic|heif/i.test((f.type || '') + f.name)) ? o.url(f.id, true) : null);
   const nPhotos = files.filter(f => kindOf(f) === 'image').length, nVideos = files.length - nPhotos;
   const label = [nPhotos ? `${nPhotos} photo${nPhotos > 1 ? 's' : ''}` : '', nVideos ? `${nVideos} vidéo${nVideos > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
 
@@ -33,7 +37,7 @@ export function mountGallery(box, o) {
         return `<div class="gal-tile ${video ? 'is-video' : ''}" data-gi="${i}">
           <button type="button" class="gal-open" data-open="${i}" aria-label="Agrandir ${esc(f.name)}">
             ${th ? `<img src="${th}" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : ''}
-            <span class="gal-ph">${icon(video ? 'video' : 'image')}</span>
+            <span class="gal-ph">${icon(video ? 'video' : 'image')}<small>${esc(f.name)}</small></span>
             ${video ? `<span class="gal-play">${icon('play', 'sm')}</span>` : ''}
           </button>
           ${o.canDownload ? `<button type="button" class="gal-check" data-pick="${i}" role="checkbox" aria-checked="false" aria-label="Choisir ${esc(f.name)}">${icon('check', 'sm')}</button>` : ''}
