@@ -31,6 +31,13 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.22 — vidéo fluide, qualités comme YouTube
+
+- Mode Auto corrigé : il ne choisit plus l'original lourd d'un téléphone (15-20 Mbit/s) dès qu'une qualité légère existe ; il prend la plus haute qualité que la connexion tient avec 40 % de marge.
+- Montée automatique : on démarre sur une qualité sûre, puis on monte d'un cran en silence si la vidéo se charge au moins 2 fois plus vite qu'elle ne se lit.
+- Qualités préparées d'office après l'envoi, aussi depuis un téléphone (480p et 720p), sauf en mode économie de données.
+- Le menu de qualité (Auto · 1080p · 720p · 480p · Original) reste disponible dans le lecteur.
+
 ## Nouveautés 3.21.1 — toutes les vignettes finissent par s'afficher
 
 - Une vignette qui échoue (serveur occupé, réseau qui coupe, lien expiré) est redemandée 3 fois, puis remplacée par l'original : plus de case vide.

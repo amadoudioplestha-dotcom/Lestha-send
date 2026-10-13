@@ -21,18 +21,19 @@ export function sourcesOf(f) {
   return list;
 }
 const resName = (h) => (h >= 2100 ? '4K' : h >= 1400 ? '2K' : h + 'p');
-/** Choix automatique : débit annoncé par le navigateur (Chrome, Edge, Android), sinon type d'appareil */
+/** Choix automatique (3.22), comme YouTube : la qualité la plus haute que la connexion tient sans saccades.
+    L'original d'un téléphone pèse souvent 15 à 20 Mbit/s : en Auto, on ne le prend que si aucune qualité légère n'existe
+    (Chrome plafonne le débit annoncé à 10 Mbit/s : on ne peut pas savoir si la connexion tiendrait l'original). */
+const NOMINAL = { 360: 0.8, 480: 1.3, 720: 2.8, 1080: 5.5, 1440: 9 };   // Mbit/s visés par les qualités fabriquées
+export const rungBr = (h) => NOMINAL[h] || h * h / 2e5;
 export function autoPick(list) {
-  if (list.length === 1) return list[0];
+  const rungs = list.filter(s => !s.original);
+  if (!rungs.length) return list[list.length - 1];
   const c = navigator.connection || {};
   const dl = Number(c.downlink) || 0, save = !!c.saveData, slow = /(^|-)(2g|3g)$/.test(c.effectiveType || '');
-  const byH = (h) => list.filter(s => !s.original && s.h <= h).pop() || list[0];
-  const orig = list[list.length - 1];
-  if (save || slow || (dl && dl < 1.6)) return byH(480);
-  if (dl && dl < 4.5) return byH(720);
-  if (dl && dl < 12) return orig.h <= 1080 ? orig : byH(1080);
-  if (dl >= 12) return orig.h <= 1440 || dl >= 30 ? orig : byH(1080);
-  return isMobile ? byH(720) : (orig.h <= 1080 ? orig : byH(1080));
+  // Marge de 40 % : la 4G varie d'une seconde à l'autre, mieux vaut un cran en dessous qu'une vidéo qui s'arrête
+  const budget = save || slow ? 1.5 : dl ? dl * 0.6 : (isMobile ? 3.5 : 7);
+  return rungs.filter(s => rungBr(s.h) <= budget).pop() || rungs[0];
 }
 
 /* ============================== timeline enrichie ============================== */

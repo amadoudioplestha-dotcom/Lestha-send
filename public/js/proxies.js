@@ -138,11 +138,11 @@ function upload(id, key, meta, blob, name, onProgress) {
  * Fabrique et met en ligne les qualités d'une vidéo déjà envoyée.
  * onStep({ label, pct }) : progression globale 0..1 · retourne la liste des qualités créées
  */
-export async function buildProxies(file, { id, key, fid, onStep = () => {}, signal, skip = [] } = {}) {
+export async function buildProxies(file, { id, key, fid, onStep = () => {}, signal, skip = [], maxH = 0 } = {}) {
   if (!proxySupported()) throw Object.assign(new Error('Navigateur trop ancien pour fabriquer les qualités (Chrome, Edge ou Safari récent).'), { code: 'support' });
   onStep({ label: 'Analyse de la vidéo…', pct: 0 });
   const a = await analyse(file);
-  const rungs = ladderFor(a.w, a.h, a.duration).filter(r => !skip.includes(r.h));
+  const rungs = ladderFor(a.w, a.h, a.duration).filter(r => !skip.includes(r.h) && (!maxH || r.h <= maxH));   // téléphone : 480p et 720p, l'essentiel
   const weight = 0.06 + rungs.length;   // aperçus ≈ 6 % du travail
   let done = 0;
   const step = (label, p) => onStep({ label, pct: Math.min(0.999, (done + p) / weight) });

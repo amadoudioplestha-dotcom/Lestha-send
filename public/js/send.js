@@ -650,7 +650,8 @@ function renderSuccess() {
   bindShare(rootEl, c.link, c.title, c);
   renderQR($('#qrBox', rootEl), c.link);
   $('#btnMgmt', rootEl).onclick = async () => { await copyText(c.manageLink); toast('Lien de gestion copié — gardez-le privé : il permet de gérer ce transfert', 'success'); };
-  if ($('#pxCard', rootEl)) { if (!isMobile) startProxies(c); paintPx(c); }
+  // 3.22 : qualités lancées d'office, aussi depuis un téléphone (480p et 720p seulement : rapide, peu de batterie)
+  if ($('#pxCard', rootEl)) { if (!(navigator.connection && navigator.connection.saveData)) startProxies(c); paintPx(c); }
   $('#btnNew', rootEl).onclick = () => { active = null; clearItems(); S.opts.emails = []; S.opts.title = ''; S.opts.message = ''; S.opts.pin = ''; document.title = 'Lestha Send'; renderCompose(); };
 }
 
@@ -664,7 +665,7 @@ function startProxies(c) {
   (async () => {
     for (const [i, it] of vids.entries()) {
       try {
-        const r = await buildProxies(it.file, { id: c.id, key: c.key, fid: it.meta.id, onStep: (st) => { c.px.label = (vids.length > 1 ? `${i + 1}/${vids.length} · ` : '') + st.label; c.px.pct = (i + st.pct) / vids.length; paintPx(c); } });
+        const r = await buildProxies(it.file, { id: c.id, key: c.key, fid: it.meta.id, maxH: isMobile ? 720 : 0, onStep: (st) => { c.px.label = (vids.length > 1 ? `${i + 1}/${vids.length} · ` : '') + st.label; c.px.pct = (i + st.pct) / vids.length; paintPx(c); } });
         c.px.made = (c.px.made || []).concat(r.made.map(m => m.h + 'p'));
       } catch (e) { c.px.err = e.message; }
     }

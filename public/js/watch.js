@@ -291,6 +291,29 @@ function onWaiting() {
   const list = PRO.sourcesOf(cur), i = list.findIndex(s => s.id === srcSel.id);
   if (i > 0) switchSource(Object.assign({ auto: true }, list[i - 1]), `Connexion lente : passage en ${list[i - 1].label} pour rester fluide`);
 }
+/** Auto, comme YouTube : on démarre sur une qualité sûre, puis on monte d'un cran quand la connexion le permet.
+    Preuve de connexion rapide : pendant la lecture, la vidéo se charge au moins 2 fois plus vite qu'elle ne se regarde. */
+let upTimer = null;
+function bindStepUp() {
+  clearInterval(upTimer);
+  let played = 0, lastTick = 0, lastUp = Date.now();
+  const p = player;
+  upTimer = setInterval(() => {
+    if (!player || player !== p || !document.body.contains(p)) { clearInterval(upTimer); return; }
+    const now = Date.now(), dt = lastTick ? (now - lastTick) / 1000 : 0; lastTick = now;
+    if (!srcSel || !srcSel.auto || p.paused || p.seeking || pendingSeek || document.hidden) return;
+    played += dt;
+    const b = p.buffered; let ahead = 0;
+    for (let i = 0; i < b.length; i++) if (b.start(i) <= p.currentTime + 0.5 && b.end(i) > p.currentTime) ahead = b.end(i) - p.currentTime;
+    const list = PRO.sourcesOf(cur), i = list.findIndex(x => x.id === srcSel.id), next = list[i + 1];
+    if (!next || next.original || waits.some(x => now - x < 60000) || now - lastSeek < 5000 || now - lastUp < 45000) return;
+    // ≥ 20 s d'avance après au moins 8 s de lecture, et chargement ≥ 2× le temps lu : la qualité suivante (≈ 2× plus lourde) tiendra
+    if (played >= 8 && ahead >= 20 && ahead >= played) {
+      lastUp = now; played = 0;
+      switchSource(Object.assign({ auto: true }, next));   // en silence, comme YouTube : le badge affiche la qualité
+    }
+  }, 2000);
+}
 function proPaint() {
   if (!X || !player || !player.duration) return;
   PRO.drawWave(X); PRO.drawGuides(X, guide);
@@ -305,6 +328,7 @@ function bindPro(review, chain) {
   };
   player.addEventListener('waiting', onWaiting);
   player.addEventListener('seeking', () => { lastSeek = Date.now(); });
+  bindStepUp();
   // Qualité illisible par ce navigateur (codec) : retour automatique à l'original
   player.addEventListener('error', () => { if (srcSel && !srcSel.original) { const o = PRO.sourcesOf(cur).pop(); switchSource(Object.assign({ auto: srcSel.auto }, o), 'Cette qualité ne se lit pas ici : lecture de l\'original'); } });
   PRO.bindHoverPreview(X);
