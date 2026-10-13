@@ -272,6 +272,14 @@ export const roomView = (() => {
       const tick = () => { const s = Math.max(0, Math.round((L.startsAt - Date.now()) / 1000)); const e = $('#cd', root); if (e) e.textContent = (s >= 86400 ? Math.floor(s / 86400) + ' j ' : '') + [Math.floor(s % 86400 / 3600), Math.floor(s % 3600 / 60), s % 60].map(n => String(n).padStart(2, '0')).join(':'); if (!s) { L.status = 'live'; const b = $('#lBadge', root); if (b) { b.className = 'live-badge on'; b.textContent = badgeText(); } $('#lvWrap', root)?.classList.add('is-live'); renderStage(); } };
       tick(); timer = setInterval(tick, 1000); return;
     }
+    if (L.kind === 'embed' && !L.src && L.link) {
+      // TikTok LIVE : TikTok n'autorise pas l'intégration. Le direct s'ouvre dans TikTok, la discussion continue ici.
+      stg.innerHTML = `<div class="live-empty lv-soon"><div class="lv-soon-in"><span class="lv-prov" style="background:#fff;color:#111">TikTok</span>
+        <b class="lv-soon-t">${/\/live\/?$/.test(L.link) ? 'Le direct se regarde sur TikTok' : 'La vidéo se regarde sur TikTok'}</b>
+        <span class="small">TikTok ne permet pas de l'afficher dans une autre page. Ouvrez-le, puis revenez ici pour la discussion.</span>
+        <a class="btn primary" href="${esc(L.link)}" target="_blank" rel="noopener noreferrer">${icon('external', 'sm')}Ouvrir sur TikTok</a></div></div>`;
+      return;
+    }
     if (L.kind === 'embed') {
       const src = L.provider === 'twitch'
         ? `https://player.twitch.tv/?${L.twitch.video ? 'video=' + encodeURIComponent(L.twitch.video) : 'channel=' + encodeURIComponent(L.twitch.channel)}&parent=${encodeURIComponent(location.hostname)}&autoplay=true`
