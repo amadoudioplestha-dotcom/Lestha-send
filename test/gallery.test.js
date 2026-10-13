@@ -89,4 +89,32 @@ test('galerie : aperçus JPEG enregistrés, servis en ligne et ZIP limité aux f
   const zip = Buffer.from(await z.arrayBuffer());
   assert.ok(zip.includes(Buffer.from('a.jpg')) && zip.includes(Buffer.from('b.jpg')));
   assert.ok(!zip.includes(Buffer.from('notes.txt')));
+
+  // Aperçu WhatsApp (3.19) : titre parlant et première photo
+  const page = await (await fetch(`${srv.base}/t/${id}`)).text();
+  assert.match(page, /<meta property="og:title" content="2 photos · 1 fichier">/);
+  assert.match(page, new RegExp(`og:image" content="[^"]*/api/public/t/${id}/cover\\.jpg"`));
+  const cover = await fetch(`${srv.base}/api/public/t/${id}/cover.jpg`);
+  assert.equal(cover.status, 200); assert.equal(cover.headers.get('content-type'), 'image/jpeg');
+
+  // Relecture par l'expéditeur pour préparer les vignettes d'un ancien lien
+  assert.equal((await fetch(`${srv.base}/api/transfers/${id}/files/${fb.id}/raw`)).status, 403);
+  const raw = await fetch(`${srv.base}/api/transfers/${id}/files/${fb.id}/raw?key=${encodeURIComponent(key)}`);
+  assert.equal(raw.status, 200); assert.equal((await raw.arrayBuffer()).byteLength, photoB.length);
+  assert.equal((await fetch(`${srv.base}/api/transfers/${id}/files/${ft.id}/raw?key=${encodeURIComponent(key)}`)).status, 404);
+});
+
+test('aperçu WhatsApp : rien de révélé pour un lien protégé par PIN', async (t) => {
+  const srv = await startServer();
+  t.after(srv.stop);
+  const c = await call(srv.base, '/api/transfers', { method: 'POST', body: { files: [{ name: 'secret.jpg', size: 100, type: 'image/jpeg' }], pin: '135790' } });
+  const f = c.data.files[0];
+  const u = await call(srv.base, `/api/transfers/${c.data.id}/files/${f.id}/urls`, { method: 'POST', key: c.data.ownerKey, body: { parts: [1] } });
+  await fetch(u.data.urls[1], { method: 'PUT', body: jpeg(96) });
+  await call(srv.base, `/api/transfers/${c.data.id}/files/${f.id}/complete`, { method: 'POST', key: c.data.ownerKey });
+  await call(srv.base, `/api/transfers/${c.data.id}/finalize`, { method: 'POST', key: c.data.ownerKey, body: {} });
+  await call(srv.base, `/api/transfers/${c.data.id}/files/${f.id}/previews`, { method: 'POST', key: c.data.ownerKey, body: { thumb: jpeg(50).toString('base64') } });
+  const page = await (await fetch(`${srv.base}/t/${c.data.id}`)).text();
+  assert.doesNotMatch(page, /secret|photo ·|cover\.jpg/);
+  assert.equal((await fetch(`${srv.base}/api/public/t/${c.data.id}/cover.jpg`)).status, 404);
 });

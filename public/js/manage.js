@@ -6,6 +6,7 @@ import { shareGrid, bindShare, resumePending } from './send.js';
 import { Uploader } from './uploader.js';
 import { tc, exportEDL, exportCSV, printReport, exportXMEML, exportFCPXML } from './review-tools.js';
 import { buildProxies, proxySupported } from './proxies.js';
+import { makePreviews, wantsPreview, isImageFile } from './gallery-previews.js';
 
 function onComment(d) {
   if (!t || !d || d.id !== t.id) return;
@@ -289,6 +290,7 @@ function renderControls() {
     ${t.playback && t.playback !== 'off' ? `<div class="control"><div class="control-text"><b>Commentaires horodatés</b><span>Les spectateurs commentent un moment précis</span></div><label class="switch"><input type="checkbox" id="cCom" ${t.allowComments ? 'checked' : ''}><span class="track"></span></label></div>
     <div class="control"><div class="control-text"><b>Lien de visionnage</b><span>Ouvre directement le lecteur</span></div><button type="button" class="btn sm" id="cWatch">${icon('copy', 'sm')}Copier</button></div>
     <div class="control"><div class="control-text"><b>Filigrane au nom du spectateur</b><span>Anti-fuite : chacun indique son nom, qui s'affiche sur l'image</span></div><label class="switch"><input type="checkbox" id="cWmV" ${t.watermarkViewer ? 'checked' : ''}><span class="track"></span></label></div>` : ''}
+    ${missingPreviews().length && t.state !== 'expired' && t.state !== 'uploading' ? `<div class="control" id="cGalRow"><div class="control-text"><b>Galerie légère</b><span>${missingPreviews().length} photo${missingPreviews().length > 1 ? 's' : ''} sans vignette : préparez-les pour un affichage rapide en 4G</span></div><button type="button" class="btn sm primary" id="cGal">${icon('bolt', 'sm')}Préparer</button></div>` : ''}
     <div class="control"><div class="control-text"><b>Lien actif</b><span>Désactivez pour bloquer temporairement l'accès</span></div><label class="switch"><input type="checkbox" id="cActive" ${t.disabled ? '' : 'checked'}><span class="track"></span></label></div>
     <div class="control"><div class="control-text"><b>Prolonger</b><span>Repousser l'expiration</span></div><div class="chips"><button type="button" class="chip" data-ext="${86400e3}">+1 j</button><button type="button" class="chip" data-ext="${7 * 86400e3}">+7 j</button></div></div>
     <div class="control"><div class="control-text"><b>Code PIN</b><span>${t.pinEnabled ? 'Protection activée' : 'Aucune protection'}</span></div><div class="row"><button type="button" class="btn sm" id="cPin">${icon('lock', 'sm')}${t.pinEnabled ? 'Changer' : 'Définir'}</button>${t.pinEnabled ? `<button type="button" class="btn sm ghost" id="cPinOff">Retirer</button>` : ''}</div></div>
@@ -317,6 +319,7 @@ function renderControls() {
     }
     patch({ notifyOnDownload: e.target.checked }, e.target.checked ? 'Alerte activée' : 'Alerte désactivée');
   };
+  const gal = $('#cGal', el); if (gal) gal.onclick = () => prepareGallery(gal);
   $('#cQr', el).onclick = () => modal({ title: 'QR code du lien', body: `<div class="qr" id="qrM" style="width:220px;height:220px;margin:6px auto"></div><p class="center small muted">${esc(t.link)}</p>`, actions: [{ label: 'Fermer', cls: 'primary' }], onMount: (m) => renderQR(m.querySelector('#qrM'), t.link) });
   $('#cMgmt', el).onclick = async () => {
     const link = location.origin + '/m/' + id + '#' + key;
@@ -331,6 +334,27 @@ function renderControls() {
     toast('Transfert supprimé', 'success');
     navigate('/dashboard');
   };
+}
+
+/* Galerie (3.19) : vignettes légères pour un lien envoyé avant la 3.18.
+   Les photos sont relues une fois sur cet appareil, réduites, puis renvoyées en petits JPEG. */
+const missingPreviews = () => (t.files || []).filter(f => f.done !== false && !f.th && isImageFile(f) && wantsPreview(f));
+async function prepareGallery(btn) {
+  const list = missingPreviews();
+  btn.disabled = true;
+  let ok = 0;
+  for (const [i, f] of list.entries()) {
+    btn.innerHTML = `<span class="spinner"></span>${i + 1}/${list.length}`;
+    try {
+      const r = await fetch(`/api/transfers/${id}/files/${f.id}/raw?key=${encodeURIComponent(key)}`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const blob = await r.blob();
+      const p = await makePreviews(new File([blob], f.name, { type: f.type || blob.type }));
+      if (p && (p.thumb || p.view)) { await api(`/api/transfers/${id}/files/${f.id}/previews`, { method: 'POST', key, body: p }); ok++; }
+    } catch (e) { /* photo illisible ici (ex. HEIC hors Safari) : on passe à la suivante */ }
+  }
+  toast(ok ? `Galerie prête : ${ok} photo${ok > 1 ? 's' : ''} allégée${ok > 1 ? 's' : ''}` : 'Aucune photo n\'a pu être préparée sur cet appareil', ok ? 'success' : 'warn');
+  await load();
 }
 
 async function patch(body, msg) {

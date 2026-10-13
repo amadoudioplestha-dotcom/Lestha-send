@@ -5,7 +5,7 @@ import { api } from './core.js';
 
 const THUMB = 360;          // plus petit côté de la vignette (grille 3 colonnes, écran x3)
 const THUMB_MAX = 720;      // plus grand côté, borné
-const VIEW = 1600;          // plus grand côté de la version écran
+const VIEW = 1400;          // plus grand côté de la version écran (net sur téléphone, léger en 4G)
 const MAX_PIXELS = 60e6;    // au-delà, on laisse tomber (mémoire des petits téléphones)
 
 export const isImageFile = (f) => /^image\/(jpeg|png|webp|gif|avif|bmp|heic|heif)$/i.test(f.type || '') || /\.(jpe?g|png|webp|gif|avif|bmp|heic|heif)$/i.test(f.name || '');
@@ -68,7 +68,7 @@ export async function makePreviews(file) {
     if (!video && heavy) {
       const vs = Math.min(1, VIEW / Math.max(sw, sh));
       const w = Math.round(sw * vs), h = Math.round(sh * vs);
-      view = await toJpeg(src, sw, sh, w, h, 0.8);
+      view = await toJpeg(src, sw, sh, w, h, 0.76);
       if (view && view.size > 880e3) view = await toJpeg(src, sw, sh, w, h, 0.62);
       if (view && view.size > 880e3) view = null;
     }

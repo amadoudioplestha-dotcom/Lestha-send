@@ -31,6 +31,13 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.19 — Plus simple et plus rapide pour les élèves
+
+- **Aperçu WhatsApp** : un lien de partage s'affiche avec la première photo et « 24 photos · 3 vidéos » au lieu d'un lien technique (jamais pour un lien protégé par PIN). Image servie par `/api/public/t/:id/cover.jpg`.
+- **Photos d'abord** : quand un envoi ne contient que des photos et vidéos, la galerie passe juste sous le nom de l'expéditeur, avec un gros bouton « Enregistrer toutes les photos ». Compte à rebours, ZIP et conseils restent juste en dessous : rien n'est retiré.
+- **Plus rapide** : vignettes et versions écran chargées directement depuis le stockage R2 (sans repasser par le serveur Render), avec des liens stables une heure pour rester en cache. Version écran ramenée à 1400 px.
+- **Anciens liens** : dans la page de gestion, « Galerie légère → Préparer » fabrique les vignettes des photos envoyées avant la 3.18.
+
 ## Nouveautés 3.18.1 — Vignettes toujours visibles
 
 - Les liens envoyés avant la 3.18 (sans vignettes légères) affichent maintenant leurs photos dans la grille, même au-delà de 80 photos ou jusqu'à 25 Mo par photo ; les photos d'iPhone (HEIC) s'affichent sur iPhone. Le nom du fichier apparaît si une case ne peut pas s'afficher.

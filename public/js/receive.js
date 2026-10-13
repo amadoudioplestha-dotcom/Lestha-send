@@ -101,6 +101,10 @@ function renderReady() {
   // Galerie (3.18) : les photos et vidéos se parcourent en grand ; la liste « Contenu » garde le reste
   const media = files.filter(f => isGalleryFile(f) && isLatest(f));
   const listed = media.length ? files.filter(f => !media.includes(f)) : files;
+  // Envoi de photos uniquement : la galerie passe en premier, les détails du téléchargement juste après (rien n'est retiré)
+  const photosFirst = media.length >= 2 && !listed.length;
+  const nPh = media.filter(f => fileKind(f.name, f.type).kind === 'image').length, nVi = media.length - nPh;
+  const heading = d.title || (photosFirst ? [nPh ? `${nPh} photo${nPh > 1 ? 's' : ''}` : '', nVi ? `${nVi} vidéo${nVi > 1 ? 's' : ''}` : ''].filter(Boolean).join(' et ') : title);
   root.innerHTML = `
   <section class="receive-card stack">
     <div class="card glow stack ${d.brand && d.brand.color ? 'branded' : ''}" style="${d.brand && d.brand.color ? '--bc:' + esc(d.brand.color) : ''}">
@@ -109,11 +113,11 @@ function renderReady() {
         <div class="avatar">${esc(initial)}</div>
         <div class="grow" style="min-width:0">
           <div class="small muted">${d.senderName ? esc(d.senderName) + ' vous a envoyé' : 'Vous avez reçu'} · ${relTime(d.createdAt)}</div>
-          <h2 style="font-size:clamp(20px,4vw,28px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(title)}</h2>
+          <h2 style="font-size:clamp(20px,4vw,28px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(heading)}</h2>
         </div>
       </div>
       ${d.message ? `<div class="message-bubble">${esc(d.message)}</div>` : ''}
-      <div class="row wrap between">
+      ${photosFirst ? '' : `      <div class="row wrap between">
         <div class="summary-line">
           <span class="pill info">${icon('file')}${files.length} fichier${files.length > 1 ? 's' : ''}</span>
           <span class="pill info">${icon('cloud')}${bytes(d.totalSize)}</span>
@@ -130,10 +134,28 @@ function renderReady() {
             <a class="btn primary xl grow" href="/api/public/t/${id}/zip?${q()}" data-zip>${icon('zip')}Tout télécharger (.zip)</a>
             <button type="button" class="btn xl grow" id="btnSeq">${icon('download')}Un par un</button>
           </div>`}
-      ${only ? '' : `<div class="tip">${icon('refresh')}<span>${files.length > 1 ? `Le ZIP ${hasFolders ? 'conserve l\'arborescence des dossiers' : 'regroupe tout'} ; « Un par un » télécharge chaque fichier séparément <b>avec reprise possible</b>. ` : ''}Téléchargement interrompu ? Ouvrez les téléchargements du navigateur et touchez <b>Reprendre</b> : il repart là où il s'était arrêté.</span></div>`}
+      ${only ? '' : `<div class="tip">${icon('refresh')}<span>${files.length > 1 ? `Le ZIP ${hasFolders ? 'conserve l\'arborescence des dossiers' : 'regroupe tout'} ; « Un par un » télécharge chaque fichier séparément <b>avec reprise possible</b>. ` : ''}Téléchargement interrompu ? Ouvrez les téléchargements du navigateur et touchez <b>Reprendre</b> : il repart là où il s'était arrêté.</span></div>`}`}
     </div>
-
     ${media.length ? '<div class="card gal-card" id="gallery"></div>' : ''}
+    ${photosFirst ? `<div class="card stack">      <div class="row wrap between">
+        <div class="summary-line">
+          <span class="pill info">${icon('file')}${files.length} fichier${files.length > 1 ? 's' : ''}</span>
+          <span class="pill info">${icon('cloud')}${bytes(d.totalSize)}</span>
+          ${d.pinRequired ? `<span class="pill violet">${icon('lock')}Protégé</span>` : ''}
+          ${d.senderVerified ? `<span class="pill ok" title="L'adresse e-mail de l'expéditeur a été confirmée par un code">${icon('check')}Expéditeur vérifié</span>` : ''}
+          ${d.downloadsLeft != null ? `<span class="pill warn">${icon('download')}${d.alreadyRecipient ? 'Accès accordé' : d.downloadsLeft + ' téléchargement' + (d.downloadsLeft > 1 ? 's' : '') + ' restant' + (d.downloadsLeft > 1 ? 's' : '')}</span>` : ''}
+        </div>
+        <div class="countdown" id="cd" title="Temps restant avant suppression"></div>
+      </div>
+      ${playable.length ? `<a class="btn primary xl block" href="/w/${id}" data-link>${icon('play')}Regarder en ligne${playable.length > 1 ? ' · ' + playable.length + ' médias' : ''}</a>` : ''}
+      ${only ? `<div class="tip">${icon('lock')}<span>L'expéditeur a choisi le <b>visionnage seul</b> : ce contenu se regarde en ligne, sans téléchargement.</span></div>` : files.length === 1
+        ? `<a class="btn ${playable.length ? '' : 'primary'} xl block" href="${fileUrl(files[0].id)}" data-dl="${files[0].id}">${icon('download')}Télécharger · ${bytes(files[0].size)}</a>`
+        : `<div class="row wrap cta-row">
+            <a class="btn primary xl grow" href="/api/public/t/${id}/zip?${q()}" data-zip>${icon('zip')}Tout télécharger (.zip)</a>
+            <button type="button" class="btn xl grow" id="btnSeq">${icon('download')}Un par un</button>
+          </div>`}
+      ${only ? '' : `<div class="tip">${icon('refresh')}<span>${files.length > 1 ? `Le ZIP ${hasFolders ? 'conserve l\'arborescence des dossiers' : 'regroupe tout'} ; « Un par un » télécharge chaque fichier séparément <b>avec reprise possible</b>. ` : ''}Téléchargement interrompu ? Ouvrez les téléchargements du navigateur et touchez <b>Reprendre</b> : il repart là où il s'était arrêté.</span></div>`}</div>` : ''}
+
     ${listed.length ? `<div class="card">
       <div class="card-title"><h3>${icon('folder')}${media.length ? 'Autres fichiers' : 'Contenu'}</h3><span class="small faint">${bytes(listed.reduce((a, f) => a + (f.size || 0), 0))}</span></div>
       <div class="stack" style="gap:8px" id="dlList">
@@ -163,7 +185,7 @@ function renderReady() {
   bindReady(files);
   if (gallery) gallery.destroy();
   gallery = media.length ? mountGallery($('#gallery', root), {
-    files: media, canDownload: !only, onGot: markGot,
+    files: media, canDownload: !only, onGot: markGot, bigSave: photosFirst,
     url: (fid, inline) => fileUrl(fid, inline),
     zipUrl: (ids) => `/api/public/t/${id}/zip?${q('&only=' + encodeURIComponent(ids.join(',')))}`
   }) : null;

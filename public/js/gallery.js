@@ -22,8 +22,8 @@ export function mountGallery(box, o) {
   // Vignette légère si l'expéditeur l'a préparée ; sinon version écran, sinon l'original (chargé seulement quand la case devient visible).
   // HEIC (photos d'iPhone) : seul Safari sait l'afficher.
   const safari = /Safari/.test(navigator.userAgent) && !/Chrome|CriOS|Chromium|Android|FxiOS|EdgiOS/.test(navigator.userAgent);
-  const thumbOf = (f) => f.th ? o.url(f.th, true) : f.pv ? o.url(f.pv, true)
-    : (kindOf(f) === 'image' && f.size < 25e6 && (safari || !/heic|heif/i.test((f.type || '') + f.name)) ? o.url(f.id, true) : null);
+  const thumbOf = (f) => f.thu || (f.th ? o.url(f.th, true) : null) || f.pvu || (f.pv ? o.url(f.pv, true) : null)
+    || (kindOf(f) === 'image' && f.size < 25e6 && (safari || !/heic|heif/i.test((f.type || '') + f.name)) ? o.url(f.id, true) : null);
   const nPhotos = files.filter(f => kindOf(f) === 'image').length, nVideos = files.length - nPhotos;
   const label = [nPhotos ? `${nPhotos} photo${nPhotos > 1 ? 's' : ''}` : '', nVideos ? `${nVideos} vidéo${nVideos > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
 
@@ -31,6 +31,7 @@ export function mountGallery(box, o) {
     <div class="card-title"><h3>${icon('image')}Galerie</h3>
       ${o.canDownload && files.length > 1 ? `<button type="button" class="btn sm ghost" data-gall>${icon('check', 'sm')}<span>Tout choisir</span></button>` : ''}</div>
     <p class="small muted gal-hint"><b>${label}</b> · ${o.canDownload ? 'touchez une photo pour l\'agrandir et faire défiler, cochez celles que vous voulez puis téléchargez.' : 'touchez une photo pour l\'agrandir et faire défiler.'}</p>
+    ${o.canDownload && o.bigSave && files.length > 1 ? `<button type="button" class="btn primary block gal-save" data-gsave>${icon('download')}<span>Enregistrer ${nVideos ? 'tout' : 'toutes les photos'} (${files.length})</span></button>` : ''}
     <div class="gal-grid">
       ${files.map((f, i) => {
         const th = thumbOf(f), video = kindOf(f) === 'video';
@@ -74,6 +75,7 @@ export function mountGallery(box, o) {
     const op = e.target.closest('[data-open]'); if (op) { viewer = openViewer(+op.dataset.open); return; }
     if (e.target.closest('[data-gall]')) { if (sel.size === files.length) sel.clear(); else files.forEach((_, i) => sel.add(i)); paintSel(); return; }
     if (e.target.closest('[data-gclear]')) { sel.clear(); paintSel(); return; }
+    if (e.target.closest('[data-gsave]')) { downloadMany(files.slice()); return; }
     if (e.target.closest('[data-gdl]')) downloadMany([...sel].sort((a, b) => a - b).map(i => files[i]));
   };
 
@@ -164,13 +166,14 @@ export function mountGallery(box, o) {
       if (kindOf(f) === 'video') {
         const q = (f.q || []).filter(r => r.h <= 720);
         const src = q.length ? o.url(q[q.length - 1].id, true) : o.url(f.id, true);   // qualité légère si l'expéditeur l'a préparée
-        s.innerHTML = `<video class="gv-video" controls playsinline preload="metadata" ${f.th ? `poster="${o.url(f.th, true)}"` : ''} src="${src}"></video>`;
+        s.innerHTML = `<video class="gv-video" controls playsinline preload="metadata" ${f.th ? `poster="${f.thu || o.url(f.th, true)}"` : ''} src="${src}"></video>`;
       } else {
-        const full = f.pv ? o.url(f.pv, true) : o.url(f.id, true);
+        const full = f.pvu || (f.pv ? o.url(f.pv, true) : o.url(f.id, true));
         s.innerHTML = `<div class="gv-zoom"><img class="gv-img" alt="${esc(f.name)}" decoding="async" src="${full}"></div><div class="gv-spin"><span class="spinner"></span></div>`;
         const img = $('img', s);
         // La vignette déjà en cache s'affiche tout de suite, floutée, pendant que la version écran arrive
-        if (f.th) s.style.backgroundImage = `url("${o.url(f.th, true)}")`;
+        const th = f.thu || (f.th ? o.url(f.th, true) : null);
+        if (th) s.style.backgroundImage = `url("${th}")`;
         img.onload = () => { s.classList.add('loaded'); s.style.backgroundImage = ''; };
         img.onerror = () => { s.classList.add('loaded'); s.innerHTML = `<div class="gv-fail">${icon('image')}<p>Aperçu indisponible sur cet appareil${/heic|heif/i.test(f.type + f.name) ? ' (format HEIC)' : ''}.</p>${o.canDownload ? `<button type="button" class="btn primary sm" data-gv="dl">${icon('download', 'sm')}Télécharger l'original</button>` : ''}</div>`; };
         bindZoom(s);

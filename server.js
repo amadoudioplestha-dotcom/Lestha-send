@@ -222,6 +222,26 @@ async function main() {
 
   /* ---------- Routes de l'application (SPA) ---------- */
   app.get(/^\/@[A-Za-z0-9-]{3,30}\/?$/, sendIndex);
+  // Lien de partage : aperçu parlant dans WhatsApp / Facebook (titre, nombre de photos, première photo)
+  const escAttr = (v) => String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  app.get('/t/:id', async (req, res, next) => {
+    try {
+      const p = /^[A-Za-z0-9_-]{4,40}$/.test(req.params.id) ? await cloud.linkPreview(req.params.id) : null;
+      if (!p) return sendIndex(req, res);
+      const base = String(env.PUBLIC_URL || '').replace(/\/$/, '');
+      let html = renderIndex()
+        .replace(/(<meta property="og:title" content=")[^"]*(")/, `$1${escAttr(p.title)}$2`)
+        .replace(/(<meta property="og:description" content=")[^"]*(")/, `$1${escAttr(p.description)}$2`);
+      if (p.image) {
+        html = html.replace(/(<meta property="og:image" content=")[^"]*(")/, `$1${escAttr(base + p.image)}$2`)
+          .replace(/<meta property="og:image:(width|height)" content="[^"]*">\n?/g, '')
+          .replace(/(<meta property="og:image:alt" content=")[^"]*(")/, `$1${escAttr(p.title)}$2`)
+          .replace(/(<meta name="twitter:card" content=")[^"]*(")/, '$1summary$2');
+      }
+      res.set('Cache-Control', 'no-cache');
+      res.type('html').send(html);
+    } catch (e) { next(e); }
+  });
   app.get(['/a-propos', '/securite', '/faq', '/conditions', '/confidentialite', '/t/:id', '/m/:id', '/w/:id', '/d/:id', '/r/:id', '/classe', '/classe/:id', '/dashboard', '/proximite', '/recevoir', '/reunion', '/reunion/:id', '/demande', '/send', '/p2p', '/direct', '/live/:id'], sendIndex);
 
   // Toute autre adresse : l'application affiche « page introuvable », avec un vrai code 404

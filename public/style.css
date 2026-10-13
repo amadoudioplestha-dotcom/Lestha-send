@@ -1811,6 +1811,7 @@ body.in-meet .mr-grid button { background: rgba(255, 255, 255, .06); }
 
 /* ===== v3.18 · Galerie photos et vidéos (page de réception) ===== */
 .gal-hint { margin: -4px 0 12px; }
+.gal-save { margin-bottom: 12px; }
 .gal-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; border-radius: 14px; overflow: hidden; }
 @media (min-width: 560px) { .gal-grid { grid-template-columns: repeat(4, 1fr); gap: 6px; } }
 @media (min-width: 720px) { .gal-grid { grid-template-columns: repeat(5, 1fr); } }
