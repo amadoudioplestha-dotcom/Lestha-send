@@ -118,3 +118,31 @@ test('aperçu WhatsApp : rien de révélé pour un lien protégé par PIN', asyn
   assert.doesNotMatch(page, /secret|photo ·|cover\.jpg/);
   assert.equal((await fetch(`${srv.base}/api/public/t/${c.data.id}/cover.jpg`)).status, 404);
 });
+
+test('galerie : le serveur compresse lui-même une photo arrivée sans aperçu', async (t) => {
+  const sharp = require('sharp');
+  const srv = await startServer();
+  t.after(srv.stop);
+  const big = await sharp({ create: { width: 3000, height: 2000, channels: 3, background: '#3a7' } }).jpeg({ quality: 95 }).toBuffer();
+  const c = await call(srv.base, '/api/transfers', { method: 'POST', body: { files: [{ name: 'classe.jpg', size: big.length, type: 'image/jpeg' }] } });
+  const { id, ownerKey: key } = c.data; const f = c.data.files[0];
+  const u = await call(srv.base, `/api/transfers/${id}/files/${f.id}/urls`, { method: 'POST', key, body: { parts: [1] } });
+  await fetch(u.data.urls[1], { method: 'PUT', body: big });
+  await call(srv.base, `/api/transfers/${id}/files/${f.id}/complete`, { method: 'POST', key });
+  await call(srv.base, `/api/transfers/${id}/finalize`, { method: 'POST', key, body: {} });
+
+  const pub = await call(srv.base, `/api/public/t/${id}?v=visiteur`);
+  assert.equal(pub.data.files[0].spv, 1);
+  const th = await fetch(`${srv.base}/api/public/t/${id}/pv/${f.id}/thumb?v=visiteur`);
+  assert.equal(th.status, 200);
+  assert.equal(th.headers.get('content-type'), 'image/jpeg');
+  const tb = Buffer.from(await th.arrayBuffer());
+  const m = await sharp(tb).metadata();
+  assert.equal(Math.min(m.width, m.height), 360);
+  const view = await fetch(`${srv.base}/api/public/t/${id}/pv/${f.id}/view?v=visiteur`);
+  const vm = await sharp(Buffer.from(await view.arrayBuffer())).metadata();
+  assert.equal(Math.max(vm.width, vm.height), 1400);
+  const again = await call(srv.base, `/api/public/t/${id}?v=visiteur`);
+  assert.ok(again.data.files[0].th && again.data.files[0].pv && !again.data.files[0].spv);
+  assert.equal(again.data.files[0].iw, 3000);
+});

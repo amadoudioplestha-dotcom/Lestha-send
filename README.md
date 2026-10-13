@@ -31,6 +31,12 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.20 — Photos légères pour tout le monde
+
+- **Le serveur compresse lui-même les photos** qui n'ont pas encore d'aperçu (anciens liens, navigateur qui n'a pas pu le faire) : vignette ≈ 360 px (≈ 10 Ko) et version écran 1400 px (≈ 50-200 Ko), faites une seule fois puis gardées. Une photo à la fois pour ménager le serveur ; celle qu'un élève regarde passe devant. L'original n'est jamais modifié et reste celui qu'on télécharge. Route : `/api/public/t/:id/pv/:fid/thumb|view`.
+- `sharp` passe des dépendances de développement aux dépendances normales (installé sur Render par `npm ci --omit=dev`).
+- **Sélection instantanée** : cocher une photo ne redessine que sa case, sans animation sur l'image (fluide sur les petits téléphones), pas de délai de toucher.
+
 ## Nouveautés 3.19 — Plus simple et plus rapide pour les élèves
 
 - **Aperçu WhatsApp** : un lien de partage s'affiche avec la première photo et « 24 photos · 3 vidéos » au lieu d'un lien technique (jamais pour un lien protégé par PIN). Image servie par `/api/public/t/:id/cover.jpg`.

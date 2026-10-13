@@ -187,6 +187,7 @@ function renderReady() {
   gallery = media.length ? mountGallery($('#gallery', root), {
     files: media, canDownload: !only, onGot: markGot, bigSave: photosFirst,
     url: (fid, inline) => fileUrl(fid, inline),
+    pvUrl: (fid, slot) => `/api/public/t/${id}/pv/${fid}/${slot}?${q()}`,
     zipUrl: (ids) => `/api/public/t/${id}/zip?${q('&only=' + encodeURIComponent(ids.join(',')))}`
   }) : null;
   tickCountdown();

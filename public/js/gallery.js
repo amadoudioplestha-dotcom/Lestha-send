@@ -22,7 +22,8 @@ export function mountGallery(box, o) {
   // Vignette légère si l'expéditeur l'a préparée ; sinon version écran, sinon l'original (chargé seulement quand la case devient visible).
   // HEIC (photos d'iPhone) : seul Safari sait l'afficher.
   const safari = /Safari/.test(navigator.userAgent) && !/Chrome|CriOS|Chromium|Android|FxiOS|EdgiOS/.test(navigator.userAgent);
-  const thumbOf = (f) => f.thu || (f.th ? o.url(f.th, true) : null) || f.pvu || (f.pv ? o.url(f.pv, true) : null)
+  const thumbOf = (f) => f.thu || (f.th ? o.url(f.th, true) : null) || (f.spv && o.pvUrl ? o.pvUrl(f.id, 'thumb') : null)
+    || f.pvu || (f.pv ? o.url(f.pv, true) : null)
     || (kindOf(f) === 'image' && f.size < 25e6 && (safari || !/heic|heif/i.test((f.type || '') + f.name)) ? o.url(f.id, true) : null);
   const nPhotos = files.filter(f => kindOf(f) === 'image').length, nVideos = files.length - nPhotos;
   const label = [nPhotos ? `${nPhotos} photo${nPhotos > 1 ? 's' : ''}` : '', nVideos ? `${nVideos} vidéo${nVideos > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
@@ -51,12 +52,15 @@ export function mountGallery(box, o) {
       <button type="button" class="btn primary" data-gdl>${icon('download')}<span>Télécharger</span></button>
     </div>` : ''}`;
 
-  const paintSel = () => {
-    box.querySelectorAll('[data-pick]').forEach(b => {
-      const on = sel.has(+b.dataset.pick);
-      b.setAttribute('aria-checked', on ? 'true' : 'false');
-      b.closest('.gal-tile').classList.toggle('picked', on);
-    });
+  const paintTile = (i) => {
+    const b = box.querySelector(`[data-pick="${i}"]`); if (!b) return;
+    const on = sel.has(i);
+    b.setAttribute('aria-checked', on ? 'true' : 'false');
+    b.parentNode.classList.toggle('picked', on);
+  };
+  const paintSel = (only) => {
+    // Une seule case touchée : on ne redessine qu'elle (instantané même sur un petit téléphone)
+    if (only != null) paintTile(only); else files.forEach((_, i) => paintTile(i));
     const bar = $('.gal-bar', box);
     if (bar) {
       bar.hidden = !sel.size;
@@ -67,7 +71,7 @@ export function mountGallery(box, o) {
     if (all) all.textContent = sel.size === files.length ? 'Tout retirer' : 'Tout choisir';
     if (viewer) viewer.paint();
   };
-  const toggle = (i) => { if (sel.has(i)) sel.delete(i); else sel.add(i); paintSel(); };
+  const toggle = (i) => { if (sel.has(i)) sel.delete(i); else sel.add(i); paintSel(i); };
 
   let viewer = null;
   box.onclick = (e) => {
@@ -168,11 +172,11 @@ export function mountGallery(box, o) {
         const src = q.length ? o.url(q[q.length - 1].id, true) : o.url(f.id, true);   // qualité légère si l'expéditeur l'a préparée
         s.innerHTML = `<video class="gv-video" controls playsinline preload="metadata" ${f.th ? `poster="${f.thu || o.url(f.th, true)}"` : ''} src="${src}"></video>`;
       } else {
-        const full = f.pvu || (f.pv ? o.url(f.pv, true) : o.url(f.id, true));
+        const full = f.pvu || (f.pv ? o.url(f.pv, true) : f.spv && o.pvUrl ? o.pvUrl(f.id, 'view') : o.url(f.id, true));
         s.innerHTML = `<div class="gv-zoom"><img class="gv-img" alt="${esc(f.name)}" decoding="async" src="${full}"></div><div class="gv-spin"><span class="spinner"></span></div>`;
         const img = $('img', s);
         // La vignette déjà en cache s'affiche tout de suite, floutée, pendant que la version écran arrive
-        const th = f.thu || (f.th ? o.url(f.th, true) : null);
+        const th = f.thu || (f.th ? o.url(f.th, true) : null) || (f.spv && o.pvUrl ? o.pvUrl(f.id, 'thumb') : null);
         if (th) s.style.backgroundImage = `url("${th}")`;
         img.onload = () => { s.classList.add('loaded'); s.style.backgroundImage = ''; };
         img.onerror = () => { s.classList.add('loaded'); s.innerHTML = `<div class="gv-fail">${icon('image')}<p>Aperçu indisponible sur cet appareil${/heic|heif/i.test(f.type + f.name) ? ' (format HEIC)' : ''}.</p>${o.canDownload ? `<button type="button" class="btn primary sm" data-gv="dl">${icon('download', 'sm')}Télécharger l'original</button>` : ''}</div>`; };
