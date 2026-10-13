@@ -31,6 +31,11 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.22.1 — bouton réglages de qualité
+
+- Sous la vidéo, un bouton réglages toujours visible affiche la qualité en cours (« Auto · 720p », « 480p », « Original · 1080p ») et ouvre le menu Auto · Original · 1080p · 720p · 480p, comme YouTube.
+- Si la vidéo n'a que sa version d'origine, le menu l'indique et explique comment préparer les qualités.
+
 ## Nouveautés 3.22 — vidéo fluide, qualités comme YouTube
 
 - Mode Auto corrigé : il ne choisit plus l'original lourd d'un téléphone (15-20 Mbit/s) dès qu'une qualité légère existe ; il prend la plus haute qualité que la connexion tient avec 40 % de marge.

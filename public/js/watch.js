@@ -86,7 +86,7 @@ function renderPage(media) {
           : `<div class="audio-art">${icon('music', 'xl')}</div><audio id="player" controls preload="metadata" ${only ? 'controlsList="nodownload"' : ''} style="width:100%"></audio>`}
         ${isVideo ? '<canvas class="guides-layer" id="rvGuides"></canvas><canvas class="draw-layer" id="draw"></canvas>' : ''}
         <div class="player-toolbar">
-          ${isVideo ? '<span class="q-badge" id="qBadge"></span>' : ''}
+          ${isVideo ? `<div class="q-wrap"><button type="button" class="q-btn" id="qBtn" aria-haspopup="true" aria-expanded="false" title="Qualité de lecture">${icon('settings', 'sm')}<span id="qBadge"></span></button><div class="q-menu hidden" id="qMenu" role="menu"></div></div>` : ''}
           <button type="button" class="btn sm fullscreen-btn" id="fullscreen" aria-label="Passer en plein écran" title="Plein écran (F)">${icon('fullscreen', 'sm')}<span>Plein écran</span></button>
         </div>
         ${data.wmViewer ? `<div class="wm-gate hidden" id="wmGate"><form class="card stack" id="wmForm" style="gap:10px;max-width:340px"><b>${icon('shield', 'sm')} Visionnage protégé</b><span class="small muted">Votre nom s'affichera en filigrane sur l'image.</span><input class="input" id="wmName" maxlength="60" placeholder="Votre nom" required value="${esc(ls.get('tx_comment_name', ''))}"><button class="btn primary" type="submit">${icon('play', 'sm')}Regarder</button></form></div>` : ''}
@@ -256,12 +256,20 @@ function chooseSource(pref) {
 }
 function paintQ() {
   const list = PRO.sourcesOf(cur), pref = ls.get('tx_q', 'auto');
-  const sel = $('#selQ'), badge = $('#qBadge');
+  const sel = $('#selQ'), badge = $('#qBadge'), menu = $('#qMenu');
+  const short = (x) => x.label.replace('Original · ', '');
   if (sel) {
-    sel.classList.toggle('hidden', list.length < 2);
-    sel.innerHTML = `<option value="auto" ${pref === 'auto' ? 'selected' : ''}>Auto${srcSel && srcSel.auto ? ' · ' + srcSel.label.replace('Original · ', '') : ''}</option>` + list.slice().reverse().map(s => `<option value="${s.original ? 'orig' : s.h}" ${pref !== 'auto' && srcSel && srcSel.id === s.id ? 'selected' : ''}>${esc(s.label)}</option>`).join('');
+    sel.innerHTML = `<option value="auto" ${pref === 'auto' ? 'selected' : ''}>Auto${srcSel && srcSel.auto ? ' · ' + short(srcSel) : ''}</option>` + list.slice().reverse().map(s => `<option value="${s.original ? 'orig' : s.h}" ${pref !== 'auto' && srcSel && srcSel.id === s.id ? 'selected' : ''}>${esc(s.label)}</option>`).join('');
   }
-  if (badge) { badge.textContent = srcSel ? srcSel.label.replace('Original · ', 'Original ') : ''; badge.classList.toggle('hidden', !srcSel || list.length < 2); }
+  // Bouton réglages toujours visible, comme YouTube : il affiche la qualité en cours de lecture
+  if (badge) badge.textContent = srcSel ? (srcSel.auto && list.length > 1 ? 'Auto · ' : '') + (srcSel.original ? (list.length > 1 && srcSel.auto ? short(srcSel) : srcSel.label) : srcSel.label) : '';
+  if (menu) {
+    const on = (v) => (v === 'auto' ? pref === 'auto' : pref !== 'auto' && srcSel && srcSel.id === v);
+    menu.innerHTML = `<div class="q-head">Qualité</div>`
+      + (list.length > 1 ? `<button type="button" role="menuitemradio" data-qv="auto" class="${on('auto') ? 'on' : ''}">${icon('check', 'sm')}<span>Auto${srcSel && srcSel.auto ? ' <small>' + esc(short(srcSel)) + '</small>' : ''}</span></button>` : '')
+      + list.slice().reverse().map(x => `<button type="button" role="menuitemradio" data-qv="${x.original ? 'orig' : x.h}" class="${on(x.id) || (list.length === 1) ? 'on' : ''}">${icon('check', 'sm')}<span>${x.original ? 'Original <small>' + esc(short(x)) + '</small>' : x.h + 'p'}</span></button>`).join('')
+      + (list.length === 1 ? `<p class="q-note">Seule la version d'origine existe pour cette vidéo. Les qualités 480p et 720p se préparent depuis la page de l'envoi ou la page de gestion (« Créer les qualités »).</p>` : '');
+  }
 }
 function switchSource(next, why) {
   if (!next || !player) return;
@@ -322,6 +330,17 @@ function proPaint() {
 }
 function bindPro(review, chain) {
   paintQ();
+  const qBtn = $('#qBtn'), qMenu = $('#qMenu');
+  if (qBtn && qMenu) {
+    const close = () => { qMenu.classList.add('hidden'); qBtn.setAttribute('aria-expanded', 'false'); };
+    qBtn.onclick = (e) => { e.stopPropagation(); const open = qMenu.classList.toggle('hidden') === false; qBtn.setAttribute('aria-expanded', open ? 'true' : 'false'); };
+    qMenu.onclick = (e) => {
+      const b = e.target.closest('[data-qv]'); if (!b) return;
+      const v = b.dataset.qv; ls.set('tx_q', v === 'orig' ? '99999' : v);
+      switchSource(chooseSource(v === 'orig' ? 99999 : v)); close();
+    };
+    document.addEventListener('click', (e) => { if (!e.target.closest('.q-wrap')) close(); });
+  }
   $('#selQ').onchange = (e) => {
     const v = e.target.value; ls.set('tx_q', v === 'orig' ? '99999' : v);
     switchSource(chooseSource(v === 'orig' ? 99999 : v));

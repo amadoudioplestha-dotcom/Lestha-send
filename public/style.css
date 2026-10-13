@@ -1874,3 +1874,19 @@ html.gal-locked, html.gal-locked body { overflow: hidden; }
 .gv-nav.prev { left: 14px; } .gv-nav.next { right: 14px; }
 .gv-nav[hidden] { display: none; }
 @media (hover: none) { .gv-nav { display: none; } }
+
+/* v3.22.1 — bouton réglages de qualité, comme YouTube */
+.q-wrap { position: relative; margin-right: auto; }
+.q-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 6px 11px; border-radius: 999px; border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.08); color: #fff; font: 700 12.5px/1 Inter, sans-serif; cursor: pointer; }
+.q-btn:hover, .q-btn[aria-expanded="true"] { background: rgba(255,255,255,.16); }
+.q-btn #qBadge { padding: 3px 7px; border-radius: 6px; color: #04121f; background: linear-gradient(135deg, #00b4d8, #06d6a0); letter-spacing: .03em; }
+.q-btn #qBadge:empty { display: none; }
+.q-menu { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 20; min-width: 210px; max-width: min(300px, 86vw); padding: 6px; border-radius: 12px; background: rgba(12, 18, 32, .97); border: 1px solid rgba(255,255,255,.14); box-shadow: 0 14px 40px rgba(0,0,0,.45); color: #fff; }
+.q-menu.hidden { display: none; }
+.q-head { padding: 6px 10px 8px; font: 700 11px/1 Inter, sans-serif; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.6); }
+.q-menu button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 8px 10px; border: 0; border-radius: 8px; background: none; color: inherit; font: 600 14px/1.2 Inter, sans-serif; text-align: left; cursor: pointer; }
+.q-menu button:hover { background: rgba(255,255,255,.09); }
+.q-menu button .i { opacity: 0; color: #06d6a0; }
+.q-menu button.on .i { opacity: 1; }
+.q-menu small { margin-left: 4px; color: rgba(255,255,255,.6); font-weight: 600; }
+.q-note { margin: 6px 4px 4px; padding: 8px; border-radius: 8px; background: rgba(255,255,255,.06); font-size: 12px; line-height: 1.4; color: rgba(255,255,255,.75); }
