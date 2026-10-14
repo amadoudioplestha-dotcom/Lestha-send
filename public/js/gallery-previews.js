@@ -10,7 +10,9 @@ const MAX_PIXELS = 60e6;    // au-delà, on laisse tomber (mémoire des petits t
 
 export const isImageFile = (f) => /^image\/(jpeg|png|webp|gif|avif|bmp|heic|heif)$/i.test(f.type || '') || /\.(jpe?g|png|webp|gif|avif|bmp|heic|heif)$/i.test(f.name || '');
 export const isVideoFile = (f) => /^video\//.test(f.type || '') || /\.(mp4|mov|m4v|webm)$/i.test(f.name || '');
-export const wantsPreview = (f) => (isImageFile(f) && f.size < 60e6 && !/svg/i.test(f.type || '')) || isVideoFile(f);
+// 3.24 : documents (PDF, Word, Excel, PowerPoint, texte) → vignette de la première page
+export const isDocFile = (f) => /pdf/i.test(f.type || '') || /\.(pdf|docx|docm|dotx|odt|xlsx|xlsm|ods|csv|tsv|pptx|ppsx|odp|txt|md)$/i.test(f.name || '');
+export const wantsPreview = (f) => (isImageFile(f) && f.size < 60e6 && !/svg/i.test(f.type || '')) || isVideoFile(f) || (isDocFile(f) && f.size > 0 && f.size < 80e6);
 
 function loadImage(url) {
   return new Promise((resolve, reject) => {
@@ -54,6 +56,11 @@ const b64 = (blob) => new Promise((resolve, reject) => {
 
 /** Fabrique { thumb, view, w, h } (JPEG en base64) pour une photo ou une vidéo */
 export async function makePreviews(file) {
+  if (isDocFile(file) && !isImageFile(file) && !isVideoFile(file)) {
+    const { makeDocThumb } = await import('./doc-thumb.js');
+    const r = await makeDocThumb(file);
+    return r && r.blob && r.blob.size < 118e3 ? { thumb: await b64(r.blob), w: r.w, h: r.h } : null;
+  }
   const url = URL.createObjectURL(file);
   try {
     const video = isVideoFile(file) && !isImageFile(file);

@@ -6,7 +6,7 @@ import { shareGrid, bindShare, resumePending } from './send.js';
 import { Uploader } from './uploader.js';
 import { tc, exportEDL, exportCSV, printReport, exportXMEML, exportFCPXML } from './review-tools.js';
 import { buildProxies, proxySupported } from './proxies.js';
-import { makePreviews, wantsPreview, isImageFile } from './gallery-previews.js';
+import { makePreviews, wantsPreview, isImageFile, isDocFile } from './gallery-previews.js';
 
 function onComment(d) {
   if (!t || !d || d.id !== t.id) return;
@@ -290,7 +290,7 @@ function renderControls() {
     ${t.playback && t.playback !== 'off' ? `<div class="control"><div class="control-text"><b>Commentaires horodatés</b><span>Les spectateurs commentent un moment précis</span></div><label class="switch"><input type="checkbox" id="cCom" ${t.allowComments ? 'checked' : ''}><span class="track"></span></label></div>
     <div class="control"><div class="control-text"><b>Lien de visionnage</b><span>Ouvre directement le lecteur</span></div><button type="button" class="btn sm" id="cWatch">${icon('copy', 'sm')}Copier</button></div>
     <div class="control"><div class="control-text"><b>Filigrane au nom du spectateur</b><span>Anti-fuite : chacun indique son nom, qui s'affiche sur l'image</span></div><label class="switch"><input type="checkbox" id="cWmV" ${t.watermarkViewer ? 'checked' : ''}><span class="track"></span></label></div>` : ''}
-    ${missingPreviews().length && t.state !== 'expired' && t.state !== 'uploading' ? `<div class="control" id="cGalRow"><div class="control-text"><b>Galerie légère</b><span>${missingPreviews().length} photo${missingPreviews().length > 1 ? 's' : ''} sans vignette : préparez-les pour un affichage rapide en 4G</span></div><button type="button" class="btn sm primary" id="cGal">${icon('bolt', 'sm')}Préparer</button></div>` : ''}
+    ${missingPreviews().length && t.state !== 'expired' && t.state !== 'uploading' ? `<div class="control" id="cGalRow"><div class="control-text"><b>Aperçus légers</b><span>${missingPreviews().length} photo${missingPreviews().length > 1 ? 's' : ''} ou document${missingPreviews().length > 1 ? 's' : ''} sans vignette : préparez-les pour un affichage rapide en 4G</span></div><button type="button" class="btn sm primary" id="cGal">${icon('bolt', 'sm')}Préparer</button></div>` : ''}
     <div class="control"><div class="control-text"><b>Lien actif</b><span>Désactivez pour bloquer temporairement l'accès</span></div><label class="switch"><input type="checkbox" id="cActive" ${t.disabled ? '' : 'checked'}><span class="track"></span></label></div>
     <div class="control"><div class="control-text"><b>Prolonger</b><span>Repousser l'expiration</span></div><div class="chips"><button type="button" class="chip" data-ext="${86400e3}">+1 j</button><button type="button" class="chip" data-ext="${7 * 86400e3}">+7 j</button></div></div>
     <div class="control"><div class="control-text"><b>Code PIN</b><span>${t.pinEnabled ? 'Protection activée' : 'Aucune protection'}</span></div><div class="row"><button type="button" class="btn sm" id="cPin">${icon('lock', 'sm')}${t.pinEnabled ? 'Changer' : 'Définir'}</button>${t.pinEnabled ? `<button type="button" class="btn sm ghost" id="cPinOff">Retirer</button>` : ''}</div></div>
@@ -338,7 +338,7 @@ function renderControls() {
 
 /* Galerie (3.19) : vignettes légères pour un lien envoyé avant la 3.18.
    Les photos sont relues une fois sur cet appareil, réduites, puis renvoyées en petits JPEG. */
-const missingPreviews = () => (t.files || []).filter(f => f.done !== false && !f.th && isImageFile(f) && wantsPreview(f));
+const missingPreviews = () => (t.files || []).filter(f => f.done !== false && !f.th && (isImageFile(f) || isDocFile(f)) && wantsPreview(f));
 async function prepareGallery(btn) {
   const list = missingPreviews();
   btn.disabled = true;
@@ -353,7 +353,7 @@ async function prepareGallery(btn) {
       if (p && (p.thumb || p.view)) { await api(`/api/transfers/${id}/files/${f.id}/previews`, { method: 'POST', key, body: p }); ok++; }
     } catch (e) { /* photo illisible ici (ex. HEIC hors Safari) : on passe à la suivante */ }
   }
-  toast(ok ? `Galerie prête : ${ok} photo${ok > 1 ? 's' : ''} allégée${ok > 1 ? 's' : ''}` : 'Aucune photo n\'a pu être préparée sur cet appareil', ok ? 'success' : 'warn');
+  toast(ok ? `Aperçus prêts : ${ok} fichier${ok > 1 ? 's' : ''}` : 'Aucun fichier n\'a pu être préparé sur cet appareil', ok ? 'success' : 'warn');
   await load();
 }
 

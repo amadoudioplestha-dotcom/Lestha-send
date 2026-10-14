@@ -44,7 +44,7 @@ test('galerie : aperçus JPEG enregistrés, servis en ligne et ZIP limité aux f
   t.after(srv.stop);
   const photoA = jpeg(5000), photoB = jpeg(3000);
   const c = await call(srv.base, '/api/transfers', { method: 'POST', body: { files: [
-    { name: 'a.jpg', size: photoA.length, type: 'image/jpeg' }, { name: 'b.jpg', size: photoB.length, type: 'image/jpeg' }, { name: 'notes.txt', size: 10, type: 'text/plain' }
+    { name: 'a.jpg', size: photoA.length, type: 'image/jpeg' }, { name: 'b.jpg', size: photoB.length, type: 'image/jpeg' }, { name: 'notes.bin', size: 10, type: 'application/octet-stream' }
   ] } });
   assert.equal(c.status, 200, JSON.stringify(c.data));
   const { id, ownerKey: key } = c.data;
@@ -88,7 +88,7 @@ test('galerie : aperçus JPEG enregistrés, servis en ligne et ZIP limité aux f
   assert.equal(z.status, 200);
   const zip = Buffer.from(await z.arrayBuffer());
   assert.ok(zip.includes(Buffer.from('a.jpg')) && zip.includes(Buffer.from('b.jpg')));
-  assert.ok(!zip.includes(Buffer.from('notes.txt')));
+  assert.ok(!zip.includes(Buffer.from('notes.bin')));
 
   // Aperçu WhatsApp (3.19) : titre parlant et première photo
   const page = await (await fetch(`${srv.base}/t/${id}`)).text();

@@ -31,6 +31,15 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.24 — aperçu des documents avant téléchargement
+
+- PDF, Word (.docx), Excel (.xlsx, .ods), PowerPoint (.pptx), CSV et texte s'ouvrent dans la page avec le bouton **Aperçu** (ou **Voir le document** quand le lien ne contient qu'un document).
+- Léger en 4G : un gros PDF n'est lu que par morceaux (un PDF de 25 Mo s'ouvre en chargeant environ 2 Mo), les pages se dessinent au fil du défilement ; texte et CSV : seulement le début du fichier.
+- Word, Excel et PowerPoint sont lus par le navigateur du destinataire : rien n'est fabriqué sur le serveur (fonctionne sur le plan gratuit de Render).
+- Vignette de la première page dans la liste, préparée par l'appareil de l'expéditeur comme pour les photos ; pour un ancien lien : page de gestion › « Aperçus légers › Préparer ».
+- Anciens formats (.doc, .xls, .ppt, OpenDocument) : version PDF préparée par le serveur s'il dispose de LibreOffice (image Docker), sinon invitation à télécharger.
+- L'aperçu n'est pas compté comme un téléchargement. PowerPoint : aperçu simplifié (animations et graphiques non reproduits).
+
 ## Nouveautés 3.23.1 — liens TikTok dans Direct
 
 - Les liens courts du bouton « Partager » de TikTok (vm.tiktok.com, vt.tiktok.com, tiktok.com/t/…) sont reconnus : le serveur suit la redirection (uniquement vers tiktok.com) et affiche la vidéo.

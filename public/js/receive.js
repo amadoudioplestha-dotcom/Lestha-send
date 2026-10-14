@@ -3,6 +3,7 @@ import { $, $$, esc, icon, bytes, fileKind, relTime, ls, ss, api, visitorId, toa
 import { brandHeader } from './profile.js';
 import { track } from './ux.js';
 import { mountGallery, isGalleryFile } from './gallery.js';
+import { openDoc, canPreviewDoc, docKind, DOC_LABEL } from './doc-viewer.js';
 
 let root = null, id = null, data = null, timer = null, poll = null, gallery = null;
 
@@ -20,6 +21,7 @@ const token = () => ss.get('tx_tk_' + id) || ls.get('tx_tk_' + id, null);
 const q = (extra = '') => `v=${encodeURIComponent(visitorId())}${token() ? '&tk=' + encodeURIComponent(token()) : ''}${extra}`;
 const fileUrl = (fid, inline) => `/api/public/t/${id}/f/${fid}?${q(inline ? '&inline=1' : '')}`;
 const absUrl = (p) => location.origin + p;
+const pvUrl = (fid, slot) => `/api/public/t/${id}/pv/${fid}/${slot}?${q()}`;
 
 function skeleton() {
   return `<section class="receive-card stack"><div class="card stack">
@@ -98,6 +100,7 @@ function renderReady() {
   const watchable = (f) => d.playback !== 'off' && ['video', 'audio'].includes(fileKind(f.name, f.type, f.size).kind);
   const isLatest = (f) => !files.some(x => x.versionOf && x.versionOf === (f.versionOf || f.id) && (x.v || 1) > (f.v || 1));
   const playable = files.filter(watchable).filter(isLatest);
+  const oneDoc = files.length === 1 && canPreviewDoc(files[0]);
   // Galerie (3.18) : les photos et vidéos se parcourent en grand ; la liste « Contenu » garde le reste
   const media = files.filter(f => isGalleryFile(f) && isLatest(f));
   const listed = media.length ? files.filter(f => !media.includes(f)) : files;
@@ -128,8 +131,9 @@ function renderReady() {
         <div class="countdown" id="cd" title="Temps restant avant suppression"></div>
       </div>
       ${playable.length ? `<a class="btn primary xl block" href="/w/${id}" data-link>${icon('play')}Regarder en ligne${playable.length > 1 ? ' · ' + playable.length + ' médias' : ''}</a>` : ''}
+      ${oneDoc ? `<button type="button" class="btn primary xl block" data-preview="${files[0].id}">${icon('eye')}Voir le document</button>` : ''}
       ${only ? `<div class="tip">${icon('lock')}<span>L'expéditeur a choisi le <b>visionnage seul</b> : ce contenu se regarde en ligne, sans téléchargement.</span></div>` : files.length === 1
-        ? `<a class="btn ${playable.length ? '' : 'primary'} xl block" href="${fileUrl(files[0].id)}" data-dl="${files[0].id}">${icon('download')}Télécharger · ${bytes(files[0].size)}</a>`
+        ? `<a class="btn ${playable.length || oneDoc ? '' : 'primary'} xl block" href="${fileUrl(files[0].id)}" data-dl="${files[0].id}">${icon('download')}Télécharger · ${bytes(files[0].size)}</a>`
         : `<div class="row wrap cta-row">
             <a class="btn primary xl grow" href="/api/public/t/${id}/zip?${q()}" data-zip>${icon('zip')}Tout télécharger (.zip)</a>
             <button type="button" class="btn xl grow" id="btnSeq">${icon('download')}Un par un</button>
@@ -148,8 +152,9 @@ function renderReady() {
         <div class="countdown" id="cd" title="Temps restant avant suppression"></div>
       </div>
       ${playable.length ? `<a class="btn primary xl block" href="/w/${id}" data-link>${icon('play')}Regarder en ligne${playable.length > 1 ? ' · ' + playable.length + ' médias' : ''}</a>` : ''}
+      ${oneDoc ? `<button type="button" class="btn primary xl block" data-preview="${files[0].id}">${icon('eye')}Voir le document</button>` : ''}
       ${only ? `<div class="tip">${icon('lock')}<span>L'expéditeur a choisi le <b>visionnage seul</b> : ce contenu se regarde en ligne, sans téléchargement.</span></div>` : files.length === 1
-        ? `<a class="btn ${playable.length ? '' : 'primary'} xl block" href="${fileUrl(files[0].id)}" data-dl="${files[0].id}">${icon('download')}Télécharger · ${bytes(files[0].size)}</a>`
+        ? `<a class="btn ${playable.length || oneDoc ? '' : 'primary'} xl block" href="${fileUrl(files[0].id)}" data-dl="${files[0].id}">${icon('download')}Télécharger · ${bytes(files[0].size)}</a>`
         : `<div class="row wrap cta-row">
             <a class="btn primary xl grow" href="/api/public/t/${id}/zip?${q()}" data-zip>${icon('zip')}Tout télécharger (.zip)</a>
             <button type="button" class="btn xl grow" id="btnSeq">${icon('download')}Un par un</button>
@@ -161,12 +166,14 @@ function renderReady() {
       <div class="stack" style="gap:8px" id="dlList">
         ${listed.map(f => {
           const k = fileKind(f.name, f.type);
-          const thumb = k.kind === 'image' && f.size < 12e6 && files.length <= 80;
-          const canPreview = ['image', 'video', 'audio'].includes(k.kind) || k.kind === 'pdf';
-          return `<div class="dl-row" data-fid="${f.id}">
-            <div class="ficon" style="--c:${k.c}" ${canPreview ? `data-preview="${f.id}" title="Aperçu"` : ''}>${thumb ? `<img src="${fileUrl(f.id, true)}" alt="" loading="lazy" decoding="async">` : icon(k.icon)}</div>
+          const dk = canPreviewDoc(f) ? docKind(f) : null;
+          const thumb = f.th ? (f.thu || pvUrl(f.id, 'thumb')) : k.kind === 'image' && f.size < 12e6 && files.length <= 80 ? fileUrl(f.id, true) : null;
+          const canPreview = ['image', 'video', 'audio'].includes(k.kind) || !!dk;
+          return `<div class="dl-row${dk ? ' is-doc' : ''}" data-fid="${f.id}">
+            <div class="ficon${dk && thumb ? ' doc-th' : ''}" style="--c:${k.c}" ${canPreview ? `data-preview="${f.id}" title="Aperçu"` : ''}>${thumb ? `<img src="${thumb}" alt="" loading="lazy" decoding="async">` : icon(k.icon)}${dk ? `<span class="doc-tag">${esc(DOC_LABEL[dk] === 'Document' ? (f.name.split('.').pop() || '').toUpperCase().slice(0, 4) : DOC_LABEL[dk] === 'PowerPoint' ? 'PPT' : DOC_LABEL[dk])}</span>` : ''}</div>
             <div class="fmeta"><div class="fname" title="${esc(f.path || f.name)}">${f.v ? `<span class="pill violet" style="padding:1px 7px;margin-right:6px">V${f.v}</span>` : ''}${esc(f.name)}</div><div class="fsub">${bytes(f.size)}${f.path && f.path.includes('/') ? ' · ' + esc(f.path.split('/').slice(0, -1).join('/')) : ''}${got[f.id] ? ' · <span style="color:var(--ok)">téléchargé</span>' : ''}</div></div>
             ${watchable(f) ? `<a class="btn sm icon" href="/w/${id}?f=${f.id}" data-link title="Regarder">${icon('play', 'sm')}</a>` : ''}
+            ${dk ? `<button type="button" class="btn sm dv-open-btn" data-preview="${f.id}" aria-label="Aperçu de ${esc(f.name)}">${icon('eye', 'sm')}<span>Aperçu</span></button>` : ''}
             ${only ? '' : !isMobile ? `<button type="button" class="btn sm icon ghost" data-copy="${f.id}" title="Copier le lien direct (gestionnaire de téléchargement)">${icon('link', 'sm')}</button>` : ''}
             ${only ? '' : `<a class="btn sm dl-btn ${got[f.id] ? 'ok' : ''}" href="${fileUrl(f.id)}" data-dl="${f.id}" aria-label="Télécharger ${esc(f.name)}">${icon(got[f.id] ? 'check' : 'download', 'sm')}<span>${got[f.id] ? 'Encore' : 'Télécharger'}</span></a>`}
           </div>`;
@@ -251,10 +258,21 @@ async function reportDialog() {
 
 function preview(f) {
   const k = fileKind(f.name, f.type);
+  const canDl = data.playback !== 'only';
+  const download = () => { const a = document.createElement('a'); a.href = fileUrl(f.id); document.body.appendChild(a); a.click(); a.remove(); markGot(f.id); };
+  // 3.24 : PDF, Word, Excel, PowerPoint, texte → aperçu léger dans la page
+  if (canPreviewDoc(f)) {
+    return openDoc({
+      file: f,
+      info: (convert) => api(`/api/public/t/${id}/doc/${f.id}?${q(convert ? '&convert=1' : '')}`),
+      rawUrl: (fid) => `/api/public/t/${id}/f/${fid || f.id}?${q('&pv=1&inline=1')}`,
+      onDownload: canDl ? download : null
+    });
+  }
   const src = fileUrl(f.id, true);
   const media = k.kind === 'image' ? `<img class="preview-media" src="${src}" alt="${esc(f.name)}" style="object-fit:contain">`
     : k.kind === 'video' ? `<video class="preview-media" src="${src}" controls autoplay playsinline></video>`
-    : k.kind === 'audio' ? `<audio src="${src}" controls autoplay style="width:100%"></audio>`
-    : `<iframe src="${src}" title="${esc(f.name)}" style="width:100%;height:70vh;border:0;border-radius:12px;background:#fff"></iframe>`;
-  modal({ title: f.name, wide: true, body: media, actions: data.playback === 'only' ? [{ label: 'Fermer', cls: 'ghost' }] : [{ label: 'Fermer', cls: 'ghost' }, { label: 'Télécharger', cls: 'primary', icon: 'download', handler: () => { const a = document.createElement('a'); a.href = fileUrl(f.id); document.body.appendChild(a); a.click(); a.remove(); markGot(f.id); } }] });
+    : `<audio src="${src}" controls autoplay style="width:100%"></audio>`;
+  modal({ title: f.name, wide: true, body: media, actions: canDl ? [{ label: 'Fermer', cls: 'ghost' }, { label: 'Télécharger', cls: 'primary', icon: 'download', handler: download }] : [{ label: 'Fermer', cls: 'ghost' }] });
 }
+
