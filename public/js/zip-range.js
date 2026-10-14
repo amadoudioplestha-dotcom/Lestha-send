@@ -8,7 +8,8 @@
 const SPAN_GAP = 48 * 1024;      // deux parties séparées de moins que ça : une seule requête
 const SPAN_MAX = 3 * 1024 * 1024;
 
-export const canRangeZip = () => typeof DecompressionStream === 'function';
+/** Le navigateur sait-il décompresser lui-même ? (Chrome 103+, Safari 16.4+, Firefox 113+) ; sinon : fichier entier */
+export const canRangeZip = () => { try { new DecompressionStream('deflate-raw'); return true; } catch (e) { return false; } };
 
 async function range(url, start, end, signal) {
   const r = await fetch(url, { headers: { Range: `bytes=${start}-${end}` }, signal, credentials: 'omit' });

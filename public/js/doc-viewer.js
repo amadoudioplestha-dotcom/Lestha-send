@@ -14,7 +14,7 @@ const TEXT_MAX = 256 * 1024;      // début d'un fichier texte affiché
 const FULL_MAX = 30 * 1024 * 1024; // Word / Excel / PowerPoint lus en entier : au-delà, trop lourd pour un téléphone
 
 const KINDS = {
-  pdf: /^(pdf)$/, docx: /^(docx|docm|dotx)$/, sheet: /^(xlsx|xlsm|ods)$/, pptx: /^(pptx|ppsx)$/,
+  pdf: /^(pdf|ai)$/, docx: /^(docx|docm|dotx)$/, sheet: /^(xlsx|xlsm|ods)$/, pptx: /^(pptx|ppsx)$/,
   csv: /^(csv|tsv)$/, text: /^(txt|md|json|xml|log)$/, legacy: /^(doc|xls|ppt|pps|odt|odp|rtf)$/
 };
 /** Type d'aperçu d'un fichier, ou null */
@@ -24,7 +24,8 @@ export function docKind(f) {
   for (const [k, re] of Object.entries(KINDS)) if (re.test(ext)) return k;
   return null;
 }
-export const canPreviewDoc = (f) => !!docKind(f) && f.size > 0 && f.size <= 60 * 1024 * 1024;
+// PDF (et banderoles .ai) : lus page par page, jusqu'à 300 Mo ; avec les pages en images, sans limite. Autres : 60 Mo.
+export const canPreviewDoc = (f) => { const k = docKind(f); return !!k && f.size > 0 && (k === 'pdf' ? (f.size <= 300 * 1024 * 1024 || !!(f.pg && f.pg.n)) : f.size <= 60 * 1024 * 1024); };
 export const DOC_LABEL = { pdf: 'PDF', docx: 'Word', sheet: 'Excel', pptx: 'PowerPoint', csv: 'Tableau', text: 'Texte', legacy: 'Document' };
 
 let pdfjsP = null;
@@ -229,6 +230,7 @@ export function openDoc(o) {
         if (!im.getAttribute('src')) im.src = im.dataset.src;
         // L'image suffit (téléphone, pas de zoom) : pas besoin du lecteur PDF
         if ((im.naturalWidth || 1000) >= want * 0.8) return;
+        if (size0 > 60 * 1024 * 1024 && zoom <= 1) return;   // très gros fichier (banderole, affiche) : le lecteur PDF seulement si on zoome
       }
       if (busy.has(i) || (drawn.get(i) || 0) >= want * 0.95) return;
       busy.add(i);
@@ -432,7 +434,8 @@ export function openDoc(o) {
       }
     }
     if (!info.pdf) return fail('Ce document n\'a pas pu être préparé pour l\'aperçu. Téléchargez-le pour l\'ouvrir.');
-    return showPdf(info.pdfUrl || o.rawUrl(info.pdf), info.pdfSize);
+    const pdfSrc = info.pdfUrl || o.rawUrl(info.pdf);
+    return showPdf(() => Promise.resolve(pdfSrc), info.pdfSize, null);
   }
 
   return { close: () => close() };

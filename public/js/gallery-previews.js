@@ -11,8 +11,9 @@ const MAX_PIXELS = 60e6;    // au-delà, on laisse tomber (mémoire des petits t
 export const isImageFile = (f) => /^image\/(jpeg|png|webp|gif|avif|bmp|heic|heif)$/i.test(f.type || '') || /\.(jpe?g|png|webp|gif|avif|bmp|heic|heif)$/i.test(f.name || '');
 export const isVideoFile = (f) => /^video\//.test(f.type || '') || /\.(mp4|mov|m4v|webm)$/i.test(f.name || '');
 // 3.24 : documents (PDF, Word, Excel, PowerPoint, texte) → vignette de la première page
-export const isDocFile = (f) => /pdf/i.test(f.type || '') || /\.(pdf|docx|docm|dotx|odt|xlsx|xlsm|ods|csv|tsv|pptx|ppsx|odp|txt|md)$/i.test(f.name || '');
-export const wantsPreview = (f) => (isImageFile(f) && f.size < 60e6 && !/svg/i.test(f.type || '')) || isVideoFile(f) || (isDocFile(f) && f.size > 0 && f.size < 80e6);
+export const isDocFile = (f) => /pdf/i.test(f.type || '') || /\.(pdf|ai|docx|docm|dotx|odt|xlsx|xlsm|ods|csv|tsv|pptx|ppsx|odp|txt|md)$/i.test(f.name || '');
+export const isPdfFile = (f) => /pdf/i.test(f.type || '') || /\.(pdf|ai)$/i.test(f.name || '');
+export const wantsPreview = (f) => (isImageFile(f) && f.size < 60e6 && !/svg/i.test(f.type || '')) || isVideoFile(f) || (isDocFile(f) && f.size > 0 && f.size < (isPdfFile(f) ? 300e6 : 80e6));
 
 function loadImage(url) {
   return new Promise((resolve, reject) => {
@@ -87,14 +88,16 @@ export async function makePreviews(file) {
   } finally { URL.revokeObjectURL(url); }
 }
 
-export const isPdfFile = (f) => /pdf/i.test(f.type || '') || /\.pdf$/i.test(f.name || '');
-
-/** 3.25 : premières pages d'un PDF en images légères, envoyées une par une */
-export async function sendPdfPages({ id, key, fid, file }) {
+/** 3.25 : premières pages d'un PDF en images légères (et sa vignette), envoyées une par une ; le PDF n'est lu qu'une fois */
+export async function sendPdfPages({ id, key, fid, file, thumb = false, pages = true }) {
   const { pdfPages } = await import('./doc-thumb.js');
-  return pdfPages(file, async (p) => {
+  let sent = false;
+  const n = await pdfPages(file, async (p) => {
     await api(`/api/transfers/${id}/files/${fid}/pages`, { method: 'POST', key, body: { i: p.i, img: await b64(p.blob), total: p.total, w: p.w, h: p.h } });
-  });
+  }, { pages, onThumb: thumb ? async (t) => {
+    if (t.blob && t.blob.size < 118e3) { await api(`/api/transfers/${id}/files/${fid}/previews`, { method: 'POST', key, body: { thumb: await b64(t.blob), w: t.w, h: t.h } }); sent = true; }
+  } : null });
+  return n || (sent ? 1 : 0);
 }
 
 /** Fabrique puis envoie les aperçus de tous les fichiers photo/vidéo d'un envoi, un par un, sans bloquer */
@@ -102,11 +105,15 @@ export async function sendPreviews({ id, key, items, onProgress = () => {} }) {
   const list = items.filter(it => it.meta && wantsPreview(it.file));
   let done = 0;
   for (const it of list) {
+    if (isPdfFile(it.file)) {   // PDF : vignette et pages en une seule lecture
+      try { await sendPdfPages({ id, key, fid: it.meta.id, file: it.file, thumb: true }); } catch (e) { /* le lecteur PDF prendra le relais */ }
+      onProgress(++done, list.length);
+      continue;
+    }
     try {
       const p = await makePreviews(it.file);
       if (p && (p.thumb || p.view)) await api(`/api/transfers/${id}/files/${it.meta.id}/previews`, { method: 'POST', key, body: p });
     } catch (e) { /* un aperçu manquant n'empêche rien : la galerie affichera l'original */ }
-    if (isPdfFile(it.file)) try { await sendPdfPages({ id, key, fid: it.meta.id, file: it.file }); } catch (e) { /* le lecteur PDF prendra le relais */ }
     onProgress(++done, list.length);
   }
   return done;

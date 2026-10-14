@@ -31,6 +31,13 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.25.1 — banderoles et très gros PDF
+
+- PDF jusqu'à **300 Mo** en aperçu (avant : 60 Mo). Envoyé depuis un ordinateur, le PDF est préparé (vignette + pages en images) jusqu'à 300 Mo ; depuis un téléphone, jusqu'à 60 Mo.
+- Banderoles, roll-up, affiches (pages très larges ou très hautes) : image plus détaillée (2400 px sur le grand côté). Une banderole de 64 Mo s'ouvre en 4G après ≈ 80 Ko.
+- Fichiers **Illustrator (.ai)** enregistrés « compatibles PDF » : vignette et aperçu comme un PDF.
+- Le PDF n'est lu qu'une fois sur l'appareil de l'expéditeur (vignette et pages ensemble).
+
 ## Nouveautés 3.25 — aperçu des documents aussi rapide que les photos
 
 - **PDF** : l'appareil de l'expéditeur dessine les 10 premières pages en images légères (≈ 60 à 200 Ko chacune, `POST /api/transfers/:id/files/:fid/pages`). Le destinataire les voit tout de suite, comme des photos, sans charger le lecteur PDF ; la page 1 s'affiche d'abord avec la vignette déjà en cache. Le lecteur PDF ne se charge que pour les pages suivantes, le zoom ou un grand écran.

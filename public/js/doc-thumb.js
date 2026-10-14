@@ -9,7 +9,12 @@ const PDFJS = '/vendor/pdfjs/';
 let pdfjsP = null;
 const pdfjs = () => (pdfjsP = pdfjsP || import(PDFJS + 'pdf.min.mjs').then(m => { m.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.mjs'; return m; }).catch(e => { pdfjsP = null; throw e; }));
 
-export const isDocFile = (f) => /pdf/i.test(f.type || '') || /\.(pdf|docx|docm|dotx|odt|xlsx|xlsm|ods|csv|tsv|pptx|ppsx|odp|txt|md)$/i.test(f.name || '');
+/** Ordinateur avec assez de mémoire : il peut préparer l'aperçu de très gros PDF (banderoles, affiches, plans) */
+const strong = () => !/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) && (navigator.deviceMemory || 8) >= 4;
+export const pdfMax = () => (strong() ? 300e6 : 60e6);
+export const isPdfLike = (f) => /pdf/i.test(f.type || '') || /\.(pdf|ai)$/i.test(f.name || '');   // .ai d'Illustrator : lisible comme un PDF s'il a été enregistré « compatible PDF »
+
+export const isDocFile = (f) => /pdf/i.test(f.type || '') || /\.(pdf|ai|docx|docm|dotx|odt|xlsx|xlsm|ods|csv|tsv|pptx|ppsx|odp|txt|md)$/i.test(f.name || '');
 
 const canvas = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); return [c, g]; };
 const jpeg = (c, q = 0.72) => new Promise(res => c.toBlob(res, 'image/jpeg', q));
@@ -17,7 +22,7 @@ const jpeg = (c, q = 0.72) => new Promise(res => c.toBlob(res, 'image/jpeg', q))
 /** @returns {Promise<{ blob: Blob, w: number, h: number } | null>} */
 export async function makeDocThumb(file) {
   const ext = extOf(file.name);
-  if (/pdf/i.test(file.type || '') || ext === 'pdf') return file.size < 80e6 ? pdfThumb(file) : null;
+  if (isPdfLike(file)) return file.size < pdfMax() ? pdfThumb(file) : null;
   if (/^(txt|md|csv|tsv)$/.test(ext)) return textThumb(await file.slice(0, 6000).text(), ext);
   if (file.size > 40e6) return null;
   const JSZip = await loadZip();
@@ -76,24 +81,29 @@ async function pdfThumb(file) {
  * @param {File} file
  * @param {(p: { i: number, blob: Blob, total: number, w: number, h: number }) => Promise<void>} onPage
  */
-export async function pdfPages(file, onPage, { max = 10, width = 1000 } = {}) {
-  if (file.size > 80e6) return 0;
+export async function pdfPages(file, onPage, { max = 10, width = 1000, onThumb = null, pages = true } = {}) {
+  if (file.size > pdfMax()) return 0;   // mémoire : 60 Mo sur téléphone, 300 Mo sur ordinateur   // mémoire des petits téléphones de l'expéditeur
   const lib = await pdfjs();
   const pdf = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false, cMapUrl: PDFJS + 'cmaps/', cMapPacked: true, standardFontDataUrl: PDFJS + 'standard_fonts/' }).promise;
   let done = 0;
   try {
-    for (let i = 1; i <= Math.min(max, pdf.numPages); i++) {
+    for (let i = 1; i <= Math.min(pages ? max : 1, pdf.numPages); i++) {
       const page = await pdf.getPage(i);
       const v1 = page.getViewport({ scale: 1 });
-      const k = Math.min(width / v1.width, Math.sqrt(4e6 / (v1.width * v1.height)));   // pages très grandes (plans, affiches) : bornées
+      // Banderole (très large ou très haute) : plus de détails sur le grand côté ; toujours ≤ 4 millions de pixels
+      const ar = v1.width / v1.height, banner = ar > 1.6 || ar < 0.6;
+      const k = Math.min(banner ? 2400 / Math.max(v1.width, v1.height) : width / v1.width, Math.sqrt(4e6 / (v1.width * v1.height)));
       const vp = page.getViewport({ scale: k });
       const [c, g] = canvas(Math.round(vp.width), Math.round(vp.height));
       await page.render({ canvasContext: g, viewport: vp }).promise;
       page.cleanup();
+      if (i === 1 && onThumb) { const t = await draw(c, c.width, c.height); await onThumb(Object.assign(t, { w: Math.round(v1.width), h: Math.round(v1.height) })); }   // vignette tirée de la même page : le PDF n'est lu qu'une fois
+      if (!pages) { c.width = c.height = 0; break; }
       let blob = await jpeg(c, 0.72);
-      if (blob && blob.size > 400e3) blob = await jpeg(c, 0.55);
+      if (blob && blob.size > 640e3) blob = await jpeg(c, 0.55);
+      if (blob && blob.size > 640e3) blob = await jpeg(c, 0.4);
       c.width = c.height = 0;
-      if (!blob || blob.size > 400e3) break;   // page trop chargée : le lecteur PDF prendra le relais à partir d'ici
+      if (!blob || blob.size > 640e3) break;   // page trop chargée : le lecteur PDF prendra le relais à partir d'ici
       await onPage({ i, blob, total: pdf.numPages, w: Math.round(v1.width), h: Math.round(v1.height) });
       done = i;
     }

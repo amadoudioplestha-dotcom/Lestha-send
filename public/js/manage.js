@@ -351,11 +351,11 @@ async function prepareGallery(btn) {
       const blob = await r.blob();
       const file = new File([blob], f.name, { type: f.type || blob.type });
       let done = false;
+      if (isPdfFile(f)) { if (await sendPdfPages({ id, key, fid: f.id, file, thumb: !f.th, pages: !f.pg }).catch(() => 0)) ok++; continue; }
       if (!f.th) {
         const p = await makePreviews(file);
         if (p && (p.thumb || p.view)) { await api(`/api/transfers/${id}/files/${f.id}/previews`, { method: 'POST', key, body: p }); done = true; }
       }
-      if (isPdfFile(f) && !f.pg && await sendPdfPages({ id, key, fid: f.id, file }).catch(() => 0)) done = true;   // 3.25 : pages en images
       if (done) ok++;
     } catch (e) { /* photo illisible ici (ex. HEIC hors Safari) : on passe à la suivante */ }
   }
