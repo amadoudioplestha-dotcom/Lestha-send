@@ -77,6 +77,21 @@ test('documents : vignette de la première page, lien d\'aperçu et lecture par 
   assert.equal((await part.arrayBuffer()).byteLength, 100);
   assert.equal((await fetch(`${srv.base}/api/public/t/${id}/f/${fd.id}?v=lecteur&pv=1`)).status, 200);
   assert.equal((await fetch(`${srv.base}/api/public/t/${id}/f/${fp.id}?v=lecteur&pv=1&inline=1`)).status, 200);
+  // 3.25 : pages du PDF en images, envoyées une par une par l'expéditeur
+  const pg = (i, extra = {}) => call(srv.base, `/api/transfers/${id}/files/${fp.id}/pages`, { method: 'POST', key, body: Object.assign({ i, img: jpeg(900).toString('base64'), total: 12, w: 595, h: 842 }, extra) });
+  assert.equal((await pg(1)).status, 200);
+  assert.equal((await pg(3)).data.n, 1, 'page 2 manquante : seule la page 1 compte');
+  assert.equal((await pg(2)).data.n, 3);
+  assert.equal((await pg(11)).status, 400);
+  assert.equal((await pg(4, { img: Buffer.from('pas une image').toString('base64') })).status, 400);
+  assert.equal((await call(srv.base, `/api/transfers/${id}/files/${fp.id}/pages`, { method: 'POST', body: { i: 4, img: jpeg(10).toString('base64') } })).status, 403);
+  const pub = await call(srv.base, `/api/public/t/${id}?v=lecteur`);
+  const vp = pub.data.files.find(x => x.id === fp.id);
+  assert.deepEqual(vp.pg, { n: 3, total: 12, w: 595, h: 842 });
+  const im = await fetch(`${srv.base}/api/public/t/${id}/pg/${fp.id}/2?v=lecteur`);
+  assert.equal(im.status, 200); assert.equal(im.headers.get('content-type'), 'image/jpeg');
+  assert.equal((await fetch(`${srv.base}/api/public/t/${id}/pg/${fp.id}/5?v=lecteur`)).status, 404);
+
   const st = (await call(srv.base, `/api/transfers/${id}`, { key })).data.stats;
   assert.equal(st.downloads, 0, 'l\'aperçu ne compte pas de téléchargement');
   // pv=1 ne vaut rien pour un fichier qui n'est pas un document

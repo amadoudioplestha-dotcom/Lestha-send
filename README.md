@@ -31,6 +31,13 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.25 — aperçu des documents aussi rapide que les photos
+
+- **PDF** : l'appareil de l'expéditeur dessine les 10 premières pages en images légères (≈ 60 à 200 Ko chacune, `POST /api/transfers/:id/files/:fid/pages`). Le destinataire les voit tout de suite, comme des photos, sans charger le lecteur PDF ; la page 1 s'affiche d'abord avec la vignette déjà en cache. Le lecteur PDF ne se charge que pour les pages suivantes, le zoom ou un grand écran.
+- **PowerPoint et Excel** (au-delà de 1,5 Mo) : seule la partie utile du fichier est lue (sommaire de l'archive, puis texte et mise en page), par morceaux. Les images d'une diapositive ne sont chargées qu'en arrivant dessus, deux à la fois, la plus récente d'abord. Un PowerPoint de 25 Mo s'ouvre après ≈ 110 Ko au lieu de 25 Mo (`public/js/zip-range.js`).
+- L'aperçu se prépare dès que le doigt touche « Aperçu » ; la vignette s'affiche pendant l'ouverture.
+- Anciens liens : bouton **Préparer** de la page de gestion (« Aperçus légers ») pour fabriquer les pages des PDF.
+
 ## Nouveautés 3.24 — aperçu des documents avant téléchargement
 
 - PDF, Word (.docx), Excel (.xlsx, .ods), PowerPoint (.pptx), CSV et texte s'ouvrent dans la page avec le bouton **Aperçu** (ou **Voir le document** quand le lien ne contient qu'un document).

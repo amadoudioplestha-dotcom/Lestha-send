@@ -70,6 +70,37 @@ async function pdfThumb(file) {
   } finally { pdf.destroy(); }
 }
 
+/**
+ * Pages d'un PDF en images (3.25) : les premières pages, dessinées une fois ici, s'affichent ensuite chez
+ * chaque destinataire aussi vite qu'une photo, sans charger le lecteur PDF.
+ * @param {File} file
+ * @param {(p: { i: number, blob: Blob, total: number, w: number, h: number }) => Promise<void>} onPage
+ */
+export async function pdfPages(file, onPage, { max = 10, width = 1000 } = {}) {
+  if (file.size > 80e6) return 0;
+  const lib = await pdfjs();
+  const pdf = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false, cMapUrl: PDFJS + 'cmaps/', cMapPacked: true, standardFontDataUrl: PDFJS + 'standard_fonts/' }).promise;
+  let done = 0;
+  try {
+    for (let i = 1; i <= Math.min(max, pdf.numPages); i++) {
+      const page = await pdf.getPage(i);
+      const v1 = page.getViewport({ scale: 1 });
+      const k = Math.min(width / v1.width, Math.sqrt(4e6 / (v1.width * v1.height)));   // pages très grandes (plans, affiches) : bornées
+      const vp = page.getViewport({ scale: k });
+      const [c, g] = canvas(Math.round(vp.width), Math.round(vp.height));
+      await page.render({ canvasContext: g, viewport: vp }).promise;
+      page.cleanup();
+      let blob = await jpeg(c, 0.72);
+      if (blob && blob.size > 400e3) blob = await jpeg(c, 0.55);
+      c.width = c.height = 0;
+      if (!blob || blob.size > 400e3) break;   // page trop chargée : le lecteur PDF prendra le relais à partir d'ici
+      await onPage({ i, blob, total: pdf.numPages, w: Math.round(v1.width), h: Math.round(v1.height) });
+      done = i;
+    }
+  } finally { pdf.destroy(); }
+  return done;
+}
+
 /** Retour à la ligne simple pour le dessin */
 function wrap(g, text, max) {
   const out = []; let line = '';

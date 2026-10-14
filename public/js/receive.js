@@ -3,7 +3,7 @@ import { $, $$, esc, icon, bytes, fileKind, relTime, ls, ss, api, visitorId, toa
 import { brandHeader } from './profile.js';
 import { track } from './ux.js';
 import { mountGallery, isGalleryFile } from './gallery.js';
-import { openDoc, canPreviewDoc, docKind, DOC_LABEL } from './doc-viewer.js';
+import { openDoc, canPreviewDoc, docKind, DOC_LABEL, warmDoc } from './doc-viewer.js';
 
 let root = null, id = null, data = null, timer = null, poll = null, gallery = null;
 
@@ -228,6 +228,12 @@ function bindReady(files) {
     const pv = e.target.closest('[data-preview]');
     if (pv) { const f = files.find(x => x.id === pv.dataset.preview); if (f) preview(f); }
   };
+  // 3.25 : dès que le doigt touche « Aperçu », on commence à préparer le document (comme pour les photos)
+  root.onpointerdown = (e) => {
+    const pv = e.target.closest('[data-preview]');
+    const f = pv && files.find(x => x.id === pv.dataset.preview);
+    if (f && canPreviewDoc(f)) { docInfo(f).catch(() => {}); warmDoc(f, (i) => pageUrl(f, i)); }
+  };
   const rep = $('#btnReport', root); if (rep) rep.onclick = reportDialog;
   const seq = $('#btnSeq', root);
   if (seq) seq.onclick = async () => {
@@ -256,6 +262,18 @@ async function reportDialog() {
   catch (e) { toast(e.message, 'error'); }
 }
 
+const infoCache = new Map();
+/** Renseignements d'aperçu d'un document, demandés une seule fois (aussi au simple toucher du bouton) */
+function docInfo(f, convert) {
+  if (convert) return api(`/api/public/t/${id}/doc/${f.id}?${q('&convert=1')}`);
+  const c = infoCache.get(f.id);
+  if (c && Date.now() - c.at < 30 * 60e3) return c.p;
+  const p = api(`/api/public/t/${id}/doc/${f.id}?${q()}`).catch(e => { infoCache.delete(f.id); throw e; });
+  infoCache.set(f.id, { p, at: Date.now() });
+  return p;
+}
+const pageUrl = (f, i) => (f.pgu && f.pgu[i - 1]) || `/api/public/t/${id}/pg/${f.id}/${i}?${q()}`;
+
 function preview(f) {
   const k = fileKind(f.name, f.type);
   const canDl = data.playback !== 'only';
@@ -264,7 +282,9 @@ function preview(f) {
   if (canPreviewDoc(f)) {
     return openDoc({
       file: f,
-      info: (convert) => api(`/api/public/t/${id}/doc/${f.id}?${q(convert ? '&convert=1' : '')}`),
+      info: (convert) => docInfo(f, convert),
+      pageUrl: (i) => pageUrl(f, i),
+      thumb: f.th ? (f.thu || pvUrl(f.id, 'thumb')) : null,
       rawUrl: (fid) => `/api/public/t/${id}/f/${fid || f.id}?${q('&pv=1&inline=1')}`,
       onDownload: canDl ? download : null
     });

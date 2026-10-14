@@ -279,6 +279,7 @@ async function mediaUrl(zip, path, cache) {
   const ext = extOf(path);
   const type = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', bmp: 'image/bmp', webp: 'image/webp', svg: 'image/svg+xml', tif: 'image/tiff', tiff: 'image/tiff' }[ext];
   const f = type && zip.file(path);
+  if (f && cache.lazy) { cache.set(path, 'zip:' + path); return 'zip:' + path; }   // 3.25 : image chargée plus tard, en arrivant sur la diapositive
   const url = f ? URL.createObjectURL(new Blob([await f.async('arraybuffer')], { type })) : null;
   cache.set(path, url);
   return url;
@@ -416,7 +417,7 @@ function bgOf(doc, theme) {
 /**
  * @returns {Promise<{ w, h, slides: { bg, bgImg, items }[], total, close() }>}
  */
-export async function readSlides(zip, { max = 120, from = 0 } = {}) {
+export async function readSlides(zip, { max = 120, from = 0, lazyMedia = false } = {}) {
   const pres = await xmlOf(zip, 'ppt/presentation.xml');
   if (!pres) throw new Error('Présentation illisible');
   const sz = el(pres, 'sldSz');
@@ -424,6 +425,7 @@ export async function readSlides(zip, { max = 120, from = 0 } = {}) {
   const prels = await relsOf(zip, 'ppt/presentation.xml');
   const ids = els(pres, 'sldId').map(s => prels.get(rid(s))).filter(Boolean);
   const media = new Map();
+  media.lazy = lazyMedia;
   const cacheTree = new Map();
   const tree = async (path) => { if (!cacheTree.has(path)) cacheTree.set(path, await xmlOf(zip, path)); return cacheTree.get(path); };
   const themes = new Map();
@@ -459,7 +461,7 @@ export async function readSlides(zip, { max = 120, from = 0 } = {}) {
     items.push(...await shapesOf(zip, spTree(doc), { theme, rels, media }, { layoutTree: spTree(layDoc), masterTree: spTree(masDoc) }));
     slides.push({ bg: bg || '#ffffff', bgImg, items, dark: theme.dk1 });
   }
-  return { w: W, h: H, slides, total: ids.length, close: () => media.forEach(u => u && URL.revokeObjectURL(u)) };
+  return { w: W, h: H, slides, total: ids.length, close: () => media.forEach(u => u && u.startsWith('blob:') && URL.revokeObjectURL(u)) };
 }
 
 /** Dessine une diapositive dans un élément (positions en pixels de la diapositive d'origine) */
@@ -468,7 +470,7 @@ export function slideHtml(s, W, H, esc) {
   const parts = s.items.map(it => {
     const tr = [it.rot ? `rotate(${it.rot}deg)` : '', it.flipH ? 'scaleX(-1)' : '', it.flipV ? 'scaleY(-1)' : ''].filter(Boolean).join(' ');
     const pos = `left:${px(it.x)};top:${px(it.y)};width:${px(it.w)};height:${px(it.h)};${tr ? 'transform:' + tr + ';' : ''}`;
-    if (it.kind === 'pic') return `<img class="sl-pic" style="${pos}" src="${it.src}" alt="" draggable="false">`;
+    if (it.kind === 'pic') return it.src.startsWith('zip:') ? `<img class="sl-pic" style="${pos}" data-zp="${esc(it.src.slice(4))}" alt="" draggable="false">` : `<img class="sl-pic" style="${pos}" src="${it.src}" alt="" draggable="false">`;
     if (it.kind === 'table') return `<div class="sl-tbl" style="${pos}"><table>${it.rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</table></div>`;
     const deco = `${it.fill ? `background:${it.fill};` : ''}${it.line ? `border:${px(it.line.w)} solid ${it.line.color};` : ''}${it.geom === 'ellipse' ? 'border-radius:50%;' : it.geom === 'roundRect' ? 'border-radius:8%;' : ''}`;
     const t = it.text;
@@ -480,5 +482,6 @@ export function slideHtml(s, W, H, esc) {
     const just = t ? ({ ctr: 'center', b: 'flex-end' }[t.anchor] || 'flex-start') : 'flex-start';
     return `<div class="sl-sp" style="${pos}${deco}justify-content:${just};${s.dark ? 'color:#' + s.dark + ';' : ''}">${txt}</div>`;
   }).join('');
-  return `<div class="sl" style="width:${px(W)};height:${px(H)};background:${s.bg}${s.bgImg ? ` url('${s.bgImg}') center/cover no-repeat` : ''}">${parts}</div>`;
+  const lazyBg = s.bgImg && s.bgImg.startsWith('zip:');
+  return `<div class="sl" style="width:${px(W)};height:${px(H)};background:${s.bg}${s.bgImg && !lazyBg ? ` url('${s.bgImg}') center/cover no-repeat` : ''}"${lazyBg ? ` data-zbg="${esc(s.bgImg.slice(4))}"` : ''}>${parts}</div>`;
 }

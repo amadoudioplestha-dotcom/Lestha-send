@@ -87,6 +87,16 @@ export async function makePreviews(file) {
   } finally { URL.revokeObjectURL(url); }
 }
 
+export const isPdfFile = (f) => /pdf/i.test(f.type || '') || /\.pdf$/i.test(f.name || '');
+
+/** 3.25 : premières pages d'un PDF en images légères, envoyées une par une */
+export async function sendPdfPages({ id, key, fid, file }) {
+  const { pdfPages } = await import('./doc-thumb.js');
+  return pdfPages(file, async (p) => {
+    await api(`/api/transfers/${id}/files/${fid}/pages`, { method: 'POST', key, body: { i: p.i, img: await b64(p.blob), total: p.total, w: p.w, h: p.h } });
+  });
+}
+
 /** Fabrique puis envoie les aperçus de tous les fichiers photo/vidéo d'un envoi, un par un, sans bloquer */
 export async function sendPreviews({ id, key, items, onProgress = () => {} }) {
   const list = items.filter(it => it.meta && wantsPreview(it.file));
@@ -96,6 +106,7 @@ export async function sendPreviews({ id, key, items, onProgress = () => {} }) {
       const p = await makePreviews(it.file);
       if (p && (p.thumb || p.view)) await api(`/api/transfers/${id}/files/${it.meta.id}/previews`, { method: 'POST', key, body: p });
     } catch (e) { /* un aperçu manquant n'empêche rien : la galerie affichera l'original */ }
+    if (isPdfFile(it.file)) try { await sendPdfPages({ id, key, fid: it.meta.id, file: it.file }); } catch (e) { /* le lecteur PDF prendra le relais */ }
     onProgress(++done, list.length);
   }
   return done;
