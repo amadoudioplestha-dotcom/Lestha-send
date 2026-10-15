@@ -31,6 +31,10 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.29.3
+
+- Synchro image/son des qualités faites par le serveur : les vidéos à plus de 30 images/s (60 i/s des téléphones) sont ramenées à 30 i/s par le filtre fps au lieu de -fpsmax, qui mettait l'image ~67 ms en retard sur le son. Vérifié image par image (flash + bip chaque seconde) : écart 0 ms. Les qualités déjà faites par le serveur pour ces vidéos sont refaites automatiquement.
+
 ## Nouveautés 3.29.2
 
 - Lecture vidéo plus fluide en Auto (galerie, aperçu, page de visionnage) : le débit réel est mesuré pendant la lecture et retenu 6 h sur l'appareil ; sur téléphone sans mesure, on démarre en 480p ; on baisse d'un cran avant que l'image ne s'arrête et on monte d'un cran quand la connexion le permet, la nouvelle qualité se chargeant en coulisse pour un passage sans coupure.
