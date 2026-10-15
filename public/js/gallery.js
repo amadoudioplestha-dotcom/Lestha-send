@@ -3,6 +3,7 @@
    sélection et téléchargement des fichiers choisis. Aucune bibliothèque : défilement natif (scroll-snap). */
 import { $, esc, icon, bytes, fileKind, toast, modal, isMobile } from './core.js';
 import { pushOverlay, popOverlay } from './router.js';
+import { qualityVideo } from './video-quality.js';
 
 export const isGalleryFile = (f) => ['image', 'video'].includes(fileKind(f.name, f.type, f.size).kind) && !/svg/i.test(f.type || f.name);
 
@@ -194,9 +195,9 @@ export function mountGallery(box, o) {
       const s = track.children[i]; if (!s || s.dataset.ready) return;
       const f = files[i]; s.dataset.ready = '1';
       if (kindOf(f) === 'video') {
-        const q = (f.q || []).filter(r => r.h <= 720);
-        const src = q.length ? o.url(q[q.length - 1].id, true) : o.url(f.id, true);   // qualité légère si l'expéditeur l'a préparée
-        s.innerHTML = `<video class="gv-video" controls playsinline preload="metadata" ${f.th ? `poster="${f.thu || o.url(f.th, true)}"` : ''} src="${src}"></video>`;
+        // 3.29 : qualité légère choisie selon la connexion, et sélecteur Auto / 480p / 720p / Original comme YouTube
+        const qv = qualityVideo({ f, url: (fid) => o.url(fid, true), cls: 'gv-video', poster: f.th ? (f.thu || o.url(f.th, true)) : '' });
+        s.innerHTML = qv.html; qv.bind(s);
       } else {
         const full = fullOf(f);
         s.innerHTML = `<div class="gv-zoom"><img class="gv-img" alt="${esc(f.name)}" decoding="async" src="${full}"></div><div class="gv-spin"><span class="spinner"></span></div>`;

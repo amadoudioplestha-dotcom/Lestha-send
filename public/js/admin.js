@@ -140,6 +140,19 @@ function secretCard() {
     <div class="input-group"><input class="input" id="secCheck" type="password" autocomplete="off" placeholder="Votre copie d'APP_SECRET" aria-label="Copie d'APP_SECRET"><button type="button" class="btn" id="secBtn">${icon('check', 'sm')}Vérifier</button></div>
     <p class="small" id="secOut" style="margin-top:8px"></p></div>`;
 }
+/* 3.29 : qualités vidéo fabriquées par le serveur */
+function videoCard() {
+  const v = A.ov.system.videos;
+  if (!v) return '';
+  if (!v.enabled) return `<div class="card"><div class="card-title"><h3>${icon('film')}Qualités vidéo (serveur)</h3></div><p class="small muted">Désactivées (TRANSCODE=0 ou ffmpeg absent) : seules les qualités préparées par l'appareil de l'expéditeur existent.</p></div>`;
+  const perMin = v.speed ? Math.max(1, Math.round(v.speed)) : null;   // minutes de calcul par minute de vidéo, par qualité
+  const run = v.running ? `<div class="control"><div class="control-text"><b>En cours : ${esc(v.running.name)}${v.running.h ? ' · ' + v.running.h + 'p' : ''}</b><span>${v.running.p || 0} %${v.running.eta != null ? ' · encore ~' + v.running.eta + ' min' : ''}</span></div></div>` : '<p class="small faint">Aucune conversion en cours.</p>';
+  const fails = v.fails.length ? `<p class="small muted" style="margin:12px 0 6px">Échecs récents (nouvel essai automatique plus tard) :</p>${v.fails.map(x => `<div class="small" style="margin-bottom:4px"><b>${esc(x.name)}</b> <span class="muted">${relTime(x.at)} · ${esc(x.err)}</span></div>`).join('')}` : '';
+  const done = v.done.length ? `<p class="small muted" style="margin:12px 0 6px">Dernières vidéos prêtes :</p>${v.done.map(x => `<div class="small" style="margin-bottom:4px"><b>${esc(x.name)}</b> <span class="muted">${x.made.length ? x.made.map(h => h + 'p').join(' · ') : 'rien à faire'} · ${relTime(x.at)}</span></div>`).join('')}` : '';
+  return `<div class="card"><div class="card-title"><h3>${icon('film')}Qualités vidéo (serveur)</h3></div>
+    <p class="small muted" style="margin-bottom:10px">Quand l'expéditeur n'a pas préparé les qualités, le serveur fabrique la 480p puis la 720p, une vidéo à la fois.${v.speed ? ` Vitesse mesurée : <b>${v.speed < 1 ? 'moins d\'une minute' : 'environ ' + perMin + ' min'} de calcul par minute de vidéo</b> et par qualité.` : ''}</p>
+    ${run}<p class="small muted" style="margin-top:8px">${v.waiting} vidéo(s) en attente.</p>${fails}${done}</div>`;
+}
 function bindSystemExtras(body) {
   const scanBtn = body.querySelector('#r2Scan');
   if (scanBtn) scanBtn.onclick = async () => {
@@ -652,6 +665,7 @@ function renderSystem(body) {
         </div>
         ${bwCard()}
         ${storageCard()}
+        ${videoCard()}
         ${secretCard()}
         <div class="card"><div class="card-title"><h3>${icon('shield')}Diagnostic complet</h3></div>
           <p class="small muted" style="margin-bottom:12px">Vérifie le stockage, puis fait un vrai petit envoi depuis ce navigateur (règle CORS du bucket R2), le télécharge et le supprime.</p>

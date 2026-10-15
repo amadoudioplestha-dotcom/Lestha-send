@@ -31,6 +31,13 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.29 — qualités vidéo automatiques, comme YouTube
+
+- **Sélecteur Auto / 480p / 720p / Original** aussi dans la galerie et l'aperçu de la page de réception (public/js/video-quality.js, partagé avec le lecteur de revue). Auto choisit selon la connexion ; changement au même instant de lecture.
+- **Le serveur fabrique une qualité à la fois, la plus légère d'abord** : la 480p est disponible bien avant la 720p (sur un petit serveur, environ 40 % du temps).
+- **Suivi fiable** : l'avancement est gardé en mémoire (il disparaissait quand le transfert était relu), la vidéo regardée passe devant les autres, reprise automatique après un redémarrage (déploiement), nouvel essai après un échec (6 h, puis plus espacé), plus de durée maximale stricte (seul un vrai blocage arrête la conversion).
+- **Console › Système › Qualités vidéo (serveur)** : conversion en cours, file d'attente, vitesse mesurée, échecs avec leur raison, dernières vidéos prêtes.
+
 ## Nouveautés 3.28 — stockage R2 et sauvegarde du secret
 
 - **Console › Système › Stockage Cloudflare R2** : inventaire du bucket toutes les 6 h (ou bouton Actualiser), rangé par usage (fichiers, aperçus, qualités vidéo, documents de réunion, données), jauge sur la part gratuite (R2_FREE_GB, 10 par défaut), coût estimé au-delà, liens les plus lourds. E-mail à ADMIN_EMAIL à 80 et 100 % (lib/storage-usage.js).

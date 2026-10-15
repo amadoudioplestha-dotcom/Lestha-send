@@ -10,31 +10,8 @@ import { $, esc, icon, ls, toast, copyText, shareTo, isMobile, visitorId } from 
 import { tc, contentRect, drawShapes } from './review-tools.js';
 
 /* ============================== qualités ============================== */
-/** Sources disponibles pour un fichier : l'original + les qualités légères (du plus léger au plus lourd) */
-let probe = null;
-/** Le navigateur sait-il lire ce format ? (une qualité VP9/AV1 n'est pas lisible partout) */
-const playable = (mime) => { if (!mime) return true; try { probe = probe || document.createElement('video'); return !!probe.canPlayType(mime); } catch (e) { return true; } };
-export function sourcesOf(f) {
-  const oh = f.vw && f.vh ? Math.min(f.vw, f.vh) : 0;
-  const list = (f.q || []).filter(r => playable(r.mime)).map(r => ({ id: r.id, h: r.h, label: r.h + 'p' }));
-  list.push({ id: f.id, h: oh || 10000, label: 'Original' + (oh ? ' · ' + resName(oh) : ''), original: true });
-  return list;
-}
-const resName = (h) => (h >= 2100 ? '4K' : h >= 1400 ? '2K' : h + 'p');
-/** Choix automatique (3.22), comme YouTube : la qualité la plus haute que la connexion tient sans saccades.
-    L'original d'un téléphone pèse souvent 15 à 20 Mbit/s : en Auto, on ne le prend que si aucune qualité légère n'existe
-    (Chrome plafonne le débit annoncé à 10 Mbit/s : on ne peut pas savoir si la connexion tiendrait l'original). */
-const NOMINAL = { 360: 0.8, 480: 1.3, 720: 2.8, 1080: 5.5, 1440: 9 };   // Mbit/s visés par les qualités fabriquées
-export const rungBr = (h) => NOMINAL[h] || h * h / 2e5;
-export function autoPick(list) {
-  const rungs = list.filter(s => !s.original);
-  if (!rungs.length) return list[list.length - 1];
-  const c = navigator.connection || {};
-  const dl = Number(c.downlink) || 0, save = !!c.saveData, slow = /(^|-)(2g|3g)$/.test(c.effectiveType || '');
-  // Marge de 40 % : la 4G varie d'une seconde à l'autre, mieux vaut un cran en dessous qu'une vidéo qui s'arrête
-  const budget = save || slow ? 1.5 : dl ? dl * 0.6 : (isMobile ? 3.5 : 7);
-  return rungs.filter(s => rungBr(s.h) <= budget).pop() || rungs[0];
-}
+// 3.29 : listes de qualités et choix automatique partagés avec l'aperçu de la page de réception
+export { sourcesOf, autoPick, rungBr } from './video-quality.js';
 
 /* ============================== timeline enrichie ============================== */
 /** Aperçu de l'image au survol (planche d'aperçus fabriquée à l'envoi) */

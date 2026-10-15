@@ -268,10 +268,15 @@ function paintQ() {
     menu.innerHTML = `<div class="q-head">Qualité</div>`
       + (list.length > 1 ? `<button type="button" role="menuitemradio" data-qv="auto" class="${on('auto') ? 'on' : ''}">${icon('check', 'sm')}<span>Auto${srcSel && srcSel.auto ? ' <small>' + esc(short(srcSel)) + '</small>' : ''}</span></button>` : '')
       + list.slice().reverse().map(x => `<button type="button" role="menuitemradio" data-qv="${x.original ? 'orig' : x.h}" class="${on(x.id) || (list.length === 1) ? 'on' : ''}">${icon('check', 'sm')}<span>${x.original ? 'Original' + (short(x) !== x.label ? ' <small>' + esc(short(x)) + '</small>' : '') : x.h + 'p'}</span></button>`).join('')
-      + (list.length === 1 ? (cur.sq
-        ? `<p class="q-note">Qualités 480p et 720p en préparation sur le serveur${cur.sq.p ? ' : <b>' + cur.sq.p + ' %</b>' : '…'}. Elles apparaîtront ici toutes seules.</p>`
-        : `<p class="q-note">Seule la version d'origine existe pour cette vidéo pour le moment.</p>`) : '');
+      + (cur.sq ? `<p class="q-note">${sqText(cur.sq, list.length > 1)}</p>`
+        : list.length === 1 ? `<p class="q-note">Seule la version d'origine existe pour cette vidéo pour le moment.</p>` : '');
   }
+}
+/** 3.29 : où en est la préparation des qualités par le serveur (480p d'abord, puis 720p) */
+function sqText(sq, some) {
+  const eta = sq.eta != null ? (sq.eta < 1 ? ' · moins d\'une minute' : ` · environ ${sq.eta} min`) : '';
+  if (sq.s === 'run') return `${sq.h ? sq.h + 'p' : (some ? 'Qualité suivante' : 'Qualité 480p')} en préparation sur le serveur : <b>${sq.p || 0} %</b>${eta}. Elle apparaîtra ici toute seule.`;
+  return `Qualités ${some ? 'supplémentaires' : '480p et 720p'} en attente sur le serveur${sq.pos > 1 ? ` (${sq.pos - 1} vidéo${sq.pos > 2 ? 's' : ''} avant celle-ci)` : ''}. Elles apparaîtront ici toutes seules.`;
 }
 function switchSource(next, why) {
   if (!next || !player) return;
@@ -316,7 +321,8 @@ function watchServerQualities() {
       const nf = (d.files || []).find(x => x.id === fid);
       if (!nf || !cur || cur.id !== fid) return;
       cur.sq = nf.sq; if (nf.q) cur.q = nf.q; if (nf.vw) { cur.vw = nf.vw; cur.vh = nf.vh; }
-      if (nf.q && nf.q.length && srcSel && srcSel.auto && player && (player.paused || player.currentTime < 1)) switchSource(chooseSource('auto'));
+      // Nouvelle qualité arrivée : en Auto, on quitte l'original lourd (reprise au même instant) ; sinon le menu se met à jour
+      if (nf.q && nf.q.length && srcSel && srcSel.auto && player && (srcSel.original || player.paused || player.currentTime < 1)) switchSource(chooseSource('auto'));
       else paintQ();
     } catch (e) { /* on réessaiera */ }
     watchServerQualities();

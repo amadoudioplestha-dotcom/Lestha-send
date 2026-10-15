@@ -5,6 +5,7 @@ import { track } from './ux.js';
 import { mountGallery, isGalleryFile } from './gallery.js';
 import { openDoc, canPreviewDoc, docKind, DOC_LABEL, warmDoc } from './doc-viewer.js';
 import { canClientZip, clientZip } from './zip-stream.js';
+import { qualityVideo } from './video-quality.js';
 
 let root = null, id = null, data = null, timer = null, poll = null, gallery = null;
 
@@ -325,9 +326,11 @@ function preview(f) {
     });
   }
   const src = fileUrl(f.id, true);
+  // 3.29 : vidéo lue dans une qualité légère adaptée à la connexion (Auto, 480p, 720p, Original), comme YouTube
+  const qv = k.kind === 'video' ? qualityVideo({ f, url: (fid) => fileUrl(fid, true), autoplay: true, poster: f.th ? (f.thu || pvUrl(f.id, 'thumb')) : '' }) : null;
   const media = k.kind === 'image' ? `<img class="preview-media" src="${src}" alt="${esc(f.name)}" style="object-fit:contain">`
-    : k.kind === 'video' ? `<video class="preview-media" src="${src}" controls autoplay playsinline></video>`
+    : qv ? qv.html
     : `<audio src="${src}" controls autoplay style="width:100%"></audio>`;
-  modal({ title: f.name, wide: true, body: media, actions: canDl ? [{ label: 'Fermer', cls: 'ghost' }, { label: 'Télécharger', cls: 'primary', icon: 'download', handler: download }] : [{ label: 'Fermer', cls: 'ghost' }] });
+  modal({ title: f.name, wide: true, body: media, onMount: qv ? (el) => qv.bind(el) : undefined, actions: canDl ? [{ label: 'Fermer', cls: 'ghost' }, { label: 'Télécharger', cls: 'primary', icon: 'download', handler: download }] : [{ label: 'Fermer', cls: 'ghost' }] });
 }
 
