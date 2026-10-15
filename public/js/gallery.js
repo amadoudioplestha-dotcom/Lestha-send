@@ -11,7 +11,8 @@ export const isGalleryFile = (f) => ['image', 'video'].includes(fileKind(f.name,
  * @param {object} o
  *   files       fichiers photo/vidéo (déjà filtrés)
  *   url(fid, inline)        URL d'un fichier (original ou aperçu)
- *   zipUrl(ids)             URL du ZIP des fichiers choisis
+ *   zipUrl(ids)             URL du ZIP des fichiers choisis (serveur)
+ *   zip(list)               ZIP fabriqué dans le navigateur (3.26), sinon zipUrl
  *   canDownload             false en « visionnage seul »
  *   onGot(fid)              fichier téléchargé (marque « téléchargé »)
  */
@@ -164,7 +165,7 @@ export function mountGallery(box, o) {
       body: `<p class="muted">${bytes(total)} au total. ${canShare ? '<b>Galerie du téléphone</b> : les photos et vidéos arrivent directement avec les autres.' : list.length > 1 ? '<b>Un par un</b> garde chaque photo séparée ; le <b>.zip</b> les regroupe en un seul fichier.' : ''}</p>`,
       actions: acts
     });
-    if (how === 'zip') { location.href = o.zipUrl(list.map(f => f.id)); list.forEach(f => o.onGot(f.id)); toast('Préparation du ZIP… le téléchargement démarre', 'success'); }
+    if (how === 'zip') { if (o.zip) o.zip(list); else { location.href = o.zipUrl(list.map(f => f.id)); list.forEach(f => o.onGot(f.id)); toast('Préparation du ZIP… le téléchargement démarre', 'success'); } }
     else if (how === 'seq') oneByOne(list);
     else if (how === 'share') toPhoneGallery(list);
   }

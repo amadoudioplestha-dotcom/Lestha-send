@@ -31,6 +31,13 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.26 — moins de bande passante sur le serveur
+
+- **ZIP fabriqué dans le navigateur** (public/js/zip-stream.js) : les fichiers viennent directement de Cloudflare R2 et le ZIP est écrit au fil de l'eau par le Service Worker (Chrome, Edge, Firefox, Android) ou assemblé sur l'appareil (Safari, jusqu'à 400 Mo). Plus rien ne passe par le serveur. Le ZIP du serveur reste en secours.
+- **Smart Drop « Tout télécharger »** : même principe (route GET /api/requests/:id/zip-list).
+- **Réunions** : le document présenté est téléchargé directement depuis R2 ; les pages présentées sont mises en cache par Cloudflare (URL en .jpg, cache public 24 h).
+- **Bibliothèques /vendor** gardées un mois par le navigateur et Cloudflare.
+
 ## Nouveautés 3.25.1 — banderoles et très gros PDF
 
 - PDF jusqu'à **300 Mo** en aperçu (avant : 60 Mo). Envoyé depuis un ordinateur, le PDF est préparé (vignette + pages en images) jusqu'à 300 Mo ; depuis un téléphone, jusqu'à 60 Mo.

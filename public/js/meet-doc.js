@@ -31,7 +31,7 @@ export const docOn = () => !!doc();
 export const shownPage = () => { const d = doc(); if (!d) return 0; return D.view != null && d.free && !staff() ? D.view : d.page; };
 export const onLivePage = () => { const d = doc(); return !d || shownPage() === d.page; };
 export const docAspect = () => { const d = doc(); if (!d) return null; const r = d.dims[shownPage()] || [16, 9]; return [r[0], r[1]]; };
-const pageUrl = (d, n) => (D.job && D.job.id === d.id && D.local.get(n)) || `/api/meet/${S().id}/doc/${d.id}/${n}`;
+const pageUrl = (d, n) => (D.job && D.job.id === d.id && D.local.get(n)) || `/api/meet/${S().id}/doc/${d.id}/${n}.jpg`;   // « .jpg » : gardée par Cloudflare (3.26)
 /** Image de la page affichée, une fois chargée (pour l'enregistrement de la réunion) */
 export function docImage() { const im = $('#mtDocImg'); return im && im.complete && im.naturalWidth && !im.classList.contains('wait') ? im : null; }
 

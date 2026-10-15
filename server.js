@@ -147,7 +147,10 @@ async function main() {
     index: false,
     setHeaders(res, file) {
       // HTML / JS / CSS : toujours revalidés (ETag) → jamais de versions mélangées après une mise à jour
-      if (/\.(html|webmanifest|json|js|css)$/.test(file)) res.set('Cache-Control', 'no-cache');
+      // Bibliothèques (/vendor : pdf.js, lecteurs vidéo…) : ne changent jamais → gardées un mois par le navigateur
+      // et par Cloudflare (3.26 : la bande passante du serveur est comptée)
+      if (/[\\/]vendor[\\/]/.test(file)) res.set('Cache-Control', 'public, max-age=2592000, s-maxage=2592000');
+      else if (/\.(html|webmanifest|json|js|css)$/.test(file)) res.set('Cache-Control', 'no-cache');
       else res.set('Cache-Control', 'public, max-age=86400');
     }
   }));

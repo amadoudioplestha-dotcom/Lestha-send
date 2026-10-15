@@ -1,6 +1,7 @@
 /* Lestha Send — Smart Drop (dépôt de fichiers) : décrire son besoin → formulaire → lien/QR → dépôts sans compte → accusé, statuts, export */
 import { $, $$, esc, icon, bytes, speed, duration, timeLeft, relTime, fmtDate, fileKind, ls, ss, api, getConfig, toast, modal, confirmDialog, renderQR, confetti, keepAwake, notify, getSocket, visitorId, copyText, isMobile, animateCount, ensureVerified, verifiedEmail, captchaToken } from './core.js';
 import { navigate } from './router.js';
+import { canClientZip, clientZip } from './zip-stream.js';
 import { Uploader } from './uploader.js';
 import { pick, bindShare, shareGrid } from './send.js';
 import { brandHeader, openHandle } from './profile.js';
@@ -499,7 +500,7 @@ export const manageView = (() => {
         <div class="link-box"><input id="shareLink" readonly value="${esc(q.link)}"><button type="button" class="btn primary sm" id="btnCopy">${icon('copy', 'sm')}Copier</button></div>
         ${shareGrid()}
         <div class="row wrap sd-actions">
-          <a class="btn" href="/api/requests/${esc(id)}/zip?key=${kq}" ${ready.length ? '' : 'aria-disabled="true" tabindex="-1" style="pointer-events:none;opacity:.5"'}>${icon('zip', 'sm')}Tout télécharger</a>
+          <a class="btn" data-sdzip href="/api/requests/${esc(id)}/zip?key=${kq}" ${ready.length ? '' : 'aria-disabled="true" tabindex="-1" style="pointer-events:none;opacity:.5"'}>${icon('zip', 'sm')}Tout télécharger</a>
           <a class="btn" href="/api/requests/${esc(id)}/export.csv?key=${kq}" ${ready.length ? '' : 'aria-disabled="true" tabindex="-1" style="pointer-events:none;opacity:.5"'}>${icon('clipboard', 'sm')}Exporter (Excel)</a>
           <button type="button" class="btn" id="cQr2">${icon('qr', 'sm')}QR code</button>
           <button type="button" class="btn ghost" id="cMgmt" title="Pour gérer cet espace depuis un autre appareil">${icon('lock', 'sm')}Lien de gestion (privé)</button>
@@ -532,6 +533,23 @@ export const manageView = (() => {
     $('#dFilt', root).onclick = (e) => { const c = e.target.closest('[data-f]'); if (!c) return; filt = c.dataset.f; $$('#dFilt .chip', root).forEach(x => x.classList.toggle('active', x === c)); renderDeposits(); };
     $('#dSearch', root).oninput = (e) => { search = e.target.value; renderDeposits(); };
     $('#cQr2', root).onclick = () => bigQr(q.title, q.link);
+    // 3.26 : ZIP fabriqué dans le navigateur à partir du stockage (le serveur ne fait plus transiter les fichiers)
+    const zb = $('[data-sdzip]', root);
+    if (zb) zb.onclick = async (e) => {
+      const total = ready.reduce((s, d) => s + (d.size || 0), 0);
+      if (!canClientZip(total)) return;   // lien classique : ZIP du serveur
+      e.preventDefault();
+      if (zb.dataset.busy) return;
+      zb.dataset.busy = '1'; const label = zb.innerHTML;
+      try {
+        const l = await api(`/api/requests/${id}/zip-list?key=${encodeURIComponent(key)}`);
+        await clientZip({ name: l.name, files: l.files, onProgress: (got, all) => { zb.innerHTML = `<span class="spinner"></span>ZIP ${Math.round(got / Math.max(1, all) * 100)} %`; } });
+        toast('ZIP enregistré dans vos téléchargements', 'success');
+      } catch (err) {
+        if (!err || err.started !== true) location.href = zb.getAttribute('href');
+        else if (err.name !== 'AbortError') toast('Le ZIP a été interrompu, réessayez.', 'error');
+      } finally { delete zb.dataset.busy; zb.innerHTML = label; }
+    };
     $('#cMgmt', root).onclick = () => { copyText(location.origin + '/r/' + id + '#' + key); toast('Lien de gestion copié. Gardez-le pour vous : il donne accès aux dépôts.', 'warn', { duration: 6000 }); };
     renderDeposits();
     bindControls();

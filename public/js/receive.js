@@ -4,6 +4,7 @@ import { brandHeader } from './profile.js';
 import { track } from './ux.js';
 import { mountGallery, isGalleryFile } from './gallery.js';
 import { openDoc, canPreviewDoc, docKind, DOC_LABEL, warmDoc } from './doc-viewer.js';
+import { canClientZip, clientZip } from './zip-stream.js';
 
 let root = null, id = null, data = null, timer = null, poll = null, gallery = null;
 
@@ -195,7 +196,8 @@ function renderReady() {
     files: media, canDownload: !only, onGot: markGot, bigSave: photosFirst,
     url: (fid, inline) => fileUrl(fid, inline),
     pvUrl: (fid, slot) => `/api/public/t/${id}/pv/${fid}/${slot}?${q()}`,
-    zipUrl: (ids) => `/api/public/t/${id}/zip?${q('&only=' + encodeURIComponent(ids.join(',')))}`
+    zipUrl: (ids) => `/api/public/t/${id}/zip?${q('&only=' + encodeURIComponent(ids.join(',')))}`,
+    zip: (list) => startZip(list, true)
   }) : null;
   tickCountdown();
   clearInterval(timer);
@@ -222,7 +224,7 @@ function bindReady(files) {
   root.onclick = async (e) => {
     const dl = e.target.closest('[data-dl]');
     if (dl) { markGot(dl.dataset.dl); toast('Téléchargement lancé', 'success'); return; }
-    if (e.target.closest('[data-zip]')) { toast('Préparation du ZIP… le téléchargement démarre', 'success'); files.forEach(f => markGot(f.id)); return; }
+    if (e.target.closest('[data-zip]')) { e.preventDefault(); startZip(files); return; }
     const cp = e.target.closest('[data-copy]');
     if (cp) { await copyText(absUrl(fileUrl(cp.dataset.copy))); toast('Lien direct copié — collez-le dans IDM, aria2… pour un téléchargement multi-connexions', 'success'); return; }
     const pv = e.target.closest('[data-preview]');
@@ -260,6 +262,39 @@ async function reportDialog() {
   if (!reason) return;
   try { await api(`/api/public/t/${id}/report`, { method: 'POST', body: { reason } }); toast('Merci, votre signalement a été transmis.', 'success'); }
   catch (e) { toast(e.message, 'error'); }
+}
+
+/* ZIP (3.26) : fabriqué dans le navigateur à partir du stockage, pour ne rien faire passer par le serveur.
+   ZIP du serveur seulement si ce navigateur ne sait pas le faire. */
+let zipping = false;
+async function startZip(list, some) {
+  if (zipping) return toast('Un ZIP est déjà en cours de préparation', 'warn');
+  const total = list.reduce((s, f) => s + (f.size || 0), 0);
+  const server = () => {
+    location.href = `/api/public/t/${id}/zip?${q(some ? '&only=' + encodeURIComponent(list.map(f => f.id).join(',')) : '')}`;
+    list.forEach(f => markGot(f.id));
+    toast('Préparation du ZIP… le téléchargement démarre', 'success');
+  };
+  if (!data.direct || !canClientZip(total)) return server();
+  zipping = true;
+  const bar = document.createElement('div');
+  bar.className = 'zipbar'; bar.setAttribute('role', 'status');
+  bar.innerHTML = `<span class="spinner"></span><div><b>Préparation du ZIP…</b><small>Gardez cette page ouverte jusqu'à la fin</small><i><u></u></i></div>`;
+  document.body.appendChild(bar);
+  const ctl = new AbortController();
+  const show = (got) => { const p = total ? Math.min(100, Math.round(got / total * 100)) : 0; bar.querySelector('b').textContent = `ZIP en cours · ${p} %`; bar.querySelector('u').style.width = p + '%'; };
+  try {
+    await clientZip({
+      name: data.title || (list.length === 1 ? list[0].name : 'lestha-send-' + id),
+      files: list.map(f => ({ name: (f.versionOf ? `V${f.v} - ` : '') + (f.path || f.name), size: f.size, url: fileUrl(f.id) })),
+      onProgress: show, signal: ctl.signal
+    });
+    list.forEach(f => markGot(f.id));
+    toast('ZIP enregistré dans vos téléchargements', 'success');
+  } catch (e) {
+    if (e && e.started === false) server();
+    else if (!(e && e.name === 'AbortError')) toast('Le ZIP a été interrompu. Réessayez, ou utilisez « Un par un ».', 'error');
+  } finally { zipping = false; bar.remove(); }
 }
 
 const infoCache = new Map();
