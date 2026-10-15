@@ -16,6 +16,7 @@ const staff = () => X.isStaff();
 const PDFJS = '/vendor/pdfjs/';
 const OFFICE = /\.(pptx?|ppsx?|odp|docx?|odt|rtf|xlsx?|ods)$/i;
 const MAX_W = 1920;                                 // largeur des pages envoyées (net sur un vidéoprojecteur)
+const MAX_H = 1800;                                 // 3.29.4 : hauteur des pages A4 (2400 avant) : nettes au projecteur, bien plus légères
 const D = {
   view: null,                                       // page regardée par un élève en navigation libre
   local: new Map(),                                 // pages rendues sur l'appareil de l'enseignant (affichage immédiat)
@@ -131,13 +132,13 @@ async function fromPdf(data, name, file) {
     async render(i) {
       const page = await pdf.getPage(i + 1);
       const vp1 = page.getViewport({ scale: 1 });
-      const k = Math.min(MAX_W / vp1.width, 2400 / vp1.height, 4);
+      const k = Math.min(MAX_W / vp1.width, MAX_H / vp1.height, 4);
       const vp = page.getViewport({ scale: k });
       const c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
       const cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height);
       await page.render({ canvasContext: cx, viewport: vp }).promise;
       page.cleanup();
-      return toJpeg(c);
+      return toImage(c);
     }
   };
 }
@@ -152,14 +153,23 @@ async function fromImages(files) {
     n: bms.length, dims: bms.map(b => [b.width, b.height]), name: files.length > 1 ? files.length + ' images' : files[0].name.replace(/\.[^.]+$/, ''), file: files.length === 1 ? files[0] : null,
     close: () => bms.forEach(b => b.close && b.close()),
     async render(i) {
-      const b = bms[i], k = Math.min(1, MAX_W / b.width, 2400 / b.height);
+      const b = bms[i], k = Math.min(1, MAX_W / b.width, MAX_H / b.height);
       const c = document.createElement('canvas'); c.width = Math.round(b.width * k); c.height = Math.round(b.height * k);
       const cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height); cx.drawImage(b, 0, 0, c.width, c.height);
-      return toJpeg(c);
+      return toImage(c);
     }
   };
 }
-const toJpeg = (c) => new Promise((res, rej) => c.toBlob(b => (b ? res(b) : rej(new Error('image'))), 'image/jpeg', 0.86));
+const blobOf = (c, type, q) => new Promise((res) => c.toBlob(b => res(b), type, q));
+/** 3.29.4 : WebP quand le navigateur sait le fabriquer (Chrome, Edge, Firefox) : 2 fois plus léger que le JPEG à netteté égale,
+    donc des pages qui arrivent 2 fois plus vite en 4G. Safari fabrique du JPEG (il lit le WebP sans savoir l'écrire). */
+async function toImage(c) {
+  const w = await blobOf(c, 'image/webp', 0.82);
+  if (w && w.type === 'image/webp') return w;
+  const j = await blobOf(c, 'image/jpeg', 0.84);
+  if (!j) throw new Error('image');
+  return j;
+}
 
 /** PowerPoint, Word… : le serveur le convertit en PDF (s'il a LibreOffice) */
 async function convert(file) {
@@ -204,7 +214,7 @@ async function start(src) {
       const blob = await src.render(i);
       if (job.stop) break;
       D.local.set(i, URL.createObjectURL(blob));
-      const up = await fetch(`/api/meet/${s.id}/doc/${job.id}/${i}`, { method: 'PUT', headers: { 'X-Meet-Token': s.token, 'Content-Type': 'image/jpeg' }, body: blob });
+      const up = await fetch(`/api/meet/${s.id}/doc/${job.id}/${i}`, { method: 'PUT', headers: { 'X-Meet-Token': s.token, 'Content-Type': blob.type || 'image/jpeg' }, body: blob });
       if (up.status === 409) break;                 // remplacé par un autre fichier
       if (!up.ok) { const j = await up.json().catch(() => ({})); throw new Error(j.error || 'Envoi de la page ' + (i + 1) + ' impossible'); }
       job.done.add(i); job.fails = 0;
@@ -345,7 +355,11 @@ export function onReady({ id, n }) {
   const d = doc(); if (!d || d.id !== id) return;
   d.ready = Math.max(d.ready || 0, n + 1);
   D.missing.delete(id + '/' + n);
-  if (n === shownPage()) { const im = $('#mtDocImg'); if (im && im.classList.contains('wait')) { im.dataset.key = ''; docDraw(); } }
+  // 3.29.4 : page voisine arrivée après l'affichage (l'enseignant vient de la préparer) : chargée d'avance tout de suite,
+  // sinon elle n'était téléchargée qu'au moment de tourner la page (plusieurs secondes en 4G)
+  const cur = shownPage();
+  if (n !== cur && n >= cur - 1 && n <= cur + 2) { const p = new Image(); p.src = pageUrl(d, n); }
+  if (n === cur) { const im = $('#mtDocImg'); if (im && im.classList.contains('wait')) { im.dataset.key = ''; docDraw(); } }
   if (D.thumbs) { const el = $('#mtThumbs'); if (el) { el.dataset.k = ''; drawThumbs(); } }
 }
 /** Nouvel état du fichier (page, navigation libre, téléchargement) : vrai si l'affichage doit changer */

@@ -31,6 +31,11 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.29.4
+
+- Réunions, fichier présenté : pages en WebP (JPEG sur Safari) et 1800 px de haut au plus pour les pages A4 : 200 Ko au lieu de 535 Ko par page. Les pages voisines sont chargées d'avance dès que l'enseignant les a préparées. En 4G simulée (3 Mbit/s) : changement de page vu par tous en moins de 0,1 s (jusqu'à 4,7 s avant).
+- Son dans un format que le navigateur ne lit pas : message clair et invitation à télécharger, au lieu d'un lecteur muet.
+
 ## Nouveautés 3.29.3
 
 - Synchro image/son des qualités faites par le serveur : les vidéos à plus de 30 images/s (60 i/s des téléphones) sont ramenées à 30 i/s par le filtre fps au lieu de -fpsmax, qui mettait l'image ~67 ms en retard sur le son. Vérifié image par image (flash + bip chaque seconde) : écart 0 ms. Les qualités déjà faites par le serveur pour ces vidéos sont refaites automatiquement.

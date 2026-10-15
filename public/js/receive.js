@@ -331,6 +331,10 @@ function preview(f) {
   const media = k.kind === 'image' ? `<img class="preview-media" src="${src}" alt="${esc(f.name)}" style="object-fit:contain">`
     : qv ? qv.html
     : `<audio src="${src}" controls autoplay style="width:100%"></audio>`;
-  modal({ title: f.name, wide: true, body: media, onMount: qv ? (el) => qv.bind(el) : undefined, actions: canDl ? [{ label: 'Fermer', cls: 'ghost' }, { label: 'Télécharger', cls: 'primary', icon: 'download', handler: download }] : [{ label: 'Fermer', cls: 'ghost' }] });
+  modal({ title: f.name, wide: true, body: media, onMount: qv ? (el) => qv.bind(el) : (el) => {
+    // Son dans un format que ce navigateur ne lit pas (ex. .amr, .wma) : on le dit clairement au lieu d'un lecteur muet
+    const a = el.querySelector && el.querySelector('audio');
+    if (a) a.addEventListener('error', () => { a.insertAdjacentHTML('afterend', `<p class="vq-note">Ce format de son ne se lit pas dans ce navigateur.${canDl ? ' Téléchargez-le pour l’écouter sur l’appareil.' : ''}</p>`); a.remove(); }, { once: true });
+  }, actions: canDl ? [{ label: 'Fermer', cls: 'ghost' }, { label: 'Télécharger', cls: 'primary', icon: 'download', handler: download }] : [{ label: 'Fermer', cls: 'ghost' }] });
 }
 
