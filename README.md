@@ -31,6 +31,12 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.27 — compteur de bande passante
+
+- **Console › Système › Bande passante du serveur** : ce que Render compte ce mois-ci (pages, réponses, temps réel, envois vers R2), jauge sur la limite, estimation de fin de mois et détail par catégorie (lib/bandwidth.js).
+- **Bannière** dans la console dès 50 % de la limite, **e-mail** à ADMIN_EMAIL à 50, 80 et 100 % (une fois par seuil et par mois).
+- Variable `BW_LIMIT_GB` (5 par défaut) si l'offre Render change.
+
 ## Nouveautés 3.26 — moins de bande passante sur le serveur
 
 - **ZIP fabriqué dans le navigateur** (public/js/zip-stream.js) : les fichiers viennent directement de Cloudflare R2 et le ZIP est écrit au fil de l'eau par le Service Worker (Chrome, Edge, Firefox, Android) ou assemblé sur l'appareil (Safari, jusqu'à 400 Mo). Plus rien ne passe par le serveur. Le ZIP du serveur reste en secours.

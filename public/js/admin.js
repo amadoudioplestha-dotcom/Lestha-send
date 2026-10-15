@@ -85,8 +85,29 @@ function renderTab() {
 }
 
 /* ---------------- Vue d'ensemble ---------------- */
+/** 3.27 : bande passante du mois (limite Render) — bannière dès 50 % */
+function bwWarnings() {
+  const b = A.ov.system.bandwidth;
+  if (!b || b.percent < 50) return [];
+  const lvl = b.percent >= 80 ? 'bad' : 'warn';
+  return [{ level: lvl, text: `Bande passante du serveur : ${Math.round(b.percent)} % de la limite du mois utilisés (${(b.total / 1e9).toFixed(2).replace('.', ',')} Go sur ${(b.limit / 1e9).toFixed(0)} Go). Détail dans Système.` }];
+}
+const gb = (n) => n < 1e9 ? bytes(n) : (n / 1e9).toFixed(2).replace('.', ',') + ' Go';
+function bwCard() {
+  const b = A.ov.system.bandwidth;
+  if (!b) return '';
+  const pct = Math.min(100, b.percent), col = b.percent >= 80 ? '#f43f5e' : b.percent >= 50 ? '#fbbf24' : '#06d6a0';
+  const proj = b.projected ? `À ce rythme : environ <b>${gb(b.projected)}</b> à la fin du mois${b.projected > b.limit ? ' — <b style="color:#fda4af">au-dessus de la limite</b>' : ''}.` : 'Estimation de fin de mois disponible dès demain.';
+  const top = b.categories.slice(0, 6).map(c => `<div class="control"><div class="control-text"><b>${esc(c.label)}</b><span>${bytes(c.bytes)} · ${b.total ? Math.min(100, Math.round(c.bytes / b.total * 100)) : 0} %</span></div></div>`).join('');
+  return `<div class="card"><div class="card-title"><h3>${icon('download')}Bande passante du serveur (${esc(b.month)})</h3></div>
+    <p class="small muted" style="margin-bottom:8px">Ce que Render compte chaque mois. Les fichiers téléchargés depuis Cloudflare ne comptent pas.</p>
+    <div class="kpi-value" style="font-size:1.4rem">${gb(b.total)} <span class="small muted">sur ${(b.limit / 1e9).toFixed(0)} Go</span></div>
+    <div class="gauge" style="margin:8px 0"><i style="width:${pct}%;background:${col}"></i></div>
+    <p class="small muted" style="margin-bottom:10px">${proj} Alerte par e-mail à 50, 80 et 100 % (ADMIN_EMAIL).</p>
+    <div class="controls">${top || '<p class="small faint">Rien encore ce mois-ci.</p>'}</div></div>`;
+}
 function warningBanners(levels) {
-  return A.ov.system.warnings.filter(w => levels.includes(w.level)).map(w => `<div class="banner ${w.level === 'bad' ? 'bad' : w.level === 'warn' ? 'warn' : 'info'}">${icon(w.level === 'bad' ? 'x' : w.level === 'warn' ? 'bell' : 'sparkles')}<span>${esc(w.text)}</span></div>`).join('');
+  return A.ov.system.warnings.concat(bwWarnings()).filter(w => levels.includes(w.level)).map(w => `<div class="banner ${w.level === 'bad' ? 'bad' : w.level === 'warn' ? 'warn' : 'info'}">${icon(w.level === 'bad' ? 'x' : w.level === 'warn' ? 'bell' : 'sparkles')}<span>${esc(w.text)}</span></div>`).join('');
 }
 
 function renderOverview(body) {
@@ -566,6 +587,7 @@ function renderSystem(body) {
             <div><span>Hébergement</span><b>${s.isRender ? 'Render' : 'Autre'}</b></div><div><span>Console</span><b>${esc(s.adminPath)}</b></div>
           </div>
         </div>
+        ${bwCard()}
         <div class="card"><div class="card-title"><h3>${icon('shield')}Diagnostic complet</h3></div>
           <p class="small muted" style="margin-bottom:12px">Vérifie le stockage, puis fait un vrai petit envoi depuis ce navigateur (règle CORS du bucket R2), le télécharge et le supprime.</p>
           <div class="row wrap"><button type="button" class="btn primary" id="runTest">${icon('play')}Lancer le test</button><button type="button" class="btn" id="mailTest">${icon('mail')}E-mail de test</button></div>

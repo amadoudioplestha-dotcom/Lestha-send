@@ -25,6 +25,7 @@ const { createInsights } = require('./lib/insights');
 const { createCodes } = require('./lib/codes');
 const { mountMeet } = require('./lib/meet');
 const { createSettings } = require('./lib/settings');
+const { createBandwidth } = require('./lib/bandwidth');
 const { mountAccount } = require('./lib/account');
 const VERSION = require('./package.json').version;
 
@@ -100,6 +101,9 @@ async function main() {
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
   const server = http.createServer(app);
+  // 3.27 : compteur de la bande passante sortante (limite mensuelle de Render), alertes par e-mail
+  ctx.bandwidth = createBandwidth({ storage, mailer, env });
+  ctx.bandwidth.attach(server, app);
   const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 1e6, pingInterval: 20000, pingTimeout: 30000 });
   io.use(origin.socket);
   /* Un message malformé (ex. null) ne doit jamais arrêter le serveur : chaque gestionnaire est protégé */
@@ -268,7 +272,7 @@ async function main() {
     console.log(`🔄 TURN : ${ice.provider === 'cloudflare' ? 'relais Cloudflare (identifiants éphémères)' : ice.provider ? 'serveur personnalisé' : 'STUN uniquement'}`);
   });
 
-  const shutdown = async () => { try { await db.flushAll(); if (ctx.stats) await ctx.stats.flush(); if (ctx.insights) await ctx.insights.flush(); if (ctx.accounts) await ctx.accounts.flush(); } catch (e) { /* ignore */ } process.exit(0); };
+  const shutdown = async () => { try { await db.flushAll(); if (ctx.stats) await ctx.stats.flush(); if (ctx.insights) await ctx.insights.flush(); if (ctx.bandwidth) await ctx.bandwidth.flush(); if (ctx.accounts) await ctx.accounts.flush(); } catch (e) { /* ignore */ } process.exit(0); };
   process.on('unhandledRejection', (e) => console.warn('⚠️ Erreur asynchrone ignorée :', e && e.message));
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
