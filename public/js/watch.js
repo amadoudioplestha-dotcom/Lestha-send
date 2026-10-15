@@ -301,7 +301,7 @@ function switchSource(next, why) {
 function onWaiting() {
   if (!srcSel || !srcSel.auto || player.paused || player.seeking || player.currentTime < 1 || Date.now() - lastSeek < 2500) return;
   const now = Date.now(); waits = waits.filter(x => now - x < 30000); waits.push(now);
-  if (waits.length < 3) return;
+  if (waits.length < 2) return;
   waits = [];
   const list = PRO.sourcesOf(cur), i = list.findIndex(s => s.id === srcSel.id);
   if (i > 0) switchSource(Object.assign({ auto: true }, list[i - 1]), `Connexion lente : passage en ${list[i - 1].label} pour rester fluide`);
@@ -332,6 +332,8 @@ function bindStepUp() {
   clearInterval(upTimer);
   let played = 0, lastTick = 0, lastUp = Date.now();
   const p = player;
+  // Débit réel retenu sur l'appareil : la prochaine vidéo démarre directement dans la bonne qualité
+  PRO.trackThroughput(p, () => (srcSel && !srcSel.original ? PRO.rungBr(srcSel.h) : (cur && cur.size && cur.dur ? cur.size * 8 / cur.dur / 1e6 : 8)));
   upTimer = setInterval(() => {
     if (!player || player !== p || !document.body.contains(p)) { clearInterval(upTimer); return; }
     const now = Date.now(), dt = lastTick ? (now - lastTick) / 1000 : 0; lastTick = now;

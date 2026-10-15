@@ -11,7 +11,7 @@ import { tc, contentRect, drawShapes } from './review-tools.js';
 
 /* ============================== qualités ============================== */
 // 3.29 : listes de qualités et choix automatique partagés avec l'aperçu de la page de réception
-export { sourcesOf, autoPick, rungBr } from './video-quality.js';
+export { sourcesOf, autoPick, rungBr, trackThroughput } from './video-quality.js';
 
 /* ============================== timeline enrichie ============================== */
 /** Aperçu de l'image au survol (planche d'aperçus fabriquée à l'envoi) */
