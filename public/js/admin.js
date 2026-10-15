@@ -92,13 +92,14 @@ function bwWarnings() {
   const lvl = b.percent >= 80 ? 'bad' : 'warn';
   return [{ level: lvl, text: `Bande passante du serveur : ${Math.round(b.percent)} % de la limite du mois utilisés (${(b.total / 1e9).toFixed(2).replace('.', ',')} Go sur ${(b.limit / 1e9).toFixed(0)} Go). Détail dans Système.` }];
 }
-const gb = (n) => n < 1e9 ? bytes(n) : (n / 1e9).toFixed(2).replace('.', ',') + ' Go';
+/** Tailles en unités décimales, comme Render et Cloudflare les comptent (1 Go = 1 000 000 000 octets) */
+const gb = (n) => { n = n || 0; const f = (v, d) => v.toFixed(d).replace('.', ','); return n >= 1e9 ? f(n / 1e9, 2) + ' Go' : n >= 1e6 ? f(n / 1e6, n >= 1e8 ? 0 : 1) + ' Mo' : n >= 1e3 ? Math.round(n / 1e3) + ' Ko' : n + ' o'; };
 function bwCard() {
   const b = A.ov.system.bandwidth;
   if (!b) return '';
   const pct = Math.min(100, b.percent), col = b.percent >= 80 ? '#f43f5e' : b.percent >= 50 ? '#fbbf24' : '#06d6a0';
   const proj = b.projected ? `À ce rythme : environ <b>${gb(b.projected)}</b> à la fin du mois${b.projected > b.limit ? ' — <b style="color:#fda4af">au-dessus de la limite</b>' : ''}.` : 'Estimation de fin de mois disponible dès demain.';
-  const top = b.categories.slice(0, 6).map(c => `<div class="control"><div class="control-text"><b>${esc(c.label)}</b><span>${bytes(c.bytes)} · ${b.total ? Math.min(100, Math.round(c.bytes / b.total * 100)) : 0} %</span></div></div>`).join('');
+  const top = b.categories.slice(0, 6).map(c => `<div class="control"><div class="control-text"><b>${esc(c.label)}</b><span>${gb(c.bytes)} · ${b.total ? Math.min(100, Math.round(c.bytes / b.total * 100)) : 0} %</span></div></div>`).join('');
   return `<div class="card"><div class="card-title"><h3>${icon('download')}Bande passante du serveur (${esc(b.month)})</h3></div>
     <p class="small muted" style="margin-bottom:8px">Ce que Render compte chaque mois. Les fichiers téléchargés depuis Cloudflare ne comptent pas.</p>
     <div class="kpi-value" style="font-size:1.4rem">${gb(b.total)} <span class="small muted">sur ${(b.limit / 1e9).toFixed(0)} Go</span></div>
@@ -106,8 +107,70 @@ function bwCard() {
     <p class="small muted" style="margin-bottom:10px">${proj} Alerte par e-mail à 50, 80 et 100 % (ADMIN_EMAIL).</p>
     <div class="controls">${top || '<p class="small faint">Rien encore ce mois-ci.</p>'}</div></div>`;
 }
+/* 3.28 : stockage Cloudflare R2 et sauvegarde du secret */
+function extraWarnings() {
+  const s = A.ov.system, out = [];
+  const u = s.storageUsage;
+  if (u && u.scanned && u.percent >= 80) out.push({ level: u.percent >= 100 ? 'bad' : 'warn', text: `Stockage Cloudflare R2 : ${gb(u.total)} sur ${(u.free / 1e9).toFixed(0)} Go gratuits (${Math.round(u.percent)} %).${u.cost > 0 ? ` Coût estimé : ${u.cost.toFixed(2).replace('.', ',')} $ par mois.` : ''} Détail dans Système.` });
+  if (s.secret && s.secret.fromEnv && !s.secret.savedAt) out.push({ level: 'warn', text: 'Sauvegardez votre APP_SECRET en dehors de Render (gestionnaire de mots de passe ou papier) : sans lui, les comptes deviennent illisibles. Vérifiez votre copie dans Système.' });
+  return out;
+}
+function storageCard() {
+  const u = A.ov.system.storageUsage;
+  if (!u) return '';
+  const head = `<div class="card-title"><h3>${icon('cloud')}Stockage Cloudflare R2</h3><button type="button" class="btn sm ghost" id="r2Scan">${icon('refresh', 'sm')}Actualiser</button></div>`;
+  if (!u.scanned) return `<div class="card">${head}<p class="small muted">Premier inventaire en cours (2 minutes après le démarrage). Cliquez sur Actualiser pour le lancer maintenant.</p></div>`;
+  const pct = Math.min(100, u.percent), col = u.percent >= 100 ? '#f43f5e' : u.percent >= 80 ? '#fbbf24' : '#06d6a0';
+  const rows = u.groups.map(g => `<div class="control"><div class="control-text"><b>${esc(g.label)}</b><span>${gb(g.bytes)} · ${num(g.count)} objet(s)</span></div></div>`).join('');
+  const big = u.biggest.length ? `<p class="small muted" style="margin:12px 0 6px">Liens qui prennent le plus de place :</p><div class="small">${u.biggest.map(b => `<div class="row" style="justify-content:space-between"><a href="#" data-open-t="${esc(b.id)}">${esc(b.id)}</a><span class="muted">${gb(b.bytes)}</span></div>`).join('')}</div>` : '';
+  return `<div class="card">${head}
+    <p class="small muted" style="margin-bottom:8px">Gratuit jusqu'à ${(u.free / 1e9).toFixed(0)} Go, puis environ 0,015 $ par Go et par mois. Les liens expirés sont supprimés automatiquement.</p>
+    <div class="kpi-value" style="font-size:1.4rem">${gb(u.total)} <span class="small muted">sur ${(u.free / 1e9).toFixed(0)} Go gratuits</span></div>
+    <div class="gauge" style="margin:8px 0"><i style="width:${pct}%;background:${col}"></i></div>
+    <p class="small muted" style="margin-bottom:10px">${u.cost > 0 ? `Coût estimé : <b>${u.cost.toFixed(2).replace('.', ',')} $ par mois</b>.` : 'Aucun coût pour le moment.'} Inventaire ${relTime(u.at)} · alerte par e-mail à 80 et 100 %.</p>
+    <div class="controls">${rows}</div>${big}</div>`;
+}
+function secretCard() {
+  const k = A.ov.system.secret;
+  if (!k || !k.fromEnv) return '';
+  return `<div class="card"><div class="card-title"><h3>${icon('lock')}Sauvegarde du secret (APP_SECRET)</h3></div>
+    <p class="small muted" style="margin-bottom:8px">Ce secret chiffre les comptes et signe les liens protégés. S'il est perdu ou changé, les comptes deviennent illisibles. Gardez-en une copie hors de Render : gestionnaire de mots de passe ou papier rangé.</p>
+    <div class="adm-info" style="margin-bottom:10px"><div><span>Empreinte</span><b>${esc(k.fingerprint)}</b></div><div><span>Sauvegarde</span><b>${k.savedAt ? 'confirmée ' + relTime(k.savedAt) : '<span style="color:#fbbf24">à faire</span>'}</b></div></div>
+    <p class="small muted" style="margin-bottom:6px">Collez votre copie pour vérifier qu'elle est exacte (elle n'est ni enregistrée ni affichée) :</p>
+    <div class="input-group"><input class="input" id="secCheck" type="password" autocomplete="off" placeholder="Votre copie d'APP_SECRET" aria-label="Copie d'APP_SECRET"><button type="button" class="btn" id="secBtn">${icon('check', 'sm')}Vérifier</button></div>
+    <p class="small" id="secOut" style="margin-top:8px"></p></div>`;
+}
+function bindSystemExtras(body) {
+  const scanBtn = body.querySelector('#r2Scan');
+  if (scanBtn) scanBtn.onclick = async () => {
+    scanBtn.disabled = true; scanBtn.innerHTML = '<span class="spinner"></span> Inventaire…';
+    try { A.ov.system.storageUsage = await aapi('/storage/scan', { method: 'POST' }); renderSystem(body); toast('Inventaire terminé', 'success'); }
+    catch (e) { toast(e.message, 'error'); scanBtn.disabled = false; scanBtn.textContent = 'Actualiser'; }
+  };
+  const btn = body.querySelector('#secBtn');
+  if (btn) {
+    const inp = body.querySelector('#secCheck'), out = body.querySelector('#secOut');
+    const go = async () => {
+      if (!inp.value.trim()) return;
+      btn.disabled = true;
+      try {
+        const { match } = await aapi('/secret/check', { method: 'POST', body: { value: inp.value } });
+        inp.value = '';
+        if (match) {
+          const r = await aapi('/secret/saved', { method: 'POST' });
+          A.ov.system.secret.savedAt = r.savedAt;
+          out.innerHTML = '<span style="color:#06d6a0">✓ Votre copie est exacte. Sauvegarde confirmée.</span>';
+          setTimeout(() => renderSystem(body), 1500);
+        } else out.innerHTML = '<span style="color:#fda4af">Cette copie ne correspond pas. Recopiez la valeur exacte depuis Render (Environment › APP_SECRET), sans espace.</span>';
+      } catch (e) { out.textContent = e.message; }
+      finally { btn.disabled = false; }
+    };
+    btn.onclick = go; inp.onkeydown = (e) => { if (e.key === 'Enter') go(); };
+  }
+  body.querySelectorAll('[data-open-t]').forEach(a => a.onclick = (e) => { e.preventDefault(); openDetail(a.dataset.openT); });
+}
 function warningBanners(levels) {
-  return A.ov.system.warnings.concat(bwWarnings()).filter(w => levels.includes(w.level)).map(w => `<div class="banner ${w.level === 'bad' ? 'bad' : w.level === 'warn' ? 'warn' : 'info'}">${icon(w.level === 'bad' ? 'x' : w.level === 'warn' ? 'bell' : 'sparkles')}<span>${esc(w.text)}</span></div>`).join('');
+  return A.ov.system.warnings.concat(bwWarnings(), extraWarnings()).filter(w => levels.includes(w.level)).map(w => `<div class="banner ${w.level === 'bad' ? 'bad' : w.level === 'warn' ? 'warn' : 'info'}">${icon(w.level === 'bad' ? 'x' : w.level === 'warn' ? 'bell' : 'sparkles')}<span>${esc(w.text)}</span></div>`).join('');
 }
 
 function renderOverview(body) {
@@ -588,6 +651,8 @@ function renderSystem(body) {
           </div>
         </div>
         ${bwCard()}
+        ${storageCard()}
+        ${secretCard()}
         <div class="card"><div class="card-title"><h3>${icon('shield')}Diagnostic complet</h3></div>
           <p class="small muted" style="margin-bottom:12px">Vérifie le stockage, puis fait un vrai petit envoi depuis ce navigateur (règle CORS du bucket R2), le télécharge et le supprime.</p>
           <div class="row wrap"><button type="button" class="btn primary" id="runTest">${icon('play')}Lancer le test</button><button type="button" class="btn" id="mailTest">${icon('mail')}E-mail de test</button></div>
@@ -605,6 +670,7 @@ function renderSystem(body) {
     });
   }).catch(e => { const box = $('#modList'); if (box) box.innerHTML = `<p class="small" style="color:var(--rose)">${esc(e.message)}</p>`; });
   $('#runTest').onclick = runFullTest;
+  bindSystemExtras(body);
   $('#mailTest').onclick = async () => {
     const to = await modal({ title: 'E-mail de test', body: '<input class="input" id="mt" type="email" placeholder="adresse@exemple.com">', actions: [{ label: 'Annuler', cls: 'ghost', value: null }, { label: 'Envoyer', cls: 'primary', handler: (bd) => bd.querySelector('#mt').value.trim() || false }] });
     if (!to) return;

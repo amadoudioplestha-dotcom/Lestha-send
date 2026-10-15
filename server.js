@@ -26,6 +26,7 @@ const { createCodes } = require('./lib/codes');
 const { mountMeet } = require('./lib/meet');
 const { createSettings } = require('./lib/settings');
 const { createBandwidth } = require('./lib/bandwidth');
+const { createStorageUsage } = require('./lib/storage-usage');
 const { mountAccount } = require('./lib/account');
 const VERSION = require('./package.json').version;
 
@@ -91,6 +92,13 @@ async function main() {
       await storage.putBuffer('system/secret', Buffer.from(secret), 'text/plain');
     }
   }
+  // 3.28 : empreinte du secret (jamais le secret lui-même) pour vérifier sa copie de sauvegarde dans la console
+  const secretHash = crypto.createHash('sha256').update(String(secret)).digest();
+  const secretInfo = {
+    fromEnv: !!env.APP_SECRET,
+    fingerprint: secretHash.toString('hex').slice(0, 8).replace(/^(.{4})/, '$1-').toUpperCase(),
+    check: (v) => crypto.timingSafeEqual(secretHash, crypto.createHash('sha256').update(String(v || '').trim()).digest())
+  };
   const signer = makeSigner(secret);
   const security = createSecurity({ storage, secret });
   await security.load();
@@ -104,6 +112,9 @@ async function main() {
   // 3.27 : compteur de la bande passante sortante (limite mensuelle de Render), alertes par e-mail
   ctx.bandwidth = createBandwidth({ storage, mailer, env });
   ctx.bandwidth.attach(server, app);
+  ctx.secretInfo = secretInfo;
+  // 3.28 : inventaire du stockage Cloudflare R2 (part gratuite de 10 Go), alertes par e-mail
+  if (storage.direct) { ctx.storageUsage = createStorageUsage({ storage, mailer, env }); ctx.storageUsage.start(); }
   const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 1e6, pingInterval: 20000, pingTimeout: 30000 });
   io.use(origin.socket);
   /* Un message malformé (ex. null) ne doit jamais arrêter le serveur : chaque gestionnaire est protégé */

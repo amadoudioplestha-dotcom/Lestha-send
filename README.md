@@ -31,6 +31,11 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.28 — stockage R2 et sauvegarde du secret
+
+- **Console › Système › Stockage Cloudflare R2** : inventaire du bucket toutes les 6 h (ou bouton Actualiser), rangé par usage (fichiers, aperçus, qualités vidéo, documents de réunion, données), jauge sur la part gratuite (R2_FREE_GB, 10 par défaut), coût estimé au-delà, liens les plus lourds. E-mail à ADMIN_EMAIL à 80 et 100 % (lib/storage-usage.js).
+- **Console › Système › Sauvegarde du secret** : empreinte d'APP_SECRET et vérification d'une copie de sauvegarde (jamais affichée ni enregistrée). Bannière de rappel tant que la sauvegarde n'est pas confirmée.
+
 ## Nouveautés 3.27 — compteur de bande passante
 
 - **Console › Système › Bande passante du serveur** : ce que Render compte ce mois-ci (pages, réponses, temps réel, envois vers R2), jauge sur la limite, estimation de fin de mois et détail par catégorie (lib/bandwidth.js).
