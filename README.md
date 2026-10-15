@@ -31,6 +31,10 @@ Page de gestion par transfert : graphique 48 h / 30 j, fichiers les plus téléc
 
 **Design** : interface premium sombre (identité cyan → turquoise conservée), glisser-déposer de dossiers entiers, coller, aperçus images/vidéos/audio/PDF, anneau de progression avec vitesse et temps restant, compte à rebours d'expiration, confettis, toasts, modales façon bottom-sheet sur mobile, effets allégés automatiquement sur les téléphones modestes.
 
+## Nouveautés 3.29.1
+
+- Qualités vidéo du serveur : la vidéo est copiée de R2 dans un fichier temporaire avant la conversion (le ffmpeg statique ne résout pas les noms de domaine sur Render, d'où « vidéo illisible »). Les échecs des versions précédentes sont réessayés tout de suite.
+
 ## Nouveautés 3.29 — qualités vidéo automatiques, comme YouTube
 
 - **Sélecteur Auto / 480p / 720p / Original** aussi dans la galerie et l'aperçu de la page de réception (public/js/video-quality.js, partagé avec le lecteur de revue). Auto choisit selon la connexion ; changement au même instant de lecture.
